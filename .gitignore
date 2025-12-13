@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-preload/
+release/
+.userData/
+downloads/
+games/
+compatTools/
+tmp/
+.cache/
+.npm/
+.vscode/
+*.log
+.DS_Store
+**/node_modules/

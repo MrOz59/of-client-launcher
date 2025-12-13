@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AdBlock Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .test-item { margin: 20px 0; padding: 15px; border: 2px solid #ccc; }
+        .should-hide { background: #ffcccc; }
+        .should-show { background: #ccffcc; }
+    </style>
+</head>
+<body>
+    <h1>AdBlock Test Page</h1>
+    <p>Se o AdBlock estiver funcionando, os blocos vermelhos devem desaparecer.</p>
+
+    <div class="test-item should-show">
+        <h3>✅ Este bloco deve aparecer</h3>
+        <p>Conteúdo normal do site</p>
+    </div>
+
+    <div class="test-item should-hide advertisement">
+        <h3>❌ ADVERTISEMENT - deve ser bloqueado</h3>
+        <p>Anúncio com classe "advertisement"</p>
+    </div>
+
+    <div class="test-item should-hide ad-container">
+        <h3>❌ AD-CONTAINER - deve ser bloqueado</h3>
+        <p>Anúncio com classe "ad-container"</p>
+    </div>
+
+    <div class="test-item should-hide" id="google_ads_123">
+        <h3>❌ GOOGLE ADS - deve ser bloqueado</h3>
+        <p>Anúncio com ID "google_ads"</p>
+    </div>
+
+    <div class="test-item should-hide" data-ad-client="test">
+        <h3>❌ DATA-AD-CLIENT - deve ser bloqueado</h3>
+        <p>Anúncio com atributo data-ad-client</p>
+    </div>
+
+    <div class="test-item should-show">
+        <h3>✅ Este bloco também deve aparecer</h3>
+        <p>Mais conteúdo normal</p>
+    </div>
+
+    <script>
+        console.log('[Test Page] Loaded');
+        console.log('[Test Page] Total divs:', document.querySelectorAll('.test-item').length);
+        console.log('[Test Page] Should-hide divs:', document.querySelectorAll('.should-hide').length);
+        console.log('[Test Page] Should-show divs:', document.querySelectorAll('.should-show').length);
+
+        setTimeout(() => {
+            const visible = [];
+            document.querySelectorAll('.test-item').forEach(el => {
+                const computed = window.getComputedStyle(el);
+                if (computed.display !== 'none' && computed.visibility !== 'hidden') {
+                    visible.push(el.querySelector('h3')?.textContent);
+                }
+            });
+            console.log('[Test Page] Visible items:', visible);
+        }, 1000);
+    </script>
+</body>
+</html>

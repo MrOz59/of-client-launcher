@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    name: Windows (NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/**
+
+  linux:
+    name: Linux (AppImage + deb + rpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm libarchive-tools
+      - run: npm ci
+      - name: Build Linux artifacts (no pacman here)
+        run: |
+          node scripts/patch-electron-builder.js
+          npm run build
+          npx electron-builder --linux appimage deb rpm --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: release/**
+
+  pacman:
+    name: Arch Linux (pacman)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps (pacman)
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive
+      - run: npm ci
+      - name: Build pacman package
+        run: |
+          node scripts/patch-electron-builder.js
+          npm run build
+          npx electron-builder --linux pacman --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pacman
+          path: release/**
+

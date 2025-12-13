@@ -1,0 +1,274 @@
+import React, { useEffect, useRef, useState } from 'react'
+
+interface StoreTabProps {
+  isLoggedIn: boolean
+}
+
+// AdBlock CSS
+const adBlockCSS = `
+  /* Hide common ad containers */
+  [class*="advertisement"],
+  [class*="ad-container"],
+  [class*="ad-banner"],
+  [class*="ad-slot"],
+  [id*="advertisement"],
+  [id*="ad-container"],
+  [id*="ad-banner"],
+  [id*="google_ads"],
+  iframe[src*="doubleclick"],
+  iframe[src*="googlesyndication"],
+  iframe[src*="ads"],
+  .adsbygoogle,
+  ins.adsbygoogle,
+  [class*="popup"],
+  [class*="modal"][class*="ad"],
+  [class*="overlay"][class*="ad"],
+  [class*="yandex_ad"],
+  [class*="begun"],
+  [class*="adfox"],
+  div[style*="position: fixed"][style*="z-index: 9999"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+  }
+  body {
+    overflow: auto !important;
+  }
+`
+
+// Import injection scripts (will be loaded from preload)
+const injectedCSS = `
+  .of-launcher-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 100;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .of-launcher-badge.installed {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+  }
+
+  .of-launcher-badge.update-available {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #000;
+  }
+
+  .of-launcher-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .of-launcher-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .of-launcher-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+
+  .of-launcher-btn.play {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+  }
+
+  .of-launcher-btn.download {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+  }
+
+  .of-launcher-btn.update {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #000;
+  }
+`
+
+const adBlockScript = `
+(function() {
+  console.log('[AdBlock] Initializing...');
+
+  function removeAds() {
+    const selectors = [
+      '[class*="advertisement"]',
+      '[class*="ad-container"]',
+      '[id*="advertisement"]',
+      'iframe[src*="ads"]',
+      'iframe[src*="doubleclick"]',
+      '.adsbygoogle'
+    ];
+    let count = 0;
+    selectors.forEach(s => {
+      document.querySelectorAll(s).forEach(el => {
+        el.remove();
+        count++;
+      });
+    });
+    if (count > 0) console.log('[AdBlock] Removed ' + count + ' ads');
+  }
+
+  // Block ad scripts
+  const origAppend = Element.prototype.appendChild;
+  Element.prototype.appendChild = function(child) {
+    if ((child.tagName === 'SCRIPT' || child.tagName === 'IFRAME') && child.src) {
+      const blocked = ['doubleclick', 'googlesyndication', 'ads', 'yandex.ru/ads'];
+      for (const b of blocked) {
+        if (child.src.includes(b)) {
+          console.log('[AdBlock] Blocked: ' + child.src);
+          return child;
+        }
+      }
+    }
+    return origAppend.call(this, child);
+  };
+
+  // Block popups
+  window.open = function() {
+    console.log('[AdBlock] Blocked popup');
+    return null;
+  };
+
+  removeAds();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', removeAds);
+  }
+  new MutationObserver(removeAds).observe(document.body || document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+
+  console.log('[AdBlock] Active');
+})();
+`
+
+const injectedScript = `
+(function() {
+  console.log('[OF-Launcher] Script injected');
+  let gamesStatus = new Map();
+
+  function findGameCards() {
+    const cards = [];
+    const selectors = ['.short-story', '.story', 'article'];
+
+    for (const selector of selectors) {
+      document.querySelectorAll(selector).forEach(el => {
+        const link = el.querySelector('a[href*="/games/"]');
+        if (link) cards.push({ element: el, url: link.href });
+      });
+      if (cards.length > 0) break;
+    }
+    return cards;
+  }
+
+  function addBadge(card, status) {
+    const existing = card.element.querySelector('.of-launcher-badge');
+    if (existing) existing.remove();
+
+    if (getComputedStyle(card.element).position === 'static') {
+      card.element.style.position = 'relative';
+    }
+
+    const badge = document.createElement('div');
+    badge.className = 'of-launcher-badge ' + (status.hasUpdate ? 'update-available' : 'installed');
+    badge.textContent = status.hasUpdate
+      ? '↑ Atualização ' + status.latestVersion
+      : '✓ Instalado v' + status.version;
+    card.element.appendChild(badge);
+  }
+
+  function updateCards() {
+    findGameCards().forEach(card => {
+      const status = gamesStatus.get(card.url);
+      if (status) addBadge(card, status);
+    });
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.data.type === 'OF_LAUNCHER_UPDATE_GAMES') {
+      gamesStatus.clear();
+      if (Array.isArray(event.data.games)) {
+        event.data.games.forEach(g => gamesStatus.set(g.url, g));
+      }
+      updateCards();
+    }
+  });
+
+  const observer = new MutationObserver(updateCards);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  updateCards();
+  window.postMessage({ type: 'OF_LAUNCHER_READY' }, '*');
+})();
+`
+
+export default function StoreTab({ isLoggedIn }: StoreTabProps) {
+  const webviewRef = useRef<HTMLDivElement>(null)
+  const [webview, setWebview] = useState<any>(null)
+
+  useEffect(() => {
+    if (!webviewRef.current) return
+
+    // Create webview element
+    const wv = document.createElement('webview') as any
+    wv.src = 'https://online-fix.me'
+    wv.style.width = '100%'
+    wv.style.height = '100%'
+    wv.setAttribute('partition', 'persist:online-fix')
+    wv.setAttribute('allowpopups', '')
+
+    // Inject custom CSS/JS when page loads
+    wv.addEventListener('dom-ready', () => {
+      // Inject adblock first
+      wv.insertCSS(adBlockCSS)
+      wv.executeJavaScript(adBlockScript)
+
+      // Then inject launcher features
+      wv.insertCSS(injectedCSS)
+      wv.executeJavaScript(injectedScript)
+
+      // Send game status data (mock for now)
+      setTimeout(() => {
+        wv.executeJavaScript(`
+          window.postMessage({
+            type: 'OF_LAUNCHER_UPDATE_GAMES',
+            games: []
+          }, '*');
+        `)
+      }, 1000)
+    })
+
+    // Listen for messages from webview
+    wv.addEventListener('ipc-message', (event: any) => {
+      console.log('Message from webview:', event.channel, event.args)
+    })
+
+    webviewRef.current.appendChild(wv)
+    setWebview(wv)
+
+    return () => {
+      if (webviewRef.current && wv.parentNode) {
+        webviewRef.current.removeChild(wv)
+      }
+    }
+  }, [])
+
+  return (
+    <div className="webview-container" ref={webviewRef}>
+      {/* Webview will be inserted here */}
+    </div>
+  )
+}
