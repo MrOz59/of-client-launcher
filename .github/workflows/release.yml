@@ -104,3 +104,14 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [windows, linux, pacman]
+    steps:
+      - name: Publish release (remove draft)
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --latest

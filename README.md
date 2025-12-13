@@ -35,6 +35,8 @@ Then open the app. The renderer runs Vite at `localhost:5173` and the main proce
 
 ```fish
 npm run build
+npm run test:scraper
+```
 
 ## Builds (Windows / Linux / pacman / rpm)
 
@@ -49,14 +51,12 @@ O projeto usa `electron-builder` e salva os artefatos em `release/`.
 ### GitHub Actions
 
 Workflows prontos:
-- `.github/workflows/build.yml`: roda em push/PR e anexa artefatos.
+- `.github/workflows/build.yml`: roda em push/PR (sem anexar artefatos via Actions).
 - `.github/workflows/release.yml`: ao criar tag `v*`, compila e publica um Release com os arquivos.
 
 Instalação:
 - Arch: `sudo pacman -U <arquivo>.pkg.tar.zst`
 - rpm: `sudo rpm -Uvh <arquivo>.rpm` (ou `dnf install ./arquivo.rpm`)
-npm run test:scraper
-```
 
 ## Notes
 
