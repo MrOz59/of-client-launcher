@@ -68,7 +68,8 @@
         "rpm",
         "pacman"
       ],
-      "category": "Game"
+      "category": "Game",
+      "maintainer": "Chaos Factory Team <dev@mroz.dev.br>"
     },
     "win": {
       "target": [
