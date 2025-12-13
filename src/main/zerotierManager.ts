@@ -1,4 +1,6 @@
 import { execFile } from 'child_process'
+import fs from 'fs'
+import path from 'path'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
@@ -10,19 +12,59 @@ export type ZeroTierResult<T> =
 type RunResult = { ok: true; stdout: string } | { ok: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' }
 
 async function runZeroTierCli(args: string[], timeoutMs = 8000): Promise<RunResult> {
-  const candidates = process.platform === 'win32'
-    ? ['zerotier-cli.exe', 'zerotier-cli']
-    : ['zerotier-cli', '/usr/sbin/zerotier-cli', '/usr/bin/zerotier-cli', '/sbin/zerotier-cli']
+  const candidates: string[] = []
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles
+    const programFilesX86 = process.env['ProgramFiles(x86)']
+    const localAppData = process.env.LocalAppData
+    const guesses = [
+      'zerotier-cli.bat',
+      'zerotier-cli.exe',
+      'zerotier-cli'
+    ]
 
-  let lastErr: any = null
-  for (const bin of candidates) {
-    try {
-      const { stdout } = await execFileAsync(bin, args, {
+    const guessedPaths: string[] = []
+    for (const base of [programFilesX86, programFiles, localAppData]) {
+      if (!base) continue
+      guessedPaths.push(path.join(base, 'ZeroTier', 'One', 'zerotier-cli.bat'))
+      guessedPaths.push(path.join(base, 'ZeroTier', 'One', 'zerotier-cli.exe'))
+      guessedPaths.push(path.join(base, 'ZeroTier', 'One', 'zerotier-cli'))
+    }
+
+    for (const g of guesses) candidates.push(g)
+    for (const p of guessedPaths) candidates.push(p)
+  } else {
+    candidates.push('zerotier-cli', '/usr/sbin/zerotier-cli', '/usr/bin/zerotier-cli', '/sbin/zerotier-cli')
+  }
+
+  const existingCandidates = candidates.filter((c) => {
+    if (!c.includes(path.sep)) return true
+    try { return fs.existsSync(c) } catch { return false }
+  })
+
+  const run = async (bin: string) => {
+    const isBat = process.platform === 'win32' && /\.(bat|cmd)$/i.test(bin)
+    if (isBat) {
+      const { stdout } = await execFileAsync('cmd.exe', ['/c', bin, ...args], {
         timeout: timeoutMs,
         windowsHide: true,
         maxBuffer: 1024 * 1024 * 8
       })
-      return { ok: true, stdout: String(stdout || '') }
+      return String(stdout || '')
+    }
+    const { stdout } = await execFileAsync(bin, args, {
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024 * 8
+    })
+    return String(stdout || '')
+  }
+
+  let lastErr: any = null
+  for (const bin of existingCandidates) {
+    try {
+      const stdout = await run(bin)
+      return { ok: true, stdout }
     } catch (err: any) {
       lastErr = err
       if (err?.code === 'ENOENT') continue
@@ -31,6 +73,7 @@ async function runZeroTierCli(args: string[], timeoutMs = 8000): Promise<RunResu
     }
   }
 
+  void lastErr
   return { ok: false, code: 'NOT_INSTALLED', error: 'ZeroTier não encontrado (zerotier-cli ausente)' }
 }
 
