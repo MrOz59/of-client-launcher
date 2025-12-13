@@ -30,6 +30,7 @@ import fs from 'fs'
 import { isLinux, findProtonRuntime, setSavedProtonRuntime, buildProtonLaunch, getPrefixPath, getDefaultPrefixPath, listProtonRuntimes, setCustomProtonRoot, ensurePrefixDefaults, ensureGamePrefixFromDefault, getPrefixRootDir, ensureDefaultPrefix, ensureGameCommonRedists } from './protonManager.js'
 import { spawn } from 'child_process'
 import { ztGetStatus, ztJoinNetwork, ztLeaveNetwork, ztListNetworks, ztListPeers } from './zerotierManager.js'
+import { getZeroTierInstallHelp, installZeroTierArchWithPkexec } from './zerotierInstaller.js'
 
 let mainWindow: BrowserWindow | null = null
 const TORRENT_PARTITION = 'persist:online-fix'
@@ -1124,6 +1125,35 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
     const res = await ztLeaveNetwork(networkId)
     if (!res.success) return { success: false, error: res.error, code: res.code }
     return { success: true }
+  })
+
+  ipcMain.handle('zerotier-install-help', async () => {
+    try {
+      return { success: true, help: getZeroTierInstallHelp() }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao obter instruções do ZeroTier' }
+    }
+  })
+
+  ipcMain.handle('zerotier-install-arch', async () => {
+    try {
+      const res = await installZeroTierArchWithPkexec()
+      if (!res.success) return { success: false, error: res.error || 'Falha ao instalar' }
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao instalar' }
+    }
+  })
+
+  ipcMain.handle('open-external', async (_event, target: string) => {
+    try {
+      const url = String(target || '').trim()
+      if (!/^https?:\/\//i.test(url)) return { success: false, error: 'URL inválida' }
+      await shell.openExternal(url)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao abrir URL' }
+    }
   })
 
   ipcMain.handle('get-settings', async () => {

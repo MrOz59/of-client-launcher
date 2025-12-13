@@ -65,6 +65,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   zerotierListPeers: () => ipcRenderer.invoke('zerotier-list-peers'),
   zerotierJoin: (networkId: string) => ipcRenderer.invoke('zerotier-join', networkId),
   zerotierLeave: (networkId: string) => ipcRenderer.invoke('zerotier-leave', networkId),
+  zerotierInstallHelp: () => ipcRenderer.invoke('zerotier-install-help'),
+  zerotierInstallArch: () => ipcRenderer.invoke('zerotier-install-arch'),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onDownloadProgress: (cb: (data: DownloadProgressPayload) => void) => {
     const handler = (_event: IpcRendererEvent, data: DownloadProgressPayload) => cb(data)
     ipcRenderer.on('download-progress', handler)

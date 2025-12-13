@@ -86,10 +86,12 @@ export default function LibraryTab() {
   const [lanAutoconnect, setLanAutoconnect] = useState<boolean>(false)
   const [ztLoading, setZtLoading] = useState(false)
   const [ztError, setZtError] = useState<string | null>(null)
+  const [ztErrorCode, setZtErrorCode] = useState<string | null>(null)
   const [ztStatus, setZtStatus] = useState<any>(null)
   const [ztNetworks, setZtNetworks] = useState<any[]>([])
   const [ztPeers, setZtPeers] = useState<any[]>([])
   const [ztActionBusy, setZtActionBusy] = useState(false)
+  const [ztInstallHelp, setZtInstallHelp] = useState<any>(null)
   const [iniLastSavedAt, setIniLastSavedAt] = useState<number | null>(null)
   const iniAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [launchingGames, setLaunchingGames] = useState<Record<string, { status: 'starting' | 'running' | 'exited' | 'error'; pid?: number; code?: number | null; message?: string; stderrTail?: string; protonLogPath?: string; updatedAt: number }>>({})
@@ -836,22 +838,48 @@ export default function LibraryTab() {
       if (cancelled) return
       setZtLoading(true)
       setZtError(null)
+      setZtErrorCode(null)
       try {
-        const [st, nets, peers] = await Promise.all([
-          window.electronAPI.zerotierStatus(),
+        const st = await window.electronAPI.zerotierStatus()
+        if (cancelled) return
+        if (!st.success) {
+          setZtError(st.error || 'Falha ao ler status do ZeroTier')
+          setZtErrorCode((st as any).code || null)
+          setZtStatus(null)
+          setZtNetworks([])
+          setZtPeers([])
+          return
+        }
+
+        const [nets, peers] = await Promise.all([
           window.electronAPI.zerotierListNetworks(),
           window.electronAPI.zerotierListPeers()
         ])
         if (cancelled) return
-        if (!st.success) throw new Error(st.error || 'Falha ao ler status do ZeroTier')
-        if (!nets.success) throw new Error(nets.error || 'Falha ao listar redes do ZeroTier')
-        if (!peers.success) throw new Error(peers.error || 'Falha ao listar peers do ZeroTier')
+        if (!nets.success) {
+          setZtError(nets.error || 'Falha ao listar redes do ZeroTier')
+          setZtErrorCode((nets as any).code || null)
+          setZtStatus(st.status || null)
+          setZtNetworks([])
+          setZtPeers([])
+          return
+        }
+        if (!peers.success) {
+          setZtError(peers.error || 'Falha ao listar peers do ZeroTier')
+          setZtErrorCode((peers as any).code || null)
+          setZtStatus(st.status || null)
+          setZtNetworks(Array.isArray(nets.networks) ? nets.networks : [])
+          setZtPeers([])
+          return
+        }
+
         setZtStatus(st.status || null)
         setZtNetworks(Array.isArray(nets.networks) ? nets.networks : [])
         setZtPeers(Array.isArray(peers.peers) ? peers.peers : [])
       } catch (err: any) {
         if (cancelled) return
         setZtError(err?.message || 'Falha ao consultar ZeroTier')
+        setZtErrorCode(null)
         setZtStatus(null)
         setZtNetworks([])
         setZtPeers([])
@@ -860,7 +888,15 @@ export default function LibraryTab() {
       }
     }
 
+    const loadHelp = async () => {
+      try {
+        const res = await window.electronAPI.zerotierInstallHelp?.()
+        if (res?.success) setZtInstallHelp(res.help || null)
+      } catch {}
+    }
+
     void refresh()
+    void loadHelp()
     timer = setInterval(refresh, 4000)
     return () => {
       cancelled = true
@@ -1729,6 +1765,58 @@ export default function LibraryTab() {
                               {ztError}
                               <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 6 }}>
                                 Dica: instale o ZeroTier e garanta que `zerotier-cli` funciona no seu sistema (no Linux pode exigir permissões elevadas).
+                              </div>
+                              <div className="input-inline" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                                <button
+                                  className="btn accent"
+                                  onClick={async () => {
+                                    const url = ztInstallHelp?.docsUrl || 'https://www.zerotier.com/download/'
+                                    await window.electronAPI.openExternal?.(url)
+                                  }}
+                                >
+                                  Abrir instalador/site
+                                </button>
+                                {ztInstallHelp?.recommended?.commands?.length ? (
+                                  <button
+                                    className="btn ghost"
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(String(ztInstallHelp.recommended.commands.join(' && ')))
+                                      } catch {
+                                        alert('Não foi possível copiar')
+                                      }
+                                    }}
+                                  >
+                                    Copiar comando
+                                  </button>
+                                ) : null}
+                                {(() => {
+                                  const id = String(ztInstallHelp?.distroId || '').toLowerCase()
+                                  const like = String(ztInstallHelp?.distroLike || '').toLowerCase()
+                                  const isArchLike = ztInstallHelp?.platform === 'linux' && (id.includes('cachyos') || id.includes('arch') || like.includes('arch'))
+                                  const showAutoInstall = isArchLike && (ztErrorCode === 'NOT_INSTALLED' || String(ztError || '').toLowerCase().includes('não encontrado') || String(ztError || '').toLowerCase().includes('not found'))
+                                  if (!showAutoInstall) return null
+                                  return (
+                                    <button
+                                      className="btn ghost"
+                                      disabled={ztActionBusy}
+                                      onClick={async () => {
+                                        if (!confirm('Instalar e iniciar ZeroTier agora? (vai pedir senha/admin)')) return
+                                        setZtActionBusy(true)
+                                        try {
+                                          const res = await window.electronAPI.zerotierInstallArch?.()
+                                          if (!res?.success) throw new Error(res?.error || 'Falha ao instalar')
+                                        } catch (err: any) {
+                                          alert(err?.message || 'Falha ao instalar')
+                                        } finally {
+                                          setZtActionBusy(false)
+                                        }
+                                      }}
+                                    >
+                                      Instalar (Arch/CachyOS)
+                                    </button>
+                                  )
+                                })()}
                               </div>
                             </div>
                           ) : (

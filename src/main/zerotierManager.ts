@@ -10,20 +10,28 @@ export type ZeroTierResult<T> =
 type RunResult = { ok: true; stdout: string } | { ok: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' }
 
 async function runZeroTierCli(args: string[], timeoutMs = 8000): Promise<RunResult> {
-  try {
-    const { stdout } = await execFileAsync('zerotier-cli', args, {
-      timeout: timeoutMs,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024 * 8
-    })
-    return { ok: true, stdout: String(stdout || '') }
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') {
-      return { ok: false, code: 'NOT_INSTALLED', error: 'zerotier-cli não encontrado no PATH' }
+  const candidates = process.platform === 'win32'
+    ? ['zerotier-cli.exe', 'zerotier-cli']
+    : ['zerotier-cli', '/usr/sbin/zerotier-cli', '/usr/bin/zerotier-cli', '/sbin/zerotier-cli']
+
+  let lastErr: any = null
+  for (const bin of candidates) {
+    try {
+      const { stdout } = await execFileAsync(bin, args, {
+        timeout: timeoutMs,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024 * 8
+      })
+      return { ok: true, stdout: String(stdout || '') }
+    } catch (err: any) {
+      lastErr = err
+      if (err?.code === 'ENOENT') continue
+      const stderr = String(err?.stderr || err?.message || 'Falha ao executar zerotier-cli')
+      return { ok: false, code: 'FAILED', error: stderr.trim() }
     }
-    const stderr = String(err?.stderr || err?.message || 'Falha ao executar zerotier-cli')
-    return { ok: false, code: 'FAILED', error: stderr.trim() }
   }
+
+  return { ok: false, code: 'NOT_INSTALLED', error: 'ZeroTier não encontrado (zerotier-cli ausente)' }
 }
 
 async function runJson<T>(args: string[]): Promise<ZeroTierResult<T>> {
