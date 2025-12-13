@@ -16,6 +16,9 @@ interface Game {
   torrent_magnet?: string | null
   proton_prefix?: string | null
   steam_app_id?: string | null
+  lan_mode?: string | null
+  lan_network_id?: string | null
+  lan_autoconnect?: number | null
 }
 
 export default function LibraryTab() {
@@ -38,7 +41,7 @@ export default function LibraryTab() {
     launchArgs: ''
   })
   const [showConfig, setShowConfig] = useState<string | null>(null)
-  type GameConfigTab = 'geral' | 'onlinefix' | 'proton'
+  type GameConfigTab = 'geral' | 'onlinefix' | 'proton' | 'lan'
   const [configTab, setConfigTab] = useState<GameConfigTab>('geral')
   const [configSaveState, setConfigSaveState] = useState<{
     status: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
@@ -55,6 +58,9 @@ export default function LibraryTab() {
     protonOptionsJson: string
     protonPrefix: string
     steamAppId: string | null
+    lanMode: 'steam' | 'zerotier'
+    lanNetworkId: string
+    lanAutoconnect: boolean
   } | null>(null)
   const [protonRuntimes, setProtonRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
   const [protonRootInput, setProtonRootInput] = useState('')
@@ -74,6 +80,16 @@ export default function LibraryTab() {
   const gamesRef = useRef<Game[]>([])
   const [protonPrefix, setProtonPrefix] = useState<string>('')
   const [steamAppId, setSteamAppId] = useState<string>('')
+  type LanMode = 'steam' | 'zerotier'
+  const [lanMode, setLanMode] = useState<LanMode>('steam')
+  const [lanNetworkId, setLanNetworkId] = useState<string>('')
+  const [lanAutoconnect, setLanAutoconnect] = useState<boolean>(false)
+  const [ztLoading, setZtLoading] = useState(false)
+  const [ztError, setZtError] = useState<string | null>(null)
+  const [ztStatus, setZtStatus] = useState<any>(null)
+  const [ztNetworks, setZtNetworks] = useState<any[]>([])
+  const [ztPeers, setZtPeers] = useState<any[]>([])
+  const [ztActionBusy, setZtActionBusy] = useState(false)
   const [iniLastSavedAt, setIniLastSavedAt] = useState<number | null>(null)
   const iniAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [launchingGames, setLaunchingGames] = useState<Record<string, { status: 'starting' | 'running' | 'exited' | 'error'; pid?: number; code?: number | null; message?: string; stderrTail?: string; protonLogPath?: string; updatedAt: number }>>({})
@@ -591,26 +607,32 @@ export default function LibraryTab() {
     const protonOptionsJson = JSON.stringify(opts || {})
     const cleanAppId = steamAppId.trim() ? steamAppId.trim() : null
 
-    return {
-      title: titleValue.trim(),
-      version: versionValue.trim(),
-      protonRuntime: protonVersion,
-      protonOptionsJson,
-      protonPrefix: protonPrefix || '',
-      steamAppId: cleanAppId,
-      opts
-    }
-  }
+	    return {
+	      title: titleValue.trim(),
+	      version: versionValue.trim(),
+	      protonRuntime: protonVersion,
+	      protonOptionsJson,
+	      protonPrefix: protonPrefix || '',
+	      steamAppId: cleanAppId,
+	      lanMode,
+	      lanNetworkId: lanNetworkId.trim(),
+	      lanAutoconnect,
+	      opts
+	    }
+	  }
 
   const performConfigAutosave = async (game: Game, snapshot: ReturnType<typeof getConfigSnapshot>) => {
-    const lastFallback = () => ({
-      title: (game.title || '').trim(),
-      version: (game.installed_version || '').trim(),
-      protonRuntime: game.proton_runtime || '',
-      protonOptionsJson: game.proton_options || JSON.stringify({}),
-      protonPrefix: game.proton_prefix || '',
-      steamAppId: game.steam_app_id ? String(game.steam_app_id) : null
-    })
+	    const lastFallback = () => ({
+	      title: (game.title || '').trim(),
+	      version: (game.installed_version || '').trim(),
+	      protonRuntime: game.proton_runtime || '',
+	      protonOptionsJson: game.proton_options || JSON.stringify({}),
+	      protonPrefix: game.proton_prefix || '',
+	      steamAppId: game.steam_app_id ? String(game.steam_app_id) : null,
+	      lanMode: ((game.lan_mode as LanMode) || 'steam') as LanMode,
+	      lanNetworkId: (game.lan_network_id || '').trim(),
+	      lanAutoconnect: !!(game.lan_autoconnect || 0)
+	    })
 
     configAutosaveQueueRef.current = configAutosaveQueueRef.current
       .then(async () => {
@@ -651,16 +673,31 @@ export default function LibraryTab() {
           nextSaved.protonOptionsJson = snapshot.protonOptionsJson
         }
 
-        if (snapshot.protonPrefix !== last.protonPrefix) {
-          const resPrefix = await window.electronAPI.setGameProtonPrefix(game.url, snapshot.protonPrefix ? snapshot.protonPrefix : null)
-          if (!resPrefix.success) throw new Error(resPrefix.error || 'Falha ao salvar prefixo')
-          patch.proton_prefix = snapshot.protonPrefix ? snapshot.protonPrefix : null
-          nextSaved.protonPrefix = snapshot.protonPrefix
-        }
+	        if (snapshot.protonPrefix !== last.protonPrefix) {
+	          const resPrefix = await window.electronAPI.setGameProtonPrefix(game.url, snapshot.protonPrefix ? snapshot.protonPrefix : null)
+	          if (!resPrefix.success) throw new Error(resPrefix.error || 'Falha ao salvar prefixo')
+	          patch.proton_prefix = snapshot.protonPrefix ? snapshot.protonPrefix : null
+	          nextSaved.protonPrefix = snapshot.protonPrefix
+	        }
 
-        if (Object.keys(patch).length) {
-          setGames(prev => prev.map(g => (g.url === game.url ? { ...g, ...patch } : g)))
-        }
+	        if (snapshot.lanMode !== last.lanMode || snapshot.lanNetworkId !== last.lanNetworkId || snapshot.lanAutoconnect !== last.lanAutoconnect) {
+	          const lanRes = await window.electronAPI.setGameLanSettings(game.url, {
+	            mode: snapshot.lanMode,
+	            networkId: snapshot.lanNetworkId || null,
+	            autoconnect: snapshot.lanAutoconnect
+	          })
+	          if (!lanRes.success) throw new Error(lanRes.error || 'Falha ao salvar LAN')
+	          patch.lan_mode = snapshot.lanMode
+	          patch.lan_network_id = snapshot.lanNetworkId || null
+	          patch.lan_autoconnect = snapshot.lanAutoconnect ? 1 : 0
+	          nextSaved.lanMode = snapshot.lanMode
+	          nextSaved.lanNetworkId = snapshot.lanNetworkId
+	          nextSaved.lanAutoconnect = snapshot.lanAutoconnect
+	        }
+
+	        if (Object.keys(patch).length) {
+	          setGames(prev => prev.map(g => (g.url === game.url ? { ...g, ...patch } : g)))
+	        }
 
         lastSavedConfigRef.current = nextSaved
 
@@ -689,14 +726,17 @@ export default function LibraryTab() {
     const last = lastSavedConfigRef.current
     const titleForDiff = snapshot.title || (last?.title ?? '')
     const versionForDiff = snapshot.version || (last?.version ?? '')
-    const isDifferent =
-      !last ||
-      last.title !== titleForDiff ||
-      last.version !== versionForDiff ||
-      last.protonRuntime !== snapshot.protonRuntime ||
-      last.protonOptionsJson !== snapshot.protonOptionsJson ||
-      last.protonPrefix !== snapshot.protonPrefix ||
-      (last.steamAppId || null) !== snapshot.steamAppId
+	    const isDifferent =
+	      !last ||
+	      last.title !== titleForDiff ||
+	      last.version !== versionForDiff ||
+	      last.protonRuntime !== snapshot.protonRuntime ||
+	      last.protonOptionsJson !== snapshot.protonOptionsJson ||
+	      last.protonPrefix !== snapshot.protonPrefix ||
+	      (last.steamAppId || null) !== snapshot.steamAppId ||
+	      last.lanMode !== snapshot.lanMode ||
+	      last.lanNetworkId !== snapshot.lanNetworkId ||
+	      last.lanAutoconnect !== snapshot.lanAutoconnect
 
     if (!isDifferent) {
       if (!snapshot.title && last?.title) {
@@ -735,20 +775,26 @@ export default function LibraryTab() {
     setShowConfig(game.url)
     setVersionValue(game.installed_version || '')
     setTitleValue(game.title || '')
-    loadProtonFromGame(game)
-    loadProtonRuntimes()
-    setProtonPrefix(game.proton_prefix || '')
-    setSteamAppId(game.steam_app_id ? String(game.steam_app_id) : '')
-    setBannerManualUrl(game.image_url || '')
+	    loadProtonFromGame(game)
+	    loadProtonRuntimes()
+	    setProtonPrefix(game.proton_prefix || '')
+	    setSteamAppId(game.steam_app_id ? String(game.steam_app_id) : '')
+	    setLanMode(((game.lan_mode as LanMode) || 'steam') as LanMode)
+	    setLanNetworkId(game.lan_network_id || '')
+	    setLanAutoconnect(!!(game.lan_autoconnect || 0))
+	    setBannerManualUrl(game.image_url || '')
 
-    lastSavedConfigRef.current = {
-      title: (game.title || '').trim(),
-      version: (game.installed_version || '').trim(),
-      protonRuntime: game.proton_runtime || '',
-      protonOptionsJson: game.proton_options || JSON.stringify({}),
-      protonPrefix: game.proton_prefix || '',
-      steamAppId: game.steam_app_id ? String(game.steam_app_id) : null
-    }
+	    lastSavedConfigRef.current = {
+	      title: (game.title || '').trim(),
+	      version: (game.installed_version || '').trim(),
+	      protonRuntime: game.proton_runtime || '',
+	      protonOptionsJson: game.proton_options || JSON.stringify({}),
+	      protonPrefix: game.proton_prefix || '',
+	      steamAppId: game.steam_app_id ? String(game.steam_app_id) : null,
+	      lanMode: ((game.lan_mode as LanMode) || 'steam') as LanMode,
+	      lanNetworkId: (game.lan_network_id || '').trim(),
+	      lanAutoconnect: !!(game.lan_autoconnect || 0)
+	    }
 
     resetIniState()
     loadOnlineFixIni(game)
@@ -777,7 +823,50 @@ export default function LibraryTab() {
     const game = gamesRef.current.find(g => g.url === showConfig)
     if (!game) return
     scheduleConfigAutosave(game)
-  }, [showConfig, titleValue, versionValue, protonVersion, protonOptions, steamAppId, protonPrefix])
+  }, [showConfig, titleValue, versionValue, protonVersion, protonOptions, steamAppId, protonPrefix, lanMode, lanNetworkId, lanAutoconnect])
+
+  useEffect(() => {
+    if (!showConfig) return
+    if (configTab !== 'lan') return
+    if (lanMode !== 'zerotier') return
+    let cancelled = false
+    let timer: any = null
+
+    const refresh = async () => {
+      if (cancelled) return
+      setZtLoading(true)
+      setZtError(null)
+      try {
+        const [st, nets, peers] = await Promise.all([
+          window.electronAPI.zerotierStatus(),
+          window.electronAPI.zerotierListNetworks(),
+          window.electronAPI.zerotierListPeers()
+        ])
+        if (cancelled) return
+        if (!st.success) throw new Error(st.error || 'Falha ao ler status do ZeroTier')
+        if (!nets.success) throw new Error(nets.error || 'Falha ao listar redes do ZeroTier')
+        if (!peers.success) throw new Error(peers.error || 'Falha ao listar peers do ZeroTier')
+        setZtStatus(st.status || null)
+        setZtNetworks(Array.isArray(nets.networks) ? nets.networks : [])
+        setZtPeers(Array.isArray(peers.peers) ? peers.peers : [])
+      } catch (err: any) {
+        if (cancelled) return
+        setZtError(err?.message || 'Falha ao consultar ZeroTier')
+        setZtStatus(null)
+        setZtNetworks([])
+        setZtPeers([])
+      } finally {
+        if (!cancelled) setZtLoading(false)
+      }
+    }
+
+    void refresh()
+    timer = setInterval(refresh, 4000)
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [showConfig, configTab, lanMode])
 
   useEffect(() => {
     if (!showConfig) return
@@ -1214,14 +1303,21 @@ export default function LibraryTab() {
                   >
                     OnlineFix.ini
                   </button>
-                  <button
-                    className={configTab === 'proton' ? 'config-tab-btn active' : 'config-tab-btn'}
-                    onClick={() => setConfigTab('proton')}
-                    type="button"
-                  >
-                    Proton
-                  </button>
-                </div>
+	                  <button
+	                    className={configTab === 'proton' ? 'config-tab-btn active' : 'config-tab-btn'}
+	                    onClick={() => setConfigTab('proton')}
+	                    type="button"
+	                  >
+	                    Proton
+	                  </button>
+	                  <button
+	                    className={configTab === 'lan' ? 'config-tab-btn active' : 'config-tab-btn'}
+	                    onClick={() => setConfigTab('lan')}
+	                    type="button"
+	                  >
+	                    LAN
+	                  </button>
+	                </div>
 
                 {configTab === 'geral' && (
                   <div className="modal-section two-col">
@@ -1552,6 +1648,129 @@ export default function LibraryTab() {
                     </div>
                   </div>
                 </div>
+                )}
+
+                {configTab === 'lan' && (
+                  <div className="modal-section">
+                    <div className="section-title">Conectividade</div>
+                    <div className="input-row">
+                      <label>Modo</label>
+                      <select
+                        value={lanMode}
+                        onChange={(e) => setLanMode((e.target.value as LanMode) || 'steam')}
+                        style={{ padding: '10px 12px', background: '#0f0f0f', border: '1px solid #2f2f2f', borderRadius: '8px', color: '#fff' }}
+                      >
+                        <option value="steam">Padrão (Steam/Epic/OnlineFix)</option>
+                        <option value="zerotier">LAN (ZeroTier)</option>
+                      </select>
+                      <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 4 }}>
+                        Use LAN (ZeroTier) apenas quando o multiplayer padrão não funcionar ou para jogos LAN/Direct IP.
+                      </div>
+                    </div>
+
+                    {lanMode === 'zerotier' && (
+                      <>
+                        <div className="input-row">
+                          <label>ZeroTier Network ID (sala)</label>
+                          <div className="input-inline" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <input
+                              value={lanNetworkId}
+                              onChange={(e) => setLanNetworkId(e.target.value.trim())}
+                              placeholder="16 hex chars (ex: 8056c2e21c000001)"
+                              style={{ flex: 1, minWidth: 240 }}
+                            />
+                            <button
+                              className="btn ghost"
+                              disabled={ztActionBusy || !lanNetworkId}
+                              onClick={async () => {
+                                setZtActionBusy(true)
+                                try {
+                                  const res = await window.electronAPI.zerotierJoin(lanNetworkId)
+                                  if (!res.success) throw new Error(res.error || 'Falha ao conectar na rede')
+                                } catch (err: any) {
+                                  alert(err?.message || 'Falha ao conectar')
+                                } finally {
+                                  setZtActionBusy(false)
+                                }
+                              }}
+                            >
+                              Conectar
+                            </button>
+                            <button
+                              className="btn ghost"
+                              disabled={ztActionBusy || !lanNetworkId}
+                              onClick={async () => {
+                                setZtActionBusy(true)
+                                try {
+                                  const res = await window.electronAPI.zerotierLeave(lanNetworkId)
+                                  if (!res.success) throw new Error(res.error || 'Falha ao sair da rede')
+                                } catch (err: any) {
+                                  alert(err?.message || 'Falha ao desconectar')
+                                } finally {
+                                  setZtActionBusy(false)
+                                }
+                              }}
+                            >
+                              Desconectar
+                            </button>
+                          </div>
+                          <label className="toggle" style={{ marginTop: 10, display: 'inline-flex' }}>
+                            <input type="checkbox" checked={lanAutoconnect} onChange={(e) => setLanAutoconnect(e.target.checked)} />
+                            <span>Conectar automaticamente (ao abrir o jogo)</span>
+                          </label>
+                        </div>
+
+                        <div className="input-row">
+                          <label>Status ZeroTier</label>
+                          {ztLoading ? (
+                            <div className="small text-muted" style={{ color: '#9ca3af' }}>Atualizando…</div>
+                          ) : ztError ? (
+                            <div className="warning-text">
+                              {ztError}
+                              <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 6 }}>
+                                Dica: instale o ZeroTier e garanta que `zerotier-cli` funciona no seu sistema (no Linux pode exigir permissões elevadas).
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="small text-muted" style={{ color: '#9ca3af' }}>
+                              {ztStatus?.online ? 'ONLINE' : 'OFFLINE'} • {ztStatus?.address || 'sem endereço'} • {ztPeers.length} peers
+                            </div>
+                          )}
+                        </div>
+
+                        {(() => {
+                          const current = lanNetworkId ? ztNetworks.find((n: any) => String(n?.nwid || '').toLowerCase() === lanNetworkId.toLowerCase()) : null
+                          const addrs = Array.isArray(current?.assignedAddresses) ? current.assignedAddresses : []
+                          const ip = addrs[0] || ''
+                          return (
+                            <div className="input-row">
+                              <label>Rede atual</label>
+                              <div className="small text-muted" style={{ color: '#9ca3af' }}>
+                                {current
+                                  ? `${current.name || current.nwid} • ${current.status || 'unknown'}${addrs.length ? ` • ${addrs.join(', ')}` : ''}`
+                                  : (lanNetworkId ? 'Ainda não conectado (ou aguardando autorização no ZeroTier Central)' : 'Defina um Network ID')}
+                              </div>
+                              <div className="input-inline" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                                <button
+                                  className="btn ghost"
+                                  disabled={!ip}
+                                  onClick={async () => {
+                                    try {
+                                      await navigator.clipboard.writeText(ip)
+                                    } catch {
+                                      alert('Não foi possível copiar')
+                                    }
+                                  }}
+                                >
+                                  Copiar IP do host
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             ))}

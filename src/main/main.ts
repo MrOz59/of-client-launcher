@@ -29,6 +29,7 @@ import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResol
 import fs from 'fs'
 import { isLinux, findProtonRuntime, setSavedProtonRuntime, buildProtonLaunch, getPrefixPath, getDefaultPrefixPath, listProtonRuntimes, setCustomProtonRoot, ensurePrefixDefaults, ensureGamePrefixFromDefault, getPrefixRootDir, ensureDefaultPrefix, ensureGameCommonRedists } from './protonManager.js'
 import { spawn } from 'child_process'
+import { ztGetStatus, ztJoinNetwork, ztLeaveNetwork, ztListNetworks, ztListPeers } from './zerotierManager.js'
 
 let mainWindow: BrowserWindow | null = null
 const TORRENT_PARTITION = 'persist:online-fix'
@@ -85,6 +86,56 @@ function isPidAlive(pid: number): boolean {
   } catch (err: any) {
     // EPERM means "exists but not permitted" – treat as alive
     return err?.code === 'EPERM'
+  }
+}
+
+async function ensureZeroTierBeforeLaunch(gameUrl: string, networkId: string) {
+  const id = String(networkId || '').trim()
+  if (!id) return
+  sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'LAN: conectando ao ZeroTier…' })
+  console.log('[LAN] ZeroTier autoconnect: joining', id)
+
+  const join = await ztJoinNetwork(id)
+  if (!join.success) {
+    console.warn('[LAN] ZeroTier join failed:', join.error)
+    sendGameLaunchStatus({ gameUrl, status: 'starting', message: `LAN: ${join.error} (continuando)` })
+    return
+  }
+
+  // Poll listnetworks a few times to surface status/IP quickly (best effort).
+  const startedAt = Date.now()
+  let lastNet: any = null
+  while (Date.now() - startedAt < 8000) {
+    const nets = await ztListNetworks()
+    if (nets.success) {
+      const net = (nets.data || []).find((n: any) => String(n?.nwid || '').toLowerCase() === id.toLowerCase())
+      if (net) {
+        lastNet = net
+        const status = String(net.status || '').toUpperCase()
+        const ips = Array.isArray(net.assignedAddresses) ? net.assignedAddresses : []
+        const ip = ips[0]
+        if (status === 'OK' && ip) {
+          sendGameLaunchStatus({ gameUrl, status: 'starting', message: `LAN: conectado (${ip})` })
+          return
+        }
+        if (status === 'ACCESS_DENIED') {
+          sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'LAN: aguardando autorização no ZeroTier Central…' })
+          return
+        }
+        if (status) {
+          sendGameLaunchStatus({ gameUrl, status: 'starting', message: `LAN: ${status}${ip ? ` (${ip})` : ''}…` })
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+
+  if (lastNet) {
+    const ips = Array.isArray(lastNet.assignedAddresses) ? lastNet.assignedAddresses : []
+    const ip = ips[0]
+    sendGameLaunchStatus({ gameUrl, status: 'starting', message: `LAN: conectado${ip ? ` (${ip})` : ''}` })
+  } else {
+    sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'LAN: conectado (status desconhecido)' })
   }
 }
 
@@ -1033,6 +1084,48 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
     }
   })
 
+  ipcMain.handle('set-game-lan-settings', async (_event, gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => {
+    try {
+      const mode = payload?.mode ? String(payload.mode) : null
+      const networkId = payload?.networkId ? String(payload.networkId) : null
+      const autoconnect = payload?.autoconnect ? 1 : 0
+      updateGameInfo(gameUrl, { lan_mode: mode, lan_network_id: networkId, lan_autoconnect: autoconnect })
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('zerotier-status', async () => {
+    const res = await ztGetStatus()
+    if (!res.success) return { success: false, error: res.error, code: res.code }
+    return { success: true, status: res.data }
+  })
+
+  ipcMain.handle('zerotier-list-networks', async () => {
+    const res = await ztListNetworks()
+    if (!res.success) return { success: false, error: res.error, code: res.code }
+    return { success: true, networks: res.data }
+  })
+
+  ipcMain.handle('zerotier-list-peers', async () => {
+    const res = await ztListPeers()
+    if (!res.success) return { success: false, error: res.error, code: res.code }
+    return { success: true, peers: res.data }
+  })
+
+  ipcMain.handle('zerotier-join', async (_event, networkId: string) => {
+    const res = await ztJoinNetwork(networkId)
+    if (!res.success) return { success: false, error: res.error, code: res.code }
+    return { success: true }
+  })
+
+  ipcMain.handle('zerotier-leave', async (_event, networkId: string) => {
+    const res = await ztLeaveNetwork(networkId)
+    if (!res.success) return { success: false, error: res.error, code: res.code }
+    return { success: true }
+  })
+
   ipcMain.handle('get-settings', async () => {
     try {
       const downloadPath = getSetting('download_path') || path.join(process.cwd(), 'downloads')
@@ -1124,16 +1217,28 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
     console.log('[Launch] 📁 Install directory:', installDir)
     console.log('[Launch] 📁 Directory exists:', fs.existsSync(installDir))
 
-	    if (!fs.existsSync(installDir)) {
-	      console.error('[Launch] ❌ Install dir not found:', installDir)
-	      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Pasta de instalação não encontrada' })
-	      return { success: false, error: 'Pasta de instalação não encontrada' }
-	    }
+		    if (!fs.existsSync(installDir)) {
+		      console.error('[Launch] ❌ Install dir not found:', installDir)
+		      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Pasta de instalação não encontrada' })
+		      return { success: false, error: 'Pasta de instalação não encontrada' }
+		    }
 
-    // Try to auto-find executable if not configured or missing
-    if (!exePath || !fs.existsSync(path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath))) {
-      console.log('[Launch] 🔍 Auto-searching for executable...')
-      const autoExe = installDir ? findExecutableInDir(installDir) : null
+        // Plug&play: if LAN mode is enabled for this game, try to auto-connect before launching.
+        try {
+          const lanMode = String(game.lan_mode || 'steam')
+          const lanNetworkId = String(game.lan_network_id || '').trim()
+          const lanAutoconnect = Number(game.lan_autoconnect || 0) === 1
+          if (lanMode === 'zerotier' && lanAutoconnect && lanNetworkId) {
+            await ensureZeroTierBeforeLaunch(gameUrl, lanNetworkId)
+          }
+        } catch (err: any) {
+          console.warn('[LAN] Failed to ensure ZeroTier connectivity:', err?.message || err)
+        }
+
+	    // Try to auto-find executable if not configured or missing
+	    if (!exePath || !fs.existsSync(path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath))) {
+	      console.log('[Launch] 🔍 Auto-searching for executable...')
+	      const autoExe = installDir ? findExecutableInDir(installDir) : null
       if (autoExe) {
         exePath = autoExe
         updateGameInfo(gameUrl, { executable_path: exePath })

@@ -59,6 +59,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setGameVersion: (gameUrl: string, version: string) => ipcRenderer.invoke('set-game-version', gameUrl, version),
   setGameTitle: (gameUrl: string, title: string) => ipcRenderer.invoke('set-game-title', gameUrl, title),
   setGameProtonOptions: (gameUrl: string, runtime: string, options: any) => ipcRenderer.invoke('set-game-proton-options', gameUrl, runtime, options),
+  setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => ipcRenderer.invoke('set-game-lan-settings', gameUrl, payload),
+  zerotierStatus: () => ipcRenderer.invoke('zerotier-status'),
+  zerotierListNetworks: () => ipcRenderer.invoke('zerotier-list-networks'),
+  zerotierListPeers: () => ipcRenderer.invoke('zerotier-list-peers'),
+  zerotierJoin: (networkId: string) => ipcRenderer.invoke('zerotier-join', networkId),
+  zerotierLeave: (networkId: string) => ipcRenderer.invoke('zerotier-leave', networkId),
   onDownloadProgress: (cb: (data: DownloadProgressPayload) => void) => {
     const handler = (_event: IpcRendererEvent, data: DownloadProgressPayload) => cb(data)
     ipcRenderer.on('download-progress', handler)

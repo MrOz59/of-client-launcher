@@ -34,11 +34,14 @@ CREATE TABLE IF NOT EXISTS games (
   update_date DATETIME,
   is_favorite INTEGER DEFAULT 0,
   play_time INTEGER DEFAULT 0,
-  executable_path TEXT,
-  proton_prefix TEXT,
-  proton_runtime TEXT,
-  proton_options TEXT
-);
+	  executable_path TEXT,
+	  proton_prefix TEXT,
+	  proton_runtime TEXT,
+	  proton_options TEXT,
+	  lan_mode TEXT,
+	  lan_network_id TEXT,
+	  lan_autoconnect INTEGER DEFAULT 0
+	);
 
 CREATE TABLE IF NOT EXISTS downloads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,10 +71,13 @@ CREATE TABLE IF NOT EXISTS settings (
   ensureColumn(db, 'downloads', 'title', 'TEXT')
   ensureColumn(db, 'downloads', 'info_hash', 'TEXT')
 	  ensureColumn(db, 'games', 'game_id', 'TEXT')
-	  ensureColumn(db, 'games', 'proton_prefix', 'TEXT')
-	  ensureColumn(db, 'games', 'proton_runtime', 'TEXT')
-	  ensureColumn(db, 'games', 'proton_options', 'TEXT')
-	  ensureColumn(db, 'games', 'steam_app_id', 'TEXT')
+		  ensureColumn(db, 'games', 'proton_prefix', 'TEXT')
+		  ensureColumn(db, 'games', 'proton_runtime', 'TEXT')
+		  ensureColumn(db, 'games', 'proton_options', 'TEXT')
+		  ensureColumn(db, 'games', 'steam_app_id', 'TEXT')
+		  ensureColumn(db, 'games', 'lan_mode', 'TEXT')
+		  ensureColumn(db, 'games', 'lan_network_id', 'TEXT')
+		  ensureColumn(db, 'games', 'lan_autoconnect', 'INTEGER')
 
   dbInstance = db
   return dbInstance
@@ -126,10 +132,13 @@ export function updateGameInfo(url: string, data: {
   file_size?: string
   executable_path?: string
   proton_runtime?: string | null
-  proton_options?: string | null
-  proton_prefix?: string | null
-  steam_app_id?: string | null
-}) {
+	  proton_options?: string | null
+	  proton_prefix?: string | null
+	  steam_app_id?: string | null
+	  lan_mode?: string | null
+	  lan_network_id?: string | null
+	  lan_autoconnect?: number | null
+	}) {
   const db = initDb()
   const fields = Object.keys(data).map(key => `${key} = ?`).join(', ')
   const values = Object.values(data)

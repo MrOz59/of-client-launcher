@@ -76,6 +76,12 @@ declare global {
       setGameVersion: (gameUrl: string, version: string) => Promise<{ success: boolean; error?: string }>
       setGameTitle: (gameUrl: string, title: string) => Promise<{ success: boolean; error?: string }>
       setGameProtonOptions: (gameUrl: string, runtime: string, options: any) => Promise<{ success: boolean; error?: string }>
+      setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>
+      zerotierStatus: () => Promise<{ success: boolean; status?: any; error?: string; code?: string }>
+      zerotierListNetworks: () => Promise<{ success: boolean; networks?: any[]; error?: string; code?: string }>
+      zerotierListPeers: () => Promise<{ success: boolean; peers?: any[]; error?: string; code?: string }>
+      zerotierJoin: (networkId: string) => Promise<{ success: boolean; error?: string; code?: string }>
+      zerotierLeave: (networkId: string) => Promise<{ success: boolean; error?: string; code?: string }>
       getOnlineFixIni: (gameUrl: string) => Promise<{ success: boolean; path?: string; content?: string; exists?: boolean; error?: string }>
       saveOnlineFixIni: (gameUrl: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>
       fetchGameImage: (gameUrl: string, title: string) => Promise<{ success: boolean; imageUrl?: string; error?: string }>
