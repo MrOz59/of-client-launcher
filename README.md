@@ -55,7 +55,7 @@ Workflows prontos:
 - `.github/workflows/release.yml`: ao criar tag `v*`, compila e publica um Release com os arquivos.
 
 Instalação:
-- Arch: `sudo pacman -U <arquivo>.pkg.tar.zst`
+- Arch: `sudo pacman -U <arquivo>.pacman` (ou `.pkg.tar.*`, se existir)
 - rpm: `sudo rpm -Uvh <arquivo>.rpm` (ou `dnf install ./arquivo.rpm`)
 
 ## Notes
