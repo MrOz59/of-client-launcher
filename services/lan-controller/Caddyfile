@@ -1,0 +1,5 @@
+vpn.mroz.dev.br {
+  encode zstd gzip
+  reverse_proxy lan-controller:8787
+}
+

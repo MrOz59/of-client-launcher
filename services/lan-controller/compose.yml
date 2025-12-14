@@ -1,0 +1,37 @@
+services:
+  lan-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lan-controller
+    restart: unless-stopped
+    environment:
+      PORT: 8787
+      ZT_API_TOKEN: ${ZT_API_TOKEN}
+      ZT_DEFAULT_NETWORK_ID: ${ZT_DEFAULT_NETWORK_ID}
+      LAN_CONTROLLER_API_KEY: ${LAN_CONTROLLER_API_KEY}
+    networks:
+      - lan
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: lan-controller-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - lan
+
+networks:
+  lan:
+    name: lan-controller-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+

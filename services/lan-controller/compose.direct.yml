@@ -1,0 +1,32 @@
+services:
+  lan-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lan-controller
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+    environment:
+      PORT: 8787
+      ZT_API_TOKEN: ${ZT_API_TOKEN}
+      ZT_DEFAULT_NETWORK_ID: ${ZT_DEFAULT_NETWORK_ID}
+      LAN_CONTROLLER_API_KEY: ${LAN_CONTROLLER_API_KEY}
+      VPN_ENABLE: ${VPN_ENABLE}
+      WG_INTERFACE: ${WG_INTERFACE}
+      WG_LISTEN_PORT: ${WG_LISTEN_PORT}
+      WG_ENDPOINT_HOST: ${WG_ENDPOINT_HOST}
+      WG_ENDPOINT_PORT: ${WG_ENDPOINT_PORT}
+      WG_SERVER_ADDRESS: ${WG_SERVER_ADDRESS}
+      WG_SUBNET_CIDR: ${WG_SUBNET_CIDR}
+      WG_DNS: ${WG_DNS}
+      VPN_STATE_FILE: /data/vpn-state.json
+      VPN_ROOM_TTL_DAYS: ${VPN_ROOM_TTL_DAYS}
+      VPN_PEER_TTL_DAYS: ${VPN_PEER_TTL_DAYS}
+    ports:
+      - "8787:8787"
+      - "51820:51820/udp"
+    volumes:
+      - ./data:/data

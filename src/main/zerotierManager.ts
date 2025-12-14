@@ -7,9 +7,9 @@ const execFileAsync = promisify(execFile)
 
 export type ZeroTierResult<T> =
   | { success: true; data: T }
-  | { success: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' }
+  | { success: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' | 'NEEDS_ROOT' }
 
-type RunResult = { ok: true; stdout: string } | { ok: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' }
+type RunResult = { ok: true; stdout: string } | { ok: false; error: string; code?: 'NOT_INSTALLED' | 'FAILED' | 'NEEDS_ROOT' }
 
 async function runZeroTierCli(args: string[], timeoutMs = 8000): Promise<RunResult> {
   const candidates: string[] = []
@@ -69,6 +69,14 @@ async function runZeroTierCli(args: string[], timeoutMs = 8000): Promise<RunResu
       lastErr = err
       if (err?.code === 'ENOENT') continue
       const stderr = String(err?.stderr || err?.message || 'Falha ao executar zerotier-cli')
+      const msg = stderr.toLowerCase()
+      if (
+        msg.includes('authtoken.secret') ||
+        msg.includes('try again as root') ||
+        (msg.includes('not found or readable') && msg.includes('/var/lib/zerotier-one'))
+      ) {
+        return { ok: false, code: 'NEEDS_ROOT', error: stderr.trim() }
+      }
       return { ok: false, code: 'FAILED', error: stderr.trim() }
     }
   }

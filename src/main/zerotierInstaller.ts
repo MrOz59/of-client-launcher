@@ -129,3 +129,43 @@ export async function installZeroTierArchWithPkexec(): Promise<{ success: boolea
   return { success: false, error: 'Falha ao executar pkexec/sudo para instalar e iniciar o ZeroTier' }
 }
 
+export async function fixZeroTierLinuxAccess(username: string): Promise<{ success: boolean; error?: string; reloginRequired?: boolean }> {
+  if (process.platform !== 'linux') return { success: false, error: 'Disponível apenas no Linux' }
+
+  const user = String(username || '').trim()
+  if (!user) return { success: false, error: 'Usuário inválido' }
+
+  const cmd = [
+    'sh',
+    '-lc',
+    [
+      // Ensure service is running (systemd-based distros).
+      'if command -v systemctl >/dev/null 2>&1; then systemctl enable --now zerotier-one >/dev/null 2>&1 || systemctl start zerotier-one || true; fi',
+      // Ensure group exists (package usually creates it, but keep safe).
+      'getent group zerotier-one >/dev/null 2>&1 || groupadd zerotier-one || true',
+      // Add user to group (requires re-login to take effect).
+      `usermod -aG zerotier-one '${user}' || true`,
+      // Fix token permissions if present.
+      'if [ -f /var/lib/zerotier-one/authtoken.secret ]; then chgrp zerotier-one /var/lib/zerotier-one/authtoken.secret || true; chmod 640 /var/lib/zerotier-one/authtoken.secret || true; fi',
+      // Fix socket permissions if present (service may recreate).
+      'if [ -S /var/lib/zerotier-one/zerotier-one.sock ]; then chgrp zerotier-one /var/lib/zerotier-one/zerotier-one.sock || true; chmod 660 /var/lib/zerotier-one/zerotier-one.sock || true; fi',
+      'echo OK'
+    ].join(' && ')
+  ]
+
+  const trySpawn = (bin: string, args: string[]) =>
+    new Promise<{ ok: boolean; code: number | null }>((resolve) => {
+      const p = spawn(bin, args, { stdio: 'inherit' })
+      p.on('close', (code) => resolve({ ok: code === 0, code }))
+      p.on('error', () => resolve({ ok: false, code: null }))
+    })
+
+  // Prefer pkexec (GUI prompt), fallback to sudo in terminal contexts.
+  const pkexecRes = await trySpawn('pkexec', cmd)
+  if (pkexecRes.ok) return { success: true, reloginRequired: true }
+
+  const sudoRes = await trySpawn('sudo', cmd)
+  if (sudoRes.ok) return { success: true, reloginRequired: true }
+
+  return { success: false, error: 'Falha ao executar pkexec/sudo para corrigir acesso do ZeroTier' }
+}

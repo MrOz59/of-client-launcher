@@ -58,7 +58,7 @@ export default function LibraryTab() {
     protonOptionsJson: string
     protonPrefix: string
     steamAppId: string | null
-    lanMode: 'steam' | 'zerotier'
+    lanMode: 'steam' | 'ofvpn'
     lanNetworkId: string
     lanAutoconnect: boolean
   } | null>(null)
@@ -80,18 +80,25 @@ export default function LibraryTab() {
   const gamesRef = useRef<Game[]>([])
   const [protonPrefix, setProtonPrefix] = useState<string>('')
   const [steamAppId, setSteamAppId] = useState<string>('')
-  type LanMode = 'steam' | 'zerotier'
+  type LanMode = 'steam' | 'ofvpn'
   const [lanMode, setLanMode] = useState<LanMode>('steam')
   const [lanNetworkId, setLanNetworkId] = useState<string>('')
   const [lanAutoconnect, setLanAutoconnect] = useState<boolean>(false)
-  const [ztLoading, setZtLoading] = useState(false)
-  const [ztError, setZtError] = useState<string | null>(null)
-  const [ztErrorCode, setZtErrorCode] = useState<string | null>(null)
-  const [ztStatus, setZtStatus] = useState<any>(null)
-  const [ztNetworks, setZtNetworks] = useState<any[]>([])
-  const [ztPeers, setZtPeers] = useState<any[]>([])
-  const [ztActionBusy, setZtActionBusy] = useState(false)
-  const [ztInstallHelp, setZtInstallHelp] = useState<any>(null)
+  const [lanDefaultNetworkId, setLanDefaultNetworkId] = useState<string>('')
+  const [lanRoomCode, setLanRoomCode] = useState<string>('')
+  const [lanRoomBusy, setLanRoomBusy] = useState<boolean>(false)
+  const [lanRoomLastCode, setLanRoomLastCode] = useState<string>('')
+  const [vpnLoading, setVpnLoading] = useState(false)
+  const [vpnHasLoaded, setVpnHasLoaded] = useState(false)
+  const vpnHasLoadedRef = useRef(false)
+  const [vpnError, setVpnError] = useState<string | null>(null)
+  const [vpnStatus, setVpnStatus] = useState<any>(null)
+  const [vpnPeers, setVpnPeers] = useState<any[]>([])
+  const [vpnActionBusy, setVpnActionBusy] = useState(false)
+  const [vpnConfig, setVpnConfig] = useState<string>('')
+  const [vpnLocalIp, setVpnLocalIp] = useState<string>('')
+  const [vpnHostIp, setVpnHostIp] = useState<string>('')
+  const [vpnConnected, setVpnConnected] = useState<boolean>(false)
   const [iniLastSavedAt, setIniLastSavedAt] = useState<number | null>(null)
   const iniAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [launchingGames, setLaunchingGames] = useState<Record<string, { status: 'starting' | 'running' | 'exited' | 'error'; pid?: number; code?: number | null; message?: string; stderrTail?: string; protonLogPath?: string; updatedAt: number }>>({})
@@ -178,6 +185,22 @@ export default function LibraryTab() {
   useEffect(() => {
     gamesRef.current = games
   }, [games])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await window.electronAPI.getSettings()
+        if (cancelled) return
+        if (res?.success && res.settings) {
+          setLanDefaultNetworkId(String(res.settings?.lanDefaultNetworkId || '').trim())
+        }
+      } catch {}
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const spinnerStyles = `
     @keyframes of-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -780,11 +803,24 @@ export default function LibraryTab() {
 	    loadProtonFromGame(game)
 	    loadProtonRuntimes()
 	    setProtonPrefix(game.proton_prefix || '')
-	    setSteamAppId(game.steam_app_id ? String(game.steam_app_id) : '')
+      setSteamAppId(game.steam_app_id ? String(game.steam_app_id) : '')
 	    setLanMode(((game.lan_mode as LanMode) || 'steam') as LanMode)
 	    setLanNetworkId(game.lan_network_id || '')
 	    setLanAutoconnect(!!(game.lan_autoconnect || 0))
 	    setBannerManualUrl(game.image_url || '')
+      setLanRoomCode('')
+      setLanRoomLastCode('')
+      vpnHasLoadedRef.current = false
+      setVpnLoading(false)
+      setVpnHasLoaded(false)
+      setVpnError(null)
+      setVpnStatus(null)
+      setVpnPeers([])
+      setVpnActionBusy(false)
+      setVpnConfig('')
+      setVpnLocalIp('')
+      setVpnHostIp('')
+      setVpnConnected(false)
 
 	    lastSavedConfigRef.current = {
 	      title: (game.title || '').trim(),
@@ -830,79 +866,70 @@ export default function LibraryTab() {
   useEffect(() => {
     if (!showConfig) return
     if (configTab !== 'lan') return
-    if (lanMode !== 'zerotier') return
+    if (lanMode !== 'ofvpn') return
+
     let cancelled = false
     let timer: any = null
+    let lastStatusJson = ''
+    let lastPeersJson = ''
 
     const refresh = async () => {
       if (cancelled) return
-      setZtLoading(true)
-      setZtError(null)
-      setZtErrorCode(null)
+      if (!vpnHasLoadedRef.current) setVpnLoading(true)
       try {
-        const st = await window.electronAPI.zerotierStatus()
+        const st = await window.electronAPI.vpnStatus?.()
         if (cancelled) return
-        if (!st.success) {
-          setZtError(st.error || 'Falha ao ler status do ZeroTier')
-          setZtErrorCode((st as any).code || null)
-          setZtStatus(null)
-          setZtNetworks([])
-          setZtPeers([])
+        if (!st?.success) {
+          setVpnError(st?.error || 'Falha ao consultar VPN')
           return
         }
 
-        const [nets, peers] = await Promise.all([
-          window.electronAPI.zerotierListNetworks(),
-          window.electronAPI.zerotierListPeers()
-        ])
-        if (cancelled) return
-        if (!nets.success) {
-          setZtError(nets.error || 'Falha ao listar redes do ZeroTier')
-          setZtErrorCode((nets as any).code || null)
-          setZtStatus(st.status || null)
-          setZtNetworks([])
-          setZtPeers([])
-          return
+        setVpnError(null)
+        const nextStatus = {
+          controller: st.controller || null,
+          installed: !!st.installed,
+          installError: st.installError || null
         }
-        if (!peers.success) {
-          setZtError(peers.error || 'Falha ao listar peers do ZeroTier')
-          setZtErrorCode((peers as any).code || null)
-          setZtStatus(st.status || null)
-          setZtNetworks(Array.isArray(nets.networks) ? nets.networks : [])
-          setZtPeers([])
-          return
+        const statusJson = JSON.stringify(nextStatus)
+        if (statusJson !== lastStatusJson) {
+          lastStatusJson = statusJson
+          setVpnStatus(nextStatus)
         }
 
-        setZtStatus(st.status || null)
-        setZtNetworks(Array.isArray(nets.networks) ? nets.networks : [])
-        setZtPeers(Array.isArray(peers.peers) ? peers.peers : [])
+        const code = String(lanNetworkId || '').trim()
+        if (code) {
+          const peersRes = await window.electronAPI.vpnRoomPeers?.(code)
+          if (cancelled) return
+          if (peersRes?.success) {
+            const nextPeers = Array.isArray(peersRes.peers) ? peersRes.peers : []
+            const peersJson = JSON.stringify(nextPeers)
+            if (peersJson !== lastPeersJson) {
+              lastPeersJson = peersJson
+              setVpnPeers(nextPeers)
+            }
+          }
+        }
       } catch (err: any) {
         if (cancelled) return
-        setZtError(err?.message || 'Falha ao consultar ZeroTier')
-        setZtErrorCode(null)
-        setZtStatus(null)
-        setZtNetworks([])
-        setZtPeers([])
+        setVpnError(err?.message || 'Falha ao consultar VPN')
       } finally {
-        if (!cancelled) setZtLoading(false)
+        if (!cancelled) {
+          setVpnLoading(false)
+          if (!vpnHasLoadedRef.current) {
+            vpnHasLoadedRef.current = true
+            setVpnHasLoaded(true)
+          }
+        }
       }
     }
 
-    const loadHelp = async () => {
-      try {
-        const res = await window.electronAPI.zerotierInstallHelp?.()
-        if (res?.success) setZtInstallHelp(res.help || null)
-      } catch {}
-    }
-
     void refresh()
-    void loadHelp()
     timer = setInterval(refresh, 4000)
     return () => {
       cancelled = true
       if (timer) clearInterval(timer)
     }
-  }, [showConfig, configTab, lanMode])
+  }, [showConfig, configTab, lanMode, lanNetworkId])
 
   useEffect(() => {
     if (!showConfig) return
@@ -1695,38 +1722,211 @@ export default function LibraryTab() {
                         value={lanMode}
                         onChange={(e) => setLanMode((e.target.value as LanMode) || 'steam')}
                         style={{ padding: '10px 12px', background: '#0f0f0f', border: '1px solid #2f2f2f', borderRadius: '8px', color: '#fff' }}
-                      >
-                        <option value="steam">Padrão (Steam/Epic/OnlineFix)</option>
-                        <option value="zerotier">LAN (ZeroTier)</option>
-                      </select>
+	                      >
+	                        <option value="steam">Padrão (Steam/Epic/OnlineFix)</option>
+	                        <option value="ofvpn">VPN (OF)</option>
+	                      </select>
                       <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 4 }}>
-                        Use LAN (ZeroTier) apenas quando o multiplayer padrão não funcionar ou para jogos LAN/Direct IP.
+                        Use VPN (OF) apenas quando o multiplayer padrão não funcionar ou para jogos LAN/Direct IP.
                       </div>
                     </div>
 
-                    {lanMode === 'zerotier' && (
+                    {lanMode === 'ofvpn' && (
                       <>
                         <div className="input-row">
-                          <label>ZeroTier Network ID (sala)</label>
-                          <div className="input-inline" style={{ gap: 8, flexWrap: 'wrap' }}>
+                          <label>Sala</label>
+                          <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 4 }}>
+                            Crie uma sala para jogar via LAN/Direct IP com seus amigos, ou entre usando um código. O launcher conecta automaticamente.
+                          </div>
+
+                          <div className="input-inline" style={{ gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                             <input
-                              value={lanNetworkId}
-                              onChange={(e) => setLanNetworkId(e.target.value.trim())}
-                              placeholder="16 hex chars (ex: 8056c2e21c000001)"
-                              style={{ flex: 1, minWidth: 240 }}
+                              value={lanRoomCode}
+                              onChange={(e) =>
+                                setLanRoomCode(
+                                  e.target.value
+                                    .toUpperCase()
+                                    .replace(/[^A-HJ-NP-Z2-9]/g, '')
+                                    .slice(0, 16)
+                                )
+                              }
+                              placeholder="Código da sala (ex: ABCD2345EFGH)"
+                              style={{ flex: 1, minWidth: 220 }}
                             />
                             <button
-                              className="btn ghost"
-                              disabled={ztActionBusy || !lanNetworkId}
+                              className="btn"
+                              disabled={lanRoomBusy || vpnActionBusy}
                               onClick={async () => {
-                                setZtActionBusy(true)
+                                setLanRoomBusy(true)
+                                setVpnActionBusy(true)
                                 try {
-                                  const res = await window.electronAPI.zerotierJoin(lanNetworkId)
-                                  if (!res.success) throw new Error(res.error || 'Falha ao conectar na rede')
+                                  const res = await window.electronAPI.vpnRoomCreate?.({ name: `OF ${titleValue || ''}`.trim() })
+                                  if (!res?.success) throw new Error(res?.error || 'Falha ao criar sala')
+                                  const code = String(res.code || '').trim()
+                                  const cfg = String(res.config || '').trim()
+                                  if (!code || !cfg) throw new Error('Resposta inválida do servidor')
+                                  setLanRoomLastCode(code)
+                                  setLanRoomCode(code)
+                                  setLanNetworkId(code)
+                                  setVpnConfig(cfg)
+                                  setVpnLocalIp(String(res.vpnIp || '').trim())
+                                  setVpnHostIp(String(res.vpnIp || '').trim())
+
+                                  const conn = await window.electronAPI.vpnConnect?.(cfg)
+                                  if (!conn?.success) {
+                                    if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em “Instalar VPN”)')
+                                    throw new Error(conn?.error || 'Falha ao conectar')
+                                  }
+                                  setVpnConnected(true)
+                                } catch (err: any) {
+                                  alert(err?.message || 'Falha ao criar sala')
+                                } finally {
+                                  setLanRoomBusy(false)
+                                  setVpnActionBusy(false)
+                                }
+                              }}
+                            >
+                              {lanRoomBusy ? 'Criando…' : 'Criar sala'}
+                            </button>
+                            <button
+                              className="btn ghost"
+                              disabled={lanRoomBusy || vpnActionBusy || !lanRoomCode.trim()}
+                              onClick={async () => {
+                                const code = lanRoomCode.trim().toUpperCase()
+                                setLanRoomBusy(true)
+                                setVpnActionBusy(true)
+                                try {
+                                  const res = await window.electronAPI.vpnRoomJoin?.(code, { name: `OF ${titleValue || ''}`.trim() })
+                                  if (!res?.success) throw new Error(res?.error || 'Falha ao entrar na sala')
+                                  const cfg = String(res.config || '').trim()
+                                  if (!cfg) throw new Error('Resposta inválida do servidor')
+                                  setLanRoomLastCode(code)
+                                  setLanNetworkId(code)
+                                  setVpnConfig(cfg)
+                                  setVpnLocalIp(String(res.vpnIp || '').trim())
+                                  setVpnHostIp(String(res.hostIp || '').trim())
+
+                                  const conn = await window.electronAPI.vpnConnect?.(cfg)
+                                  if (!conn?.success) {
+                                    if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em “Instalar VPN”)')
+                                    throw new Error(conn?.error || 'Falha ao conectar')
+                                  }
+                                  setVpnConnected(true)
+                                } catch (err: any) {
+                                  alert(err?.message || 'Falha ao entrar na sala')
+                                } finally {
+                                  setLanRoomBusy(false)
+                                  setVpnActionBusy(false)
+                                }
+                              }}
+                            >
+                              Entrar
+                            </button>
+                          </div>
+
+                          <div className="input-inline" style={{ gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                            <button
+                              className="btn ghost"
+                              disabled={!lanNetworkId.trim()}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(lanNetworkId.trim())
+                                } catch {
+                                  alert('Não foi possível copiar')
+                                }
+                              }}
+                            >
+                              Copiar código
+                            </button>
+                            <button
+                              className="btn ghost"
+                              disabled={!vpnHostIp}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(vpnHostIp)
+                                } catch {
+                                  alert('Não foi possível copiar')
+                                }
+                              }}
+                            >
+                              Copiar IP do host
+                            </button>
+                            <button
+                              className="btn ghost"
+                              disabled={!vpnLocalIp}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(vpnLocalIp)
+                                } catch {
+                                  alert('Não foi possível copiar')
+                                }
+                              }}
+                            >
+                              Copiar meu IP
+                            </button>
+                          </div>
+
+                          {(lanNetworkId || vpnLocalIp || vpnHostIp) ? (
+                            <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 10 }}>
+                              Sala: <code>{lanNetworkId || '—'}</code>
+                              {' • '}Meu IP: <code>{vpnLocalIp || '—'}</code>
+                              {' • '}Host: <code>{vpnHostIp || '—'}</code>
+                            </div>
+                          ) : null}
+
+                          <label className="toggle" style={{ marginTop: 12, display: 'inline-flex' }}>
+                            <input type="checkbox" checked={lanAutoconnect} onChange={(e) => setLanAutoconnect(e.target.checked)} />
+                            <span>Conectar automaticamente (ao abrir o jogo)</span>
+                          </label>
+                        </div>
+
+                        <div className="input-row">
+                          <label>Status VPN</label>
+                          {vpnLoading ? (
+                            <div className="small text-muted" style={{ color: '#9ca3af' }}>Atualizando…</div>
+                          ) : vpnError ? (
+                            <div className="warning-text">{vpnError}</div>
+                          ) : (
+                            <div className="small text-muted" style={{ color: '#9ca3af' }}>
+                              {vpnStatus?.installed ? 'WireGuard instalado' : 'WireGuard não instalado'}
+                              {vpnStatus?.installError ? ` • ${vpnStatus.installError}` : ''}
+                              {vpnConnected ? ' • Conectado' : ''}
+                            </div>
+                          )}
+
+                          <div className="input-inline" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                            <button
+                              className="btn"
+                              disabled={vpnActionBusy}
+                              onClick={async () => {
+                                if (!confirm('Instalar/configurar WireGuard agora? (pode pedir senha/admin)')) return
+                                setVpnActionBusy(true)
+                                try {
+                                  const res = await window.electronAPI.vpnInstall?.()
+                                  if (!res?.success) throw new Error(res?.error || 'Falha ao instalar')
+                                  alert('VPN instalada/configurada. Tente criar/entrar na sala novamente.')
+                                } catch (err: any) {
+                                  alert(err?.message || 'Falha ao instalar')
+                                } finally {
+                                  setVpnActionBusy(false)
+                                }
+                              }}
+                            >
+                              Instalar VPN
+                            </button>
+                            <button
+                              className="btn ghost"
+                              disabled={vpnActionBusy || !vpnConfig}
+                              onClick={async () => {
+                                setVpnActionBusy(true)
+                                try {
+                                  const res = await window.electronAPI.vpnConnect?.(vpnConfig)
+                                  if (!res?.success) throw new Error(res?.error || 'Falha ao conectar')
+                                  setVpnConnected(true)
                                 } catch (err: any) {
                                   alert(err?.message || 'Falha ao conectar')
                                 } finally {
-                                  setZtActionBusy(false)
+                                  setVpnActionBusy(false)
                                 }
                               }}
                             >
@@ -1734,130 +1934,49 @@ export default function LibraryTab() {
                             </button>
                             <button
                               className="btn ghost"
-                              disabled={ztActionBusy || !lanNetworkId}
+                              disabled={vpnActionBusy}
                               onClick={async () => {
-                                setZtActionBusy(true)
+                                setVpnActionBusy(true)
                                 try {
-                                  const res = await window.electronAPI.zerotierLeave(lanNetworkId)
-                                  if (!res.success) throw new Error(res.error || 'Falha ao sair da rede')
+                                  const res = await window.electronAPI.vpnDisconnect?.()
+                                  if (!res?.success) throw new Error(res?.error || 'Falha ao desconectar')
+                                  setVpnConnected(false)
                                 } catch (err: any) {
                                   alert(err?.message || 'Falha ao desconectar')
                                 } finally {
-                                  setZtActionBusy(false)
+                                  setVpnActionBusy(false)
                                 }
                               }}
                             >
                               Desconectar
                             </button>
                           </div>
-                          <label className="toggle" style={{ marginTop: 10, display: 'inline-flex' }}>
-                            <input type="checkbox" checked={lanAutoconnect} onChange={(e) => setLanAutoconnect(e.target.checked)} />
-                            <span>Conectar automaticamente (ao abrir o jogo)</span>
-                          </label>
                         </div>
 
-                        <div className="input-row">
-                          <label>Status ZeroTier</label>
-                          {ztLoading ? (
-                            <div className="small text-muted" style={{ color: '#9ca3af' }}>Atualizando…</div>
-                          ) : ztError ? (
-                            <div className="warning-text">
-                              {ztError}
-                              <div className="small text-muted" style={{ color: '#9ca3af', marginTop: 6 }}>
-                                Dica: instale o ZeroTier e garanta que `zerotier-cli` funciona no seu sistema (no Linux pode exigir permissões elevadas).
-                              </div>
-                              <div className="input-inline" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                                <button
-                                  className="btn accent"
-                                  onClick={async () => {
-                                    const url = ztInstallHelp?.docsUrl || 'https://www.zerotier.com/download/'
-                                    await window.electronAPI.openExternal?.(url)
-                                  }}
-                                >
-                                  Abrir instalador/site
-                                </button>
-                                {ztInstallHelp?.recommended?.commands?.length ? (
-                                  <button
-                                    className="btn ghost"
-                                    onClick={async () => {
-                                      try {
-                                        await navigator.clipboard.writeText(String(ztInstallHelp.recommended.commands.join(' && ')))
-                                      } catch {
-                                        alert('Não foi possível copiar')
-                                      }
-                                    }}
-                                  >
-                                    Copiar comando
-                                  </button>
-                                ) : null}
-                                {(() => {
-                                  const id = String(ztInstallHelp?.distroId || '').toLowerCase()
-                                  const like = String(ztInstallHelp?.distroLike || '').toLowerCase()
-                                  const isArchLike = ztInstallHelp?.platform === 'linux' && (id.includes('cachyos') || id.includes('arch') || like.includes('arch'))
-                                  const showAutoInstall = isArchLike && (ztErrorCode === 'NOT_INSTALLED' || String(ztError || '').toLowerCase().includes('não encontrado') || String(ztError || '').toLowerCase().includes('not found'))
-                                  if (!showAutoInstall) return null
-                                  return (
-                                    <button
-                                      className="btn ghost"
-                                      disabled={ztActionBusy}
-                                      onClick={async () => {
-                                        if (!confirm('Instalar e iniciar ZeroTier agora? (vai pedir senha/admin)')) return
-                                        setZtActionBusy(true)
-                                        try {
-                                          const res = await window.electronAPI.zerotierInstallArch?.()
-                                          if (!res?.success) throw new Error(res?.error || 'Falha ao instalar')
-                                        } catch (err: any) {
-                                          alert(err?.message || 'Falha ao instalar')
-                                        } finally {
-                                          setZtActionBusy(false)
-                                        }
-                                      }}
-                                    >
-                                      Instalar (Arch/CachyOS)
-                                    </button>
-                                  )
-                                })()}
-                              </div>
+                        {lanNetworkId.trim() ? (
+                          <div className="input-row">
+                            <label>Peers na sala</label>
+                            <div className="small text-muted" style={{ color: '#9ca3af', marginBottom: 8 }}>
+                              Atualiza automaticamente.
                             </div>
-                          ) : (
-                            <div className="small text-muted" style={{ color: '#9ca3af' }}>
-                              {ztStatus?.online ? 'ONLINE' : 'OFFLINE'} • {ztStatus?.address || 'sem endereço'} • {ztPeers.length} peers
-                            </div>
-                          )}
-                        </div>
-
-                        {(() => {
-                          const current = lanNetworkId ? ztNetworks.find((n: any) => String(n?.nwid || '').toLowerCase() === lanNetworkId.toLowerCase()) : null
-                          const addrs = Array.isArray(current?.assignedAddresses) ? current.assignedAddresses : []
-                          const ip = addrs[0] || ''
-                          return (
-                            <div className="input-row">
-                              <label>Rede atual</label>
-                              <div className="small text-muted" style={{ color: '#9ca3af' }}>
-                                {current
-                                  ? `${current.name || current.nwid} • ${current.status || 'unknown'}${addrs.length ? ` • ${addrs.join(', ')}` : ''}`
-                                  : (lanNetworkId ? 'Ainda não conectado (ou aguardando autorização no ZeroTier Central)' : 'Defina um Network ID')}
+                            {vpnPeers.length ? (
+                              <div className="small" style={{ color: '#e5e7eb' }}>
+                                {vpnPeers.map((p: any) => (
+                                  <div key={`${p?.ip || ''}-${p?.name || ''}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                    <span style={{ color: '#9ca3af' }}>{p?.name || 'peer'}</span>
+                                    <span><code>{p?.ip || ''}</code>{p?.role ? ` • ${p.role}` : ''}</span>
+                                  </div>
+                                ))}
                               </div>
-                              <div className="input-inline" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                                <button
-                                  className="btn ghost"
-                                  disabled={!ip}
-                                  onClick={async () => {
-                                    try {
-                                      await navigator.clipboard.writeText(ip)
-                                    } catch {
-                                      alert('Não foi possível copiar')
-                                    }
-                                  }}
-                                >
-                                  Copiar IP do host
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })()}
+                            ) : (
+                              <div className="small text-muted" style={{ color: '#9ca3af' }}>Nenhum peer listado ainda.</div>
+                            )}
+                          </div>
+                        ) : null}
                       </>
                     )}
+
+                    
                   </div>
                 )}
               </div>

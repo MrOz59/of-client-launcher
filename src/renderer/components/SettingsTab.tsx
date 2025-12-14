@@ -8,6 +8,8 @@ interface Settings {
   parallelDownloads: number
   useProton: boolean
   protonPath: string
+  lanDefaultNetworkId?: string
+  lanControllerUrl?: string
 }
 
 export default function SettingsTab() {
@@ -17,7 +19,9 @@ export default function SettingsTab() {
     autoUpdate: false,
     parallelDownloads: 3,
     useProton: false,
-    protonPath: ''
+    protonPath: '',
+    lanDefaultNetworkId: '',
+    lanControllerUrl: 'https://vpn.mroz.dev.br',
   })
   const [runtimes, setRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
   const [saving, setSaving] = useState(false)
@@ -245,6 +249,44 @@ export default function SettingsTab() {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="settings-section">
+        <h3>VPN (OF)</h3>
+
+        <div className="settings-item">
+          <div className="settings-label">
+            <div className="settings-label-title">Sala padrão (código)</div>
+            <div className="settings-label-description">
+              Usado para conectar automaticamente ao abrir o jogo (se habilitado por jogo). Deixe vazio se você só cria/entra manualmente.
+            </div>
+          </div>
+          <div className="settings-control">
+            <input
+              type="text"
+              placeholder="(opcional) Código da sala"
+              value={settings.lanDefaultNetworkId || ''}
+              onChange={(e) => setSettings((prev) => ({ ...prev, lanDefaultNetworkId: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        <div className="settings-item">
+          <div className="settings-label">
+            <div className="settings-label-title">VPN Controller URL</div>
+            <div className="settings-label-description">
+              Por padrão: <code>https://vpn.mroz.dev.br</code>. Só altere se você estiver rodando seu próprio controller.
+            </div>
+          </div>
+          <div className="settings-control">
+            <input
+              type="text"
+              placeholder="https://vpn.mroz.dev.br"
+              value={settings.lanControllerUrl || ''}
+              onChange={(e) => setSettings((prev) => ({ ...prev, lanControllerUrl: e.target.value }))}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="settings-section">
