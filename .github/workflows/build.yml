@@ -155,19 +155,13 @@ jobs:
         with:
           path: artifacts
 
-      - name: Ensure nightly release exists (draft)
+      - name: Delete existing nightly release
         shell: bash
         run: |
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-          gh release create "${NIGHTLY_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --prerelease \
-            --title "${NIGHTLY_TITLE}" \
-            --notes "Automated build for ${GITHUB_SHA}" \
-            --target "${GITHUB_SHA}" || true
+          gh release delete "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" --yes || true
+          gh api repos/${GITHUB_REPOSITORY}/git/refs/tags/${NIGHTLY_TAG} -X DELETE || true
 
-      - name: Upload assets to nightly release
+      - name: Create nightly release and upload assets
         shell: bash
         run: |
           shopt -s globstar nullglob
@@ -178,14 +172,11 @@ jobs:
           if [ ${#files[@]} -eq 0 ]; then
             echo "No artifacts downloaded"; exit 1
           fi
-          gh release upload "${NIGHTLY_TAG}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
-
-      - name: Publish nightly release (remove draft)
-        shell: bash
-        run: |
-          gh release edit "${NIGHTLY_TAG}" \
+          gh release create "${NIGHTLY_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --draft=false \
             --prerelease \
             --title "${NIGHTLY_TITLE}" \
-            --notes "Automated build for ${GITHUB_SHA}"
+            --notes "Automated build for ${GITHUB_SHA}" \
+            --target "${GITHUB_SHA}" \
+            "${files[@]}"
+
