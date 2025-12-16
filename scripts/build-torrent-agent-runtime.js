@@ -30,8 +30,16 @@ function rmrf(p) {
   }
 }
 
-function copyRecursive(src, dest) {
-  fs.cpSync(src, dest, { recursive: true, force: true })
+function copyRecursive(src, dest, platform) {
+  if (platform === 'win32') {
+    // On Windows, use robocopy to avoid issues with symlinks/app aliases
+    const res = spawnSync('robocopy', [src, dest, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP'], { stdio: 'inherit' })
+    // robocopy returns 0-7 for success, 8+ for errors
+    if (res.error) throw res.error
+    if (res.status >= 8) throw new Error(`robocopy failed with code ${res.status}`)
+  } else {
+    fs.cpSync(src, dest, { recursive: true, force: true })
+  }
 }
 
 function main() {
@@ -66,7 +74,25 @@ function main() {
   }
 
   console.log('[torrent-agent] copying python root:', pythonRoot)
-  copyRecursive(pythonRoot, outRoot)
+  copyRecursive(pythonRoot, outRoot, platform)
+
+  // On Windows, remove problematic files that may have been copied as empty directories
+  // (like python3.exe which is an AppExecution Alias, not a real file)
+  if (platform === 'win32') {
+    const problematicPaths = ['python3.exe', 'python3w.exe']
+    for (const p of problematicPaths) {
+      const fullPath = path.join(outRoot, p)
+      try {
+        const stat = fs.lstatSync(fullPath)
+        if (stat.isDirectory()) {
+          console.log(`[torrent-agent] removing problematic directory: ${p}`)
+          fs.rmSync(fullPath, { recursive: true, force: true })
+        }
+      } catch {
+        // doesn't exist, that's fine
+      }
+    }
+  }
 
   // Create a stable executable path expected by app:
   // resources/torrent-agent/python/<platform>-<arch>/python(.exe)

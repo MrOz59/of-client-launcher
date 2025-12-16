@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Launcher/updater for online-fix.me games (prototype)",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrOz59/of-client-launcher.git"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "build:preload": "node build-preload.js",

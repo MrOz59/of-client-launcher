@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version:*)",
+      "Bash(npm --version:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm install:*)",
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(npx tsc:*)",
+      "Bash(pkill:*)",
+      "Bash(npm run build:preload:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(innoextract:*)"
+    ]
+  }
+}
