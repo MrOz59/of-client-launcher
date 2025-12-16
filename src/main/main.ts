@@ -1078,11 +1078,24 @@ async function createMainWindow() {
     }
   })
 
+  // Log renderer errors
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[Renderer] Failed to load:', errorCode, errorDescription, validatedURL)
+  })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Renderer] Process gone:', details)
+  })
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 2) console.log('[Renderer Console]', message)
+  })
+
   if (process.env.NODE_ENV === 'development' || require('electron-is-dev')) {
     mainWindow.loadURL('http://localhost:5173')
     mainWindow.webContents.openDevTools() // Open DevTools in development
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+    const htmlPath = path.join(__dirname, '../renderer/index.html')
+    console.log('[Main] Loading renderer from:', htmlPath)
+    mainWindow.loadFile(htmlPath)
   }
 
   mainWindow.on('closed', () => {
