@@ -35,12 +35,9 @@ export default function App() {
     }
   }
 
-  const handleLoginClick = async () => {
-    if (!isLoggedIn) {
-      await window.electronAPI.openAuthWindow()
-      // After login window closes, check status again
-      setTimeout(checkLoginStatus, 1000)
-    }
+  const handleLoginClick = () => {
+    // Just switch to store tab instead of opening a new window
+    setActiveTab('store')
   }
 
   const getTabTitle = (tab: Tab) => {
