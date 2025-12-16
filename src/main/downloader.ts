@@ -104,6 +104,7 @@ type ActiveTorrent = {
   torrent?: Torrent
   aliases: Set<string>
   finish?: (err?: Error) => void
+  pausedRequested?: boolean
 }
 
 // Keep track of active torrents for pause/resume/dedupe
@@ -143,7 +144,7 @@ export function downloadTorrent(
 
   return new Promise<void>((resolve, reject) => {
     const client = new WebTorrent()
-    const record: ActiveTorrent = { client, aliases: new Set(lookupIds) }
+    const record: ActiveTorrent = { client, aliases: new Set(lookupIds), pausedRequested: false }
 
     let cleaned = false
     let finished = false
@@ -185,6 +186,11 @@ export function downloadTorrent(
 
       torrent.on('download', () => {
         if (rejectIfCancelled()) return
+        // If pause was requested before metadata was ready, enforce it.
+        if (record.pausedRequested) {
+          try { extendedTorrent.pause() } catch {}
+          return
+        }
         const progress = (extendedTorrent.downloaded / extendedTorrent.length) * 100
         const details = {
           progress,
@@ -198,12 +204,19 @@ export function downloadTorrent(
       })
 
       torrent.on('done', () => {
+        // Stop seeding immediately after download completes.
+        try { extendedTorrent.pause() } catch {}
         finish()
       })
 
       torrent.on('error', (err: Error) => {
         finish(err)
       })
+
+      // Apply paused state ASAP once we have a torrent object.
+      if (record.pausedRequested) {
+        try { extendedTorrent.pause() } catch {}
+      }
     })
 
     client.on('error', (err: Error) => {
@@ -217,20 +230,22 @@ export function downloadTorrent(
 
 export function pauseTorrent(torrentId: string): boolean {
   const active = activeTorrents.get(torrentId)
-  if (active?.torrent) {
-    active.torrent.pause()
-    return true
+  if (!active) return false
+  active.pausedRequested = true
+  if (active.torrent) {
+    try { active.torrent.pause() } catch { /* ignore */ }
   }
-  return false
+  return true
 }
 
 export function resumeTorrent(torrentId: string): boolean {
   const active = activeTorrents.get(torrentId)
-  if (active?.torrent) {
-    active.torrent.resume()
-    return true
+  if (!active) return false
+  active.pausedRequested = false
+  if (active.torrent) {
+    try { active.torrent.resume() } catch { /* ignore */ }
   }
-  return false
+  return true
 }
 
 export function cancelTorrent(torrentId: string): boolean {

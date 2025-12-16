@@ -6,56 +6,62 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  create:
-    name: Create Release (draft)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create draft release
-        run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --title "${GITHUB_REF_NAME}" \
-            --notes ""
-
   windows:
     name: Windows (NSIS)
     runs-on: windows-latest
-    needs: [create]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            %LOCALAPPDATA%\\electron\\Cache
+            %LOCALAPPDATA%\\electron-builder\\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run dist:win
-      - name: Upload assets to release
-        shell: bash
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" \
-            release/*.exe \
-            release/*.yml \
-            release/*.blockmap \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
 
   linux:
     name: Linux (AppImage + deb + rpm)
     runs-on: ubuntu-latest
-    needs: [create]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -66,21 +72,23 @@ jobs:
           node scripts/patch-electron-builder.js
           npm run build
           npx electron-builder --linux appimage deb rpm --publish never
-      - name: Upload assets to release
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" \
-            release/*.AppImage \
-            release/*.deb \
-            release/*.rpm \
-            release/*.yml \
-            release/*.blockmap \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
 
   pacman:
     name: Arch Linux (pacman)
     runs-on: ubuntu-latest
-    needs: [create]
+    permissions:
+      contents: read
     container:
       image: archlinux:latest
     steps:
@@ -88,29 +96,58 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive libxcrypt-compat github-cli
+          pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive libxcrypt-compat
       - run: npm ci
       - name: Build pacman package
         run: |
           node scripts/patch-electron-builder.js
           npm run build
           npx electron-builder --linux pacman --publish never
-      - name: Upload assets to release
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" \
-            release/*.pacman \
-            release/*.pkg.tar.* \
-            release/*.yml \
-            release/*.blockmap \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacman
+          path: |
+            release/*.pacman
+            release/*.pkg.tar.*
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
 
   publish:
     name: Publish Release
     runs-on: ubuntu-latest
     needs: [windows, linux, pacman]
+    permissions:
+      contents: write
     steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create draft release (idempotent)
+        shell: bash
+        run: |
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "" || true
+
+      - name: Upload assets
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          files=(artifacts/**/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts downloaded"; exit 1
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+
       - name: Publish release (remove draft)
+        shell: bash
         run: |
           gh release edit "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \

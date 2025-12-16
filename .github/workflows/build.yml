@@ -1,15 +1,20 @@
-name: Build
+name: Nightly
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_TOKEN: ${{ github.token }}
   NIGHTLY_TAG: nightly
   NIGHTLY_TITLE: "Nightly (main)"
 
@@ -17,47 +22,53 @@ jobs:
   windows:
     name: Windows (NSIS)
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            %LOCALAPPDATA%\\electron\\Cache
+            %LOCALAPPDATA%\\electron-builder\\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run dist:win
-      - name: Ensure nightly release exists (draft)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-          gh release create "${NIGHTLY_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --prerelease \
-            --title "${NIGHTLY_TITLE}" \
-            --notes "Automated build for ${GITHUB_SHA}" \
-            --target "${GITHUB_SHA}" || \
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
-      - name: Upload Windows assets to nightly release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          shopt -s nullglob
-          assets=(release/*.exe release/*.yml release/*.blockmap)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No release assets found in release/"; exit 1
-          fi
-          gh release upload "${NIGHTLY_TAG}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
 
   linux:
     name: Linux (AppImage + deb + rpm)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -68,49 +79,62 @@ jobs:
           node scripts/patch-electron-builder.js
           npm run build
           npx electron-builder --linux appimage deb rpm --publish never
-      - name: Ensure nightly release exists (draft)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-          gh release create "${NIGHTLY_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --prerelease \
-            --title "${NIGHTLY_TITLE}" \
-            --notes "Automated build for ${GITHUB_SHA}" \
-            --target "${GITHUB_SHA}" || \
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
-      - name: Upload Linux assets to nightly release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          shopt -s nullglob
-          assets=(release/*.AppImage release/*.deb release/*.rpm release/*.yml release/*.blockmap)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No release assets found in release/"; exit 1
-          fi
-          gh release upload "${NIGHTLY_TAG}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
 
   pacman:
     name: Arch Linux (pacman)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive libxcrypt-compat github-cli
+          pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive libxcrypt-compat
       - run: npm ci
       - name: Build pacman package
         run: |
           node scripts/patch-electron-builder.js
           npm run build
           npx electron-builder --linux pacman --publish never
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacman
+          path: |
+            release/*.pacman
+            release/*.pkg.tar.*
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+
+  publish-nightly:
+    name: Publish Nightly Release
+    runs-on: ubuntu-latest
+    needs: [windows, linux, pacman]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Ensure nightly release exists (draft)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
@@ -120,25 +144,18 @@ jobs:
             --prerelease \
             --title "${NIGHTLY_TITLE}" \
             --notes "Automated build for ${GITHUB_SHA}" \
-            --target "${GITHUB_SHA}" || \
-          gh release view "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null
-      - name: Upload pacman assets to nightly release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+            --target "${GITHUB_SHA}" || true
+
+      - name: Upload assets to nightly release
         shell: bash
         run: |
-          shopt -s nullglob
-          assets=(release/*.pacman release/*.pkg.tar.* release/*.yml release/*.blockmap)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No release assets found in release/"; exit 1
+          shopt -s globstar nullglob
+          files=(artifacts/**/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts downloaded"; exit 1
           fi
-          gh release upload "${NIGHTLY_TAG}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload "${NIGHTLY_TAG}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
 
-  publish-nightly:
-    name: Publish Nightly Release
-    runs-on: ubuntu-latest
-    needs: [windows, linux, pacman]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
       - name: Publish nightly release (remove draft)
         shell: bash
         run: |

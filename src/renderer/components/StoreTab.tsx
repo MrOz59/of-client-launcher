@@ -558,8 +558,13 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     subtree: true
   });
 
-  // Periodic cleanup every 5 seconds (less aggressive)
-  setInterval(removeAds, 5000);
+  // Periodic cleanup fallback (very low frequency to avoid CPU churn)
+  setInterval(() => {
+    try {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+    } catch {}
+    removeAds();
+  }, 20000);
 
   // Prevent body overflow lock from ads
   const bodyObserver = new MutationObserver(() => {
@@ -642,6 +647,7 @@ const launcherScript = `
 (function() {
   console.log('[OF-Launcher] Active');
   let games = new Map();
+  let scheduled = false;
   function findCards() {
     const cards = [];
     ['.short-story', '.story', 'article'].some(s => {
@@ -652,6 +658,18 @@ const launcherScript = `
       return cards.length > 0;
     });
     return cards;
+  }
+  function scheduleUpdate() {
+    if (scheduled) return;
+    scheduled = true;
+    const run = () => {
+      scheduled = false;
+      try { update(); } catch {}
+    };
+    try {
+      if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(run);
+    } catch {}
+    setTimeout(run, 50);
   }
   function update() {
     findCards().forEach(c => {
@@ -672,11 +690,11 @@ const launcherScript = `
     if (e.data.type === 'OF_LAUNCHER_UPDATE_GAMES') {
       games.clear();
       (e.data.games || []).forEach(g => games.set(g.url, g));
-      update();
+      scheduleUpdate();
     }
   });
-  new MutationObserver(update).observe(document.body, { childList: true, subtree: true });
-  update();
+  new MutationObserver(scheduleUpdate).observe(document.body, { childList: true, subtree: true });
+  scheduleUpdate();
 })();
 `
 
@@ -752,8 +770,11 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
     // Listen for console messages from webview
     wv.addEventListener('console-message', (e: any) => {
-      const msg = e.message
-      console.log('[Webview Console]', msg)
+      const msg = String(e?.message || '')
+      if ((import.meta as any)?.env?.DEV) {
+        // Web pages can spam console; only show in dev.
+        console.log('[Webview Console]', msg)
+      }
 
       // Check if it's a torrent download request
       if (msg.includes('[TORRENT_DOWNLOAD_REQUEST]') && ensureUsable()) {
@@ -849,17 +870,17 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
     }
 
     wv.addEventListener('will-navigate', (e: any) => {
-      console.log('[StoreTab] will-navigate event:', e.url)
+      if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] will-navigate event:', e.url)
       if (handleTorrentNav(e.url)) {
-        console.log('[StoreTab] Preventing navigation to torrent link')
+        if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing navigation to torrent link')
         e.preventDefault()
       }
     })
 
     wv.addEventListener('new-window', (e: any) => {
-      console.log('[StoreTab] new-window event:', e.url)
+      if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] new-window event:', e.url)
       if (handleTorrentNav(e.url)) {
-        console.log('[StoreTab] Preventing new window for torrent link')
+        if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing new window for torrent link')
         e.preventDefault()
       }
     })

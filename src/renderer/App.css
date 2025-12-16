@@ -337,10 +337,66 @@ body {
 .game-action-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 8px;
   background: #0f0f0f;
   gap: 6px;
+  position: relative;
+}
+
+.action-menu {
+  position: relative;
+}
+
+.action-btn.menu:hover {
+  color: #e5e7eb;
+}
+
+.action-menu-panel {
+  position: absolute;
+  left: 0;
+  bottom: 46px;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(15, 15, 15, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.55);
+  z-index: 50;
+}
+
+.action-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.action-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.action-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-menu-sep {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 6px 6px;
+}
+
+.action-menu-item.danger {
+  color: #ef4444;
 }
 
 .action-btn {
@@ -889,6 +945,21 @@ body {
   border: 1px solid #2f2f2f;
   border-radius: 8px;
   color: #fff;
+}
+
+.input-row select {
+  width: 100%;
+  padding: 10px 12px;
+  background: #0f0f0f;
+  border: 1px solid #2f2f2f;
+  border-radius: 8px;
+  color: #fff;
+  outline: none;
+}
+
+.input-row input:focus,
+.input-row select:focus {
+  border-color: #3a3a3a;
 }
 
 .input-inline {

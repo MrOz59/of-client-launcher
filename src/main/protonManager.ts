@@ -142,6 +142,13 @@ export function getDefaultPrefixPath() {
   return getPrefixPath(DEFAULT_PREFIX_NAME)
 }
 
+// Compute expected default prefix path for a given runtime WITHOUT creating directories.
+export function getExpectedDefaultPrefixPath(runtimePath?: string) {
+  const key = runtimeKeyFor(runtimePath)
+  const name = key ? `${DEFAULT_PREFIX_NAME}__rt_${key}` : DEFAULT_PREFIX_NAME
+  return path.join(DEFAULT_PREFIX_DIR, name)
+}
+
 function readPrefixSentinel(prefixPath: string): { proton?: string } | null {
   try {
     const sentinel = path.join(prefixPath, DEFAULT_DEPS_SENTINEL)
@@ -509,36 +516,94 @@ export async function ensureGamePrefixFromDefault(
   if (existing) return existing
 
   const task = (async () => {
-    onProgress?.('Preparando prefixo base...')
-    const defaultPrefix = await ensureDefaultPrefix(runtimePath)
+    onProgress?.('Preparando prefixo do jogo...')
+
     const gamePrefix = getManagedPrefixPath(gameSlug, runtimePath)
 
-	  const meta = readDefaultDepsMeta(gamePrefix)
-	  const hasSentinel = !!meta && (meta.schema === DEFAULT_DEPS_SCHEMA || !!meta.initialized)
-	  const desiredRunner = getRunnerForRuntime(runtimePath) || undefined
-	  const runtimeMismatch = !!(meta?.proton && desiredRunner && meta.proton !== desiredRunner)
-	  if (runtimeMismatch) {
-	    console.log('[Proton] Game prefix runtime changed, recreating:', meta?.proton, '->', desiredRunner)
-	  }
+    // ✅ Default prefix NÃO deve ser necessário pra rodar o jogo.
+    // Ele vira apenas uma otimização: se existir e estiver válido, a gente clona.
+    const defaultPrefixCandidate = getManagedPrefixPath(DEFAULT_PREFIX_NAME, runtimePath)
+    const defaultMeta = readDefaultDepsMeta(defaultPrefixCandidate)
+    const defaultLooksValid = !!defaultMeta && (defaultMeta.schema === DEFAULT_DEPS_SCHEMA || !!defaultMeta.initialized)
+
+    const meta = readDefaultDepsMeta(gamePrefix)
+    const hasSentinel = !!meta && (meta.schema === DEFAULT_DEPS_SCHEMA || !!meta.initialized)
+    const desiredRunner = getRunnerForRuntime(runtimePath) || undefined
+    const runtimeMismatch = !!(meta?.proton && desiredRunner && meta.proton !== desiredRunner)
+    if (runtimeMismatch) {
+      console.log('[Proton] Game prefix runtime changed, recreating:', meta?.proton, '->', desiredRunner)
+    }
 
     if (forceRecreate || !fs.existsSync(gamePrefix) || !hasSentinel || runtimeMismatch) {
       onProgress?.('Criando/atualizando prefixo do jogo...')
-      const ok = await clonePrefix(defaultPrefix, gamePrefix)
-      if (!ok) {
-        // fallback: try initializing from scratch
-        await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress)
-      }
-    }
 
-    // Default-prefix strategy: do not run per-game _CommonRedist installers automatically.
-    // Those installers often have incompatible silent flags and can prompt/fail.
+      // REMOVIDO: Não tenta clonar do default para evitar mistura com saves/default.
+      // Sempre inicializa do zero para independência total.
+      // Se quiser reativar, descomente:
+      // let ok = false
+      // if (defaultLooksValid && fs.existsSync(defaultPrefixCandidate)) {
+      //   ok = await clonePrefix(defaultPrefixCandidate, gamePrefix)
+      // }
+      // if (!ok) {
+        await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress)
+      // }
+    }
 
     // Ensure base deps are applied/upgraded (handles old sentinel schema or previous failures).
     if (forceRecreate) {
       const { compatDataPath } = resolveCompatDataPaths(gamePrefix, true)
       resetVcredistState(compatDataPath)
     }
+
+    // Run prefix initialization and common vcredist steps.
     await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress)
+
+    // If the game package includes an _CommonRedist folder, attempt to run its installers
+    // inside the game prefix (DirectX / bundled vcredist). This helps games that ship their
+    // own redistributables instead of relying on winetricks.
+    try {
+      if (_commonRedistPath) {
+        onProgress?.('Aplicando redistribuíveis do jogo (se houver)...')
+        await ensureGameCommonRedists(_commonRedistPath, gamePrefix, runtimePath, onProgress)
+      }
+    } catch (err) {
+      console.warn('[Proton] Failed to run game _CommonRedist installers:', err)
+    }
+
+    // Verification: ensure essential files exist in the winePrefix/system32 after initialization.
+    try {
+      const { winePrefix } = resolveCompatDataPaths(gamePrefix, true)
+      const sys32 = path.join(winePrefix, 'drive_c', 'windows', 'system32')
+      const essentials = [
+        'wineboot.exe', // wine runtime helper
+        'vcruntime140.dll', // common VC runtime
+        'msvcp140.dll'
+      ]
+
+      const missing = essentials.filter(e => !fs.existsSync(path.join(sys32, e)))
+      if (missing.length) {
+        console.warn('[Proton] Missing essential files in game prefix system32:', missing)
+        onProgress?.('Detectados arquivos essenciais ausentes no prefixo; tentando reparar...')
+
+        // Try one more time to initialize (run wineboot + winetricks) to fix missing runtime bits.
+        const repaired = await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress)
+        if (repaired) {
+          const stillMissing = essentials.filter(e => !fs.existsSync(path.join(sys32, e)))
+          if (stillMissing.length) {
+            console.warn('[Proton] Reparação incompleta, arquivos ainda ausentes:', stillMissing)
+            onProgress?.('Falha ao reparar todos os arquivos essenciais do prefixo; verifique winetricks/proton runtime')
+          } else {
+            console.log('[Proton] Reparação bem-sucedida; arquivos essenciais presentes')
+            onProgress?.('Prefixo reparado com sucesso')
+          }
+        } else {
+          console.warn('[Proton] ensurePrefixDefaults failed during repair attempt')
+          onProgress?.('Não foi possível reparar o prefixo automaticamente')
+        }
+      }
+    } catch (err) {
+      console.warn('[Proton] Failed to verify/repair game prefix system32:', err)
+    }
 
     return gamePrefix
   })()
@@ -552,12 +617,63 @@ export async function ensureGamePrefixFromDefault(
 }
 
 export function setCustomProtonRoot(root: string) {
-  setSetting('proton_runtime_root', root)
+  const normalized = String(root || '').trim()
+  if (!normalized) return
+
+  const current = getCustomProtonRoots()
+  const expanded = expandHome(normalized)
+  const next = Array.from(new Set([...current, expanded])).filter(Boolean)
+
+  // Persist new format
+  try {
+    setSetting('proton_runtime_roots', JSON.stringify(next))
+  } catch {
+    // ignore
+  }
+
+  // Keep legacy key as "last added" for compatibility.
+  setSetting('proton_runtime_root', normalized)
+}
+
+export function setCustomProtonRoots(roots: string[]) {
+  const list = Array.isArray(roots) ? roots : []
+  const normalized = list
+    .map((r) => String(r || '').trim())
+    .filter(Boolean)
+    .map((r) => expandHome(r))
+
+  const uniq = Array.from(new Set(normalized))
+  try {
+    setSetting('proton_runtime_roots', JSON.stringify(uniq))
+  } catch {
+    // ignore
+  }
+
+  // Keep legacy key for older builds.
+  const last = list.length ? String(list[list.length - 1] || '').trim() : ''
+  setSetting('proton_runtime_root', last)
 }
 
 function getCustomProtonRoots(): string[] {
-  const root = getSetting('proton_runtime_root')
-  return root ? [expandHome(root)] : []
+  const roots: string[] = []
+  const legacy = getSetting('proton_runtime_root')
+  if (legacy) roots.push(expandHome(String(legacy)))
+
+  const raw = getSetting('proton_runtime_roots')
+  if (raw) {
+    try {
+      const parsed = JSON.parse(String(raw))
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === 'string' && item.trim()) roots.push(expandHome(item.trim()))
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return Array.from(new Set(roots)).filter(Boolean)
 }
 
 function scanProtonDir(dir: string, source: string): ProtonRuntime[] {
@@ -676,9 +792,10 @@ export function buildProtonLaunch(
     ? '-all,+err,+warn,+fixme,+seh,+loaddll,-unwind'
     : '-all'
 
+  // ✅ CORREÇÃO PRINCIPAL: Use 0 por default para non-Steam apps, evitando integração com Steam.exe
   const steamAppId = options?.steamAppId != null && String(options.steamAppId).trim() !== ''
     ? String(options.steamAppId).trim()
-    : '480'
+    : '0'
 
   const logsDir = path.join(os.homedir(), '.local/share/of-launcher/logs/proton', slug)
   try { fs.mkdirSync(logsDir, { recursive: true }) } catch {}
@@ -699,38 +816,36 @@ export function buildProtonLaunch(
     }
   }
 
-	  return {
-	    runner,
-	    protonDir,
-	    prefix,
-	    winePrefix,
-	    cmd,
-	    args: finalArgs,
-	    env: Object.fromEntries(
-	      Object.entries({
-	        ...sanitizeEnvForProton(process.env),
-	        ...envOptions,
-	        STEAM_COMPAT_DATA_PATH: prefix,
-	        STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,  // ✅ CORREÇÃO!
-	        STEAM_COMPAT_INSTALL_PATH: options?.installDir ? String(options.installDir) : undefined,
-	        STEAM_COMPAT_APP_ID: steamAppId,
-	        STEAM_GAME_ID: steamAppId,
-	        SteamAppId: steamAppId,
-	        SteamGameId: steamAppId,
-	        WINEPREFIX: winePrefix,
-	        PROTON_LOG: logging ? '1' : undefined,
-	        PROTON_ENABLE_LOG: logging ? '1' : undefined,
-	        PROTON_LOG_DIR: logsDir,
-	        PROTON_EAC_RUNTIME: fs.existsSync(path.join(steamRoot, 'steamapps/common/Proton EasyAntiCheat Support'))
-	          ? path.join(steamRoot, 'steamapps/common/Proton EasyAntiCheat Support')
-	          : undefined,
-	        PROTON_BATTLEYE_RUNTIME: fs.existsSync(path.join(steamRoot, 'steamapps/common/Proton BattlEye Runtime'))
-	          ? path.join(steamRoot, 'steamapps/common/Proton BattlEye Runtime')
-	          : undefined
-	      }).filter(([, value]) => value !== undefined)
-	    )
-	  }
-	}
+  return {
+    runner,
+    protonDir,
+    prefix,
+    winePrefix,
+    cmd,
+    args: finalArgs,
+    env: Object.fromEntries(
+      Object.entries({
+        ...sanitizeEnvForProton(process.env),
+        ...envOptions,
+        STEAM_COMPAT_DATA_PATH: prefix,
+        STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,  // ✅ CORREÇÃO!
+        STEAM_COMPAT_INSTALL_PATH: options?.installDir ? String(options.installDir) : undefined,
+        STEAM_COMPAT_APP_ID: steamAppId,
+        SteamAppId: steamAppId,
+        WINEPREFIX: winePrefix,
+        PROTON_LOG: logging ? '1' : undefined,
+        PROTON_ENABLE_LOG: logging ? '1' : undefined,
+        PROTON_LOG_DIR: logsDir,
+        PROTON_EAC_RUNTIME: fs.existsSync(path.join(steamRoot, 'steamapps/common/Proton EasyAntiCheat Support'))
+          ? path.join(steamRoot, 'steamapps/common/Proton EasyAntiCheat Support')
+          : undefined,
+        PROTON_BATTLEYE_RUNTIME: fs.existsSync(path.join(steamRoot, 'steamapps/common/Proton BattlEye Runtime'))
+          ? path.join(steamRoot, 'steamapps/common/Proton BattlEye Runtime')
+          : undefined
+      }).filter(([, value]) => value !== undefined)
+    )
+  }
+}
 
 // =====================================================
 // 🆕 SISTEMA DE PRÉ-REQUISITOS MELHORADO
@@ -783,8 +898,15 @@ function sanitizeEnvForProton(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 function getProtonWineOverrides(protonDir?: string | null): NodeJS.ProcessEnv {
   if (!protonDir) return {}
   try {
+    const filesRoot = fs.existsSync(path.join(protonDir, 'files')) ? path.join(protonDir, 'files') : null
+    const distRoot = fs.existsSync(path.join(protonDir, 'dist')) ? path.join(protonDir, 'dist') : null
+    const root = filesRoot || distRoot
+
     const candidates = [
       // Common layout (Valve Proton / GE-Proton)
+      root ? { wine: path.join(root, 'bin', 'wine'), wineserver: path.join(root, 'bin', 'wineserver') } : null,
+      root ? { wine: path.join(root, 'bin', 'wine64'), wineserver: path.join(root, 'bin', 'wineserver') } : null,
+      // Fallback (older expectations)
       {
         wine: path.join(protonDir, 'files', 'bin', 'wine'),
         wineserver: path.join(protonDir, 'files', 'bin', 'wineserver')
@@ -793,7 +915,6 @@ function getProtonWineOverrides(protonDir?: string | null): NodeJS.ProcessEnv {
         wine: path.join(protonDir, 'files', 'bin', 'wine64'),
         wineserver: path.join(protonDir, 'files', 'bin', 'wineserver')
       },
-      // Older layout
       {
         wine: path.join(protonDir, 'dist', 'bin', 'wine'),
         wineserver: path.join(protonDir, 'dist', 'bin', 'wineserver')
@@ -802,16 +923,39 @@ function getProtonWineOverrides(protonDir?: string | null): NodeJS.ProcessEnv {
         wine: path.join(protonDir, 'dist', 'bin', 'wine64'),
         wineserver: path.join(protonDir, 'dist', 'bin', 'wineserver')
       }
-    ]
+    ].filter(Boolean) as Array<{ wine: string; wineserver: string }>
 
     for (const c of candidates) {
       if (fs.existsSync(c.wine) && fs.existsSync(c.wineserver)) {
         const binDir = path.dirname(c.wine)
         const prevPath = process.env.PATH || ''
+
+        // ✅ MELHORIA CRÍTICA: adicionar libs do Proton ao LD_LIBRARY_PATH
+        const libDirs: string[] = []
+        const base = path.dirname(binDir) // .../files or .../dist
+        const probe = [
+          path.join(base, 'lib'),
+          path.join(base, 'lib64'),
+          path.join(base, 'lib', 'wine'),
+          path.join(base, 'lib64', 'wine'),
+          path.join(base, 'lib', 'wine', 'i386-unix'),
+          path.join(base, 'lib64', 'wine', 'x86_64-unix'),
+        ]
+        for (const p of probe) {
+          try { if (fs.existsSync(p)) libDirs.push(p) } catch { /* ignore */ }
+        }
+
+        const prevLd = process.env.LD_LIBRARY_PATH || ''
+        const mergedLd = [
+          ...libDirs.filter(Boolean),
+          ...(prevLd ? [prevLd] : [])
+        ].filter(Boolean).join(':')
+
         return {
           WINE: c.wine,
           WINESERVER: c.wineserver,
-          PATH: `${binDir}${path.delimiter}${prevPath}`
+          PATH: `${binDir}${path.delimiter}${prevPath}`,
+          LD_LIBRARY_PATH: mergedLd || prevLd
         }
       }
     }
@@ -905,9 +1049,12 @@ const COMMON_PREREQUISITES = {
   ]
 }
 
+// ✅ MELHORIA: winetricks agora tenta rodar via "proton run" e, se falhar,
+// usa fallback com overrides corretos (WINE/WINESERVER + LD_LIBRARY_PATH do Proton).
 async function runWinetricks(
-  prefixPath: string, 
-  components: string[], 
+  runner: string,
+  prefixCompatDataPath: string,
+  components: string[],
   env: NodeJS.ProcessEnv,
   onProgress?: (msg: string) => void,
   protonDir?: string | null
@@ -920,69 +1067,93 @@ async function runWinetricks(
 
   const winePrefix = typeof env.WINEPREFIX === 'string' && env.WINEPREFIX.trim() !== ''
     ? String(env.WINEPREFIX)
-    : prefixPath
-
-  const protonOverrides = getProtonWineOverrides(protonDir)
-  const winetricksEnv: NodeJS.ProcessEnv = {
-    ...env,
-    ...protonOverrides,
-    WINEPREFIX: winePrefix,
-    WINETRICKS_NONINTERACTIVE: '1'
-  }
+    : path.join(prefixCompatDataPath, 'pfx')
 
   let okAll = true
+
   for (const component of components) {
     try {
       onProgress?.(`Installing ${component} via winetricks...`)
       console.log(`[Proton] Installing ${component} via winetricks...`)
-      
-      await new Promise<void>((resolve) => {
-        // --force avoids interactive prompts when upstream redistributables update hashes (common with vcrun2022).
-        const proc = spawn(winetricksCmd, ['--force', '-q', component], {
-          env: winetricksEnv,
-          stdio: ['ignore', 'pipe', 'pipe']
-        })
-        
-        proc.stdout?.on('data', (data: Buffer) => {
-          console.log(`[winetricks] ${data.toString().trim()}`)
-        })
-        
-        proc.stderr?.on('data', (data: Buffer) => {
-          console.log(`[winetricks] ${data.toString().trim()}`)
-        })
-        
-        proc.on('close', (code) => {
-          if (code === 0) {
-            console.log(`[Proton] ✅ ${component} installed successfully`)
-          } else {
-            console.warn(`[Proton] ⚠️ ${component} installation returned code ${code}`)
-            okAll = false
+
+      // 1) Primeira tentativa: rodar winetricks "por dentro" do Proton (pode falhar em algumas distros/Protons)
+      const attemptProtonRun = await new Promise<number | null>((resolve) => {
+        const proc = spawn(
+          runner,
+          ['run', winetricksCmd, '--force', '-q', component],
+          {
+            env: {
+              ...env,
+              STEAM_COMPAT_DATA_PATH: prefixCompatDataPath,
+              WINETRICKS_NONINTERACTIVE: '1'
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
           }
-          resolve()
-        })
-        
-        proc.on('error', (err: Error) => {
-          console.warn(`[Proton] ⚠️ Failed to install ${component}:`, err.message)
-          okAll = false
-          resolve()
-        })
-        
-        // Timeout after 5 minutes per component
+        )
+
+        proc.stdout?.on('data', (data: Buffer) => console.log(`[winetricks/proton-run] ${data.toString().trim()}`))
+        proc.stderr?.on('data', (data: Buffer) => console.log(`[winetricks/proton-run] ${data.toString().trim()}`))
+
+        proc.on('close', (code) => resolve(typeof code === 'number' ? code : null))
+        proc.on('error', () => resolve(null))
+
         const t = setTimeout(() => {
           try { proc.kill() } catch {}
-          okAll = false
-          resolve()
+          resolve(null)
         }, 5 * 60 * 1000)
 
         proc.on('close', () => clearTimeout(t))
         proc.on('error', () => clearTimeout(t))
       })
+
+      if (attemptProtonRun === 0) {
+        console.log(`[Proton] ✅ ${component} installed successfully (proton run)`)
+        continue
+      }
+
+      // 2) Fallback robusto: chamar winetricks direto, mas com overrides completos do Proton
+      const protonOverrides = getProtonWineOverrides(protonDir)
+      const winetricksEnv: NodeJS.ProcessEnv = {
+        ...env,
+        ...protonOverrides,
+        WINEPREFIX: winePrefix,
+        STEAM_COMPAT_DATA_PATH: prefixCompatDataPath,
+        WINETRICKS_NONINTERACTIVE: '1'
+      }
+
+      const attemptDirect = await new Promise<number | null>((resolve) => {
+        const proc = spawn(winetricksCmd, ['--force', '-q', component], {
+          env: winetricksEnv,
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+
+        proc.stdout?.on('data', (data: Buffer) => console.log(`[winetricks] ${data.toString().trim()}`))
+        proc.stderr?.on('data', (data: Buffer) => console.log(`[winetricks] ${data.toString().trim()}`))
+
+        proc.on('close', (code) => resolve(typeof code === 'number' ? code : null))
+        proc.on('error', () => resolve(null))
+
+        const t = setTimeout(() => {
+          try { proc.kill() } catch {}
+          resolve(null)
+        }, 5 * 60 * 1000)
+
+        proc.on('close', () => clearTimeout(t))
+        proc.on('error', () => clearTimeout(t))
+      })
+
+      if (attemptDirect === 0) {
+        console.log(`[Proton] ✅ ${component} installed successfully (fallback overrides)`)
+      } else {
+        console.warn(`[Proton] ⚠️ ${component} installation returned code ${attemptDirect}`)
+        okAll = false
+      }
     } catch (err) {
       console.warn(`[Proton] Failed to install ${component}:`, err)
       okAll = false
     }
   }
-  
+
   return okAll
 }
 
@@ -1214,7 +1385,8 @@ export async function ensurePrefixDefaults(
 
       onProgress?.('Installing Visual C++ Runtimes...')
       console.log('[Proton] Step 2: Installing VC++ Runtimes via winetricks...')
-      const ok = await runWinetricks(compatDataPath, COMMON_PREREQUISITES.winetricks, env, onProgress, protonDir)
+
+      const ok = await runWinetricks(runner, compatDataPath, COMMON_PREREQUISITES.winetricks, env, onProgress, protonDir)
       meta.vcredist.ok = ok
       meta.updatedAt = nowIso()
       writeDefaultDepsMeta(compatDataPath, meta)
@@ -1224,6 +1396,50 @@ export async function ensurePrefixDefaults(
       console.log('[Proton] CachyOS/Arch: sudo pacman -S winetricks')
     } else if (meta.vcredist?.ok === true) {
       console.log('[Proton] VC++ runtimes already installed; skipping')
+    }
+
+    // Step 3: Install common extras (DirectX, d3dx9, etc.) via winetricks when available.
+    if (winetricksAvailable()) {
+      try {
+        onProgress?.('Installing common extras (DirectX, d3dx9, etc.)...')
+        console.log('[Proton] Installing common extras via winetricks')
+        const extrasOk = await runWinetricks(runner, compatDataPath, COMMON_PREREQUISITES.winetricksExtras, env, onProgress, protonDir)
+        if (!extrasOk) console.warn('[Proton] Some extras failed to install via winetricks')
+      } catch (err) {
+        console.warn('[Proton] Failed to install extras via winetricks:', err)
+      }
+    } else {
+      console.log('[Proton] winetricks not available; skipping extras installation')
+    }
+
+    // Step 4: Install .NET via protontricks if available (safer than winetricks in Proton).
+    if (protontricksAvailable()) {
+      try {
+        onProgress?.('Installing .NET via protontricks (if required)...')
+        console.log('[Proton] Attempting .NET installation via protontricks')
+        const dotnetOk = await runProtontricks(compatDataPath, COMMON_PREREQUISITES.protontricks, env, onProgress)
+        meta.dotnet = meta.dotnet || { attempts: 0, ok: null, tool: null }
+        meta.dotnet.attempts = (meta.dotnet.attempts || 0) + 1
+        meta.dotnet.lastAttemptAt = nowIso()
+        meta.dotnet.tool = 'protontricks'
+        meta.dotnet.ok = dotnetOk
+        meta.updatedAt = nowIso()
+        writeDefaultDepsMeta(compatDataPath, meta)
+      } catch (err) {
+        console.warn('[Proton] Failed to install .NET via protontricks:', err)
+      }
+    } else {
+      console.log('[Proton] protontricks not available; skipping .NET installation')
+    }
+
+    // Optional Step: install game-bundled installers if requested
+    try {
+      if (commonRedistPath && fs.existsSync(commonRedistPath)) {
+        onProgress?.('Aplicando redistribuíveis do jogo (se houver)...')
+        await runCommonRedistInstallers(commonRedistPath, runner, env, onProgress)
+      }
+    } catch (err) {
+      console.warn('[Proton] Failed to run CommonRedist installers:', err)
     }
 
     console.log('[Proton] ========================================')
@@ -1251,8 +1467,10 @@ export async function installExtraComponents(
   const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
+
   const protonPath = findProtonRuntime()
-  const { protonDir } = getProtonRunner(protonPath)
+  const { runner, protonDir } = getProtonRunner(protonPath)
+  if (!runner) return false
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -1262,7 +1480,7 @@ export async function installExtraComponents(
   }
 
   console.log('[Proton] Installing extra components:', components)
-  await runWinetricks(compatDataPath, components, env, onProgress, protonDir)
+  await runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir)
   
   return true
 }

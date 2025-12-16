@@ -8,7 +8,8 @@ interface DownloadItem {
   type: 'http' | 'torrent'
   url: string
   progress: number
-  status: 'downloading' | 'paused' | 'completed' | 'error' | 'extracting'
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'extracting'
+  errorMessage?: string
   speed?: number
   eta?: number
   size?: number
@@ -63,6 +64,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     completed: 5,
     extracting: 4,
     downloading: 3,
+    pending: 3,
     paused: 2,
     error: 1
   }
@@ -154,14 +156,19 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                 d.id === key
               ) {
                 hasChanges = true
-                const merged = mergeDownloads(d, {
-                  ...d,
-                  progress: updateData.stage === 'extract' ? (updateData.extractProgress ?? updateData.progress) : updateData.progress,
-                  status: updateData.stage === 'extract'
+                const nextStatus: DownloadItem['status'] =
+                  updateData.stage === 'extract'
                     ? 'extracting'
                     : updateData.progress >= 100
                       ? 'completed'
-                      : d.status,
+                      : d.status === 'paused'
+                        ? 'paused'
+                        : 'downloading'
+
+                const merged = mergeDownloads(d, {
+                  ...d,
+                  progress: updateData.stage === 'extract' ? (updateData.extractProgress ?? updateData.progress) : updateData.progress,
+                  status: nextStatus,
                   infoHash: updateData.infoHash || d.infoHash,
                   speed: updateData.speed ?? d.speed,
                   eta: updateData.stage === 'extract' ? d.eta : (updateData.eta ?? d.eta),
@@ -215,7 +222,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         throttleTimerRef.current = null
 
         if (hasChanges) {
-          const active = updated.some(d => d.status !== 'completed')
+          const active = updated.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting')
           setHasActive(active)
         }
 
@@ -281,7 +288,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   // Check if a download should be kept in the list
   const shouldKeepDownload = (d: DownloadItem): boolean => {
     // Keep if in progress
-    if (d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting') {
+    if (d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting') {
       return true
     }
     // Keep if completed but has a zip file to extract (HTTP downloads)
@@ -322,6 +329,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             url: d.download_url,
             progress: d.progress || 0,
             status: (d.status as any) || 'downloading',
+            errorMessage: d.error_message || undefined,
             infoHash: d.info_hash || undefined,
             downloaded: d.downloaded ? Number(d.downloaded) : undefined,
             total: d.size ? Number(d.size) : undefined,
@@ -340,6 +348,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             url: d.download_url,
             progress: d.progress || 100,
             status: 'completed' as const,
+            errorMessage: d.error_message || undefined,
             infoHash: d.info_hash || undefined,
             downloaded: d.downloaded ? Number(d.downloaded) : undefined,
             total: d.size ? Number(d.size) : undefined,
@@ -410,6 +419,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               url: d.download_url,
               progress: d.progress || 0,
               status: (d.status as any) || 'downloading',
+              errorMessage: d.error_message || undefined,
               infoHash: d.info_hash || undefined,
               downloaded: d.downloaded ? Number(d.downloaded) : undefined,
               total: d.size ? Number(d.size) : undefined,
@@ -428,6 +438,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               url: d.download_url,
               progress: d.progress || 100,
               status: 'completed' as const,
+              errorMessage: d.error_message || undefined,
               infoHash: d.info_hash || undefined,
               downloaded: d.downloaded ? Number(d.downloaded) : undefined,
               total: d.size ? Number(d.size) : undefined,
@@ -469,6 +480,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'pending':
+        return '#3b82f6'
       case 'downloading':
         return '#3b82f6'
       case 'extracting':
@@ -486,6 +499,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   const getStatusText = (status: string) => {
     switch (status) {
+      case 'pending':
+        return 'Pendente'
       case 'downloading':
         return 'Baixando'
       case 'extracting':
@@ -558,8 +573,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   <Play size={16} />
                 </button>
               )}
-              {/* Cancel button - only show during active states (downloading, paused, extracting) */}
-              {(download.status === 'downloading' || download.status === 'paused' || download.status === 'extracting') && (
+              {/* Cancel button - show during active and error states */}
+              {(download.status === 'pending' || download.status === 'downloading' || download.status === 'paused' || download.status === 'extracting' || download.status === 'error') && (
                 <button
                   onClick={() => handleCancel(download)}
                   style={{
@@ -632,6 +647,11 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   ? `Extraindo ${download.extractProgress?.toFixed(1) ?? download.progress.toFixed(1)}%`
                   : `${download.progress.toFixed(1)}%`}
               </span>
+              {download.status === 'error' && download.errorMessage ? (
+                <span title={download.errorMessage} style={{ color: '#ef4444' }}>
+                  • {download.errorMessage}
+                </span>
+              ) : null}
               {download.status === 'extracting' ? (
                 <>
                   <span>• ETA: {formatEta(download.extractEta)}</span>

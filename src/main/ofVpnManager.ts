@@ -43,11 +43,50 @@ function run(bin: string, args: string[], opts?: { timeoutMs?: number }) {
   })
 }
 
+function looksLikeWindowsAccessDenied(text: string): boolean {
+  const t = String(text || '').toLowerCase()
+  return (
+    t.includes('access is denied') ||
+    t.includes('elevation') ||
+    t.includes('requires elevation') ||
+    t.includes('administrator') ||
+    t.includes('0x00000005') ||
+    t.includes('0x5')
+  )
+}
+
+function psSingleQuote(value: string): string {
+  return `'${String(value || '').replace(/'/g, "''")}'`
+}
+
+async function runWireGuardElevatedWindows(exePath: string, args: string[], timeoutMs = 2 * 60 * 1000) {
+  // Uses PowerShell to trigger UAC prompt (RunAs).
+  // Exit code is propagated so we can treat success/failure.
+  const argList = `@(${args.map(psSingleQuote).join(', ')})`
+  const script = [
+    `$p = Start-Process -FilePath ${psSingleQuote(exePath)} -ArgumentList ${argList} -Verb RunAs -Wait -PassThru;`,
+    `exit $p.ExitCode`
+  ].join(' ')
+
+  const r = await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs })
+  return r
+}
+
 async function trySpawnElevatedLinux(cmd: string): Promise<{ ok: boolean }> {
   const args = ['sh', '-lc', cmd]
   const pk = await run('pkexec', args, { timeoutMs: 10 * 60 * 1000 })
   if (pk.ok) return { ok: true }
-  const sudo = await run('sudo', args, { timeoutMs: 10 * 60 * 1000 })
+  // Avoid hanging on password prompt in non-interactive environment.
+  const sudo = await run('sudo', ['-n', ...args], { timeoutMs: 2 * 60 * 1000 })
+  if (sudo.ok) return { ok: true }
+  return { ok: false }
+}
+
+async function tryRunElevatedLinux(bin: string, args: string[], opts?: { timeoutMs?: number }): Promise<{ ok: boolean }> {
+  const timeoutMs = Number(opts?.timeoutMs || 2 * 60 * 1000)
+  const pk = await run('pkexec', [bin, ...args], { timeoutMs })
+  if (pk.ok) return { ok: true }
+  const sudo = await run('sudo', ['-n', bin, ...args], { timeoutMs })
   if (sudo.ok) return { ok: true }
   return { ok: false }
 }
@@ -58,8 +97,10 @@ export function getClientTunnelName() {
 
 export async function vpnCheckInstalled(): Promise<{ installed: boolean; error?: string }> {
   if (process.platform === 'linux') {
-    const r = await run('wg', ['--version'], { timeoutMs: 3000 })
-    return { installed: r.ok, error: r.ok ? undefined : 'wg não encontrado' }
+    const wg = await run('wg', ['--version'], { timeoutMs: 3000 })
+    const wgQuick = await run('wg-quick', ['--help'], { timeoutMs: 3000 })
+    const installed = wg.code !== null && wgQuick.code !== null
+    return { installed, error: installed ? undefined : 'WireGuard tools não encontrados (wg/wg-quick)' }
   }
   if (process.platform === 'win32') {
     const exe = findWireGuardExeWindows()
@@ -98,10 +139,30 @@ export async function vpnInstallBestEffort(): Promise<{ success: boolean; error?
 }
 
 function findWireGuardExeWindows(): string | null {
-  const candidates = [
-    'C:\\\\Program Files\\\\WireGuard\\\\wireguard.exe',
-    'C:\\\\Program Files (x86)\\\\WireGuard\\\\wireguard.exe'
-  ]
+  const candidates: string[] = []
+
+  const pf = process.env.ProgramFiles
+  const pfx86 = process.env['ProgramFiles(x86)']
+  const pfw6432 = process.env.ProgramW6432
+  for (const base of [pf, pfw6432, pfx86]) {
+    if (!base) continue
+    candidates.push(path.join(base, 'WireGuard', 'wireguard.exe'))
+  }
+
+  // Fallback common locations.
+  candidates.push('C:\\Program Files\\WireGuard\\wireguard.exe')
+  candidates.push('C:\\Program Files (x86)\\WireGuard\\wireguard.exe')
+
+  // PATH probe (best-effort).
+  try {
+    const envPath = String(process.env.PATH || '')
+    for (const part of envPath.split(';')) {
+      const p = part.trim()
+      if (!p) continue
+      candidates.push(path.join(p, 'wireguard.exe'))
+    }
+  } catch {}
+
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return p
@@ -122,9 +183,10 @@ export async function vpnConnectFromConfig(params: { configText: string; userDat
   if (process.platform === 'linux') {
     const installed = await vpnCheckInstalled()
     if (!installed.installed) return { success: false, error: installed.error, needsInstall: true }
-    const cmd = `wg-quick down '${configPath}' >/dev/null 2>&1 || true; wg-quick up '${configPath}'`
-    const res = await trySpawnElevatedLinux(cmd)
-    if (!res.ok) return { success: false, error: 'Falha ao subir túnel (precisa de senha/admin)', configPath }
+    // Bring down any existing tunnel first (ignore errors), then bring up.
+    await tryRunElevatedLinux('wg-quick', ['down', configPath], { timeoutMs: 60 * 1000 })
+    const up = await tryRunElevatedLinux('wg-quick', ['up', configPath], { timeoutMs: 2 * 60 * 1000 })
+    if (!up.ok) return { success: false, error: 'Falha ao subir túnel (precisa de senha/admin)', configPath }
     return { success: true, tunnelName, configPath }
   }
 
@@ -133,14 +195,22 @@ export async function vpnConnectFromConfig(params: { configText: string; userDat
     if (!exe) return { success: false, error: 'WireGuard não instalado', needsInstall: true, configPath }
     // Instala como serviço (precisa admin). Sem auto-UAC aqui; tentativa direta.
     const r = await run(exe, ['/installtunnelservice', configPath], { timeoutMs: 30000 })
-    if (!r.ok) return { success: false, error: r.stderr || r.stdout || 'Falha ao instalar serviço do túnel', configPath }
+    if (!r.ok) {
+      const combined = `${r.stderr || ''}\n${r.stdout || ''}`
+      if (looksLikeWindowsAccessDenied(combined)) {
+        const elev = await runWireGuardElevatedWindows(exe, ['/installtunnelservice', configPath], 3 * 60 * 1000)
+        if (elev.ok) return { success: true, tunnelName, configPath }
+        return { success: false, error: 'Permissão negada (precisa de administrador/UAC)', configPath, needsAdmin: true } as any
+      }
+      return { success: false, error: r.stderr || r.stdout || 'Falha ao instalar serviço do túnel', configPath }
+    }
     return { success: true, tunnelName, configPath }
   }
 
   return { success: false, error: 'Plataforma não suportada (por enquanto)' }
 }
 
-export async function vpnDisconnect(params: { userDataDir: string }): Promise<{ success: boolean; error?: string }> {
+export async function vpnDisconnect(params: { userDataDir: string }): Promise<{ success: boolean; error?: string; needsAdmin?: boolean }> {
   const tunnelName = getClientTunnelName()
   const userDataDir = String(params.userDataDir || '').trim()
   const configPath = path.join(userDataDir, 'vpn', `${tunnelName}.conf`)
@@ -148,9 +218,8 @@ export async function vpnDisconnect(params: { userDataDir: string }): Promise<{ 
   if (process.platform === 'linux') {
     const installed = await vpnCheckInstalled()
     if (!installed.installed) return { success: false, error: installed.error }
-    const cmd = `wg-quick down '${configPath}'`
-    const res = await trySpawnElevatedLinux(cmd)
-    if (!res.ok) return { success: false, error: 'Falha ao derrubar túnel (precisa de senha/admin)' }
+    const down = await tryRunElevatedLinux('wg-quick', ['down', configPath], { timeoutMs: 60 * 1000 })
+    if (!down.ok) return { success: false, error: 'Falha ao derrubar túnel (precisa de senha/admin)' }
     return { success: true }
   }
 
@@ -158,7 +227,15 @@ export async function vpnDisconnect(params: { userDataDir: string }): Promise<{ 
     const exe = findWireGuardExeWindows()
     if (!exe) return { success: false, error: 'WireGuard não instalado' }
     const r = await run(exe, ['/uninstalltunnelservice', tunnelName], { timeoutMs: 30000 })
-    if (!r.ok) return { success: false, error: r.stderr || r.stdout || 'Falha ao remover serviço do túnel' }
+    if (!r.ok) {
+      const combined = `${r.stderr || ''}\n${r.stdout || ''}`
+      if (looksLikeWindowsAccessDenied(combined)) {
+        const elev = await runWireGuardElevatedWindows(exe, ['/uninstalltunnelservice', tunnelName], 3 * 60 * 1000)
+        if (elev.ok) return { success: true }
+        return { success: false, error: 'Permissão negada (precisa de administrador/UAC)', needsAdmin: true }
+      }
+      return { success: false, error: r.stderr || r.stdout || 'Falha ao remover serviço do túnel' }
+    }
     return { success: true }
   }
 

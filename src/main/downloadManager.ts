@@ -3,6 +3,7 @@ import { extractZipWithPassword } from './zip'
 import {
   getGame,
   createDownload,
+  updateDownloadInstallPath,
   updateDownloadProgress,
   updateDownloadStatus,
   updateDownloadInfoHash,
@@ -36,6 +37,7 @@ export interface DownloadOptions {
 type DownloadRow = {
   id: number
   dest_path?: string | null
+  install_path?: string | null
   info_hash?: string | null
   download_url?: string | null
 }
@@ -337,8 +339,16 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
     title: gameTitle,
     type: downloadType,
     download_url: url,
-    dest_path: downloadType === 'torrent' ? downloadDestPath : downloadFilePath
+    dest_path: downloadType === 'torrent' ? downloadDestPath : downloadFilePath,
+    install_path: installPath
   })
+
+  // Keep install_path in sync for resumed downloads / older DB rows.
+  try {
+    updateDownloadInstallPath(Number(downloadId), installPath)
+  } catch {
+    // ignore
+  }
 
   try {
     let lastDetails: ProgressDetails | undefined
@@ -385,13 +395,29 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
       // Now download the torrent content directly to games folder
       console.log('[DownloadManager] Starting torrent download to:', installPath)
+      let lastDbProgressWriteAt = 0
+      let lastDbProgressValue = -1
+      let infoHashSaved = false
       await downloadTorrent(torrentPath, installPath, (progress, details) => {
         lastDetails = details
-        // Save infoHash on first progress update
-        if (details?.infoHash) {
+        // Save infoHash once (it can repeat on every tick)
+        if (!infoHashSaved && details?.infoHash) {
+          infoHashSaved = true
           updateDownloadInfoHash(Number(downloadId), details.infoHash)
         }
-        updateDownloadProgress(Number(downloadId), progress)
+
+        // Persist progress to DB at a low frequency to avoid heavy JSON fallback writes.
+        const now = Date.now()
+        const progressDelta = Math.abs((Number(progress) || 0) - lastDbProgressValue)
+        const shouldPersist =
+          now - lastDbProgressWriteAt > 2000 ||
+          progressDelta >= 1 ||
+          progress >= 99.5
+        if (shouldPersist) {
+          lastDbProgressWriteAt = now
+          lastDbProgressValue = Number(progress) || 0
+          updateDownloadProgress(Number(downloadId), progress)
+        }
         onProgress?.(progress, details)
       }, aliases)
 
@@ -439,6 +465,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       updateDownloadStatus(Number(downloadId), 'extracting')
       const extractStart = Date.now()
 
+      const markerPath = path.join(installPath, '.of_extracting.json')
+      try {
+        fs.writeFileSync(markerPath, JSON.stringify({ downloadId: Number(downloadId), gameUrl, archivePath: downloadFilePath, startedAt: Date.now() }, null, 2))
+      } catch {
+        // ignore
+      }
+
       // Create install directory
       fs.mkdirSync(installPath, { recursive: true })
 
@@ -483,9 +516,16 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         console.log('[DownloadManager] Marking game installed with version:', version)
         markGameInstalled(gameUrl, installPath, version, executablePath || undefined)
 
+        // Mark download as finished
+        try { updateDownloadProgress(Number(downloadId), 100) } catch {}
+        updateDownloadStatus(Number(downloadId), 'completed')
+        try { fs.unlinkSync(markerPath) } catch {}
+        try { fs.writeFileSync(path.join(installPath, '.of_extracted'), String(Date.now())) } catch {}
+
         finalInstallPath = installPath
       } catch (extractError: any) {
         console.error('Extraction failed:', extractError)
+        updateDownloadStatus(Number(downloadId), 'error', extractError?.message || String(extractError))
         return {
           success: false,
           error: `Download completed but extraction failed: ${extractError.message}`
@@ -496,6 +536,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       console.log('[DownloadManager] Torrent completed, dispatching extraction worker...')
 
       updateDownloadStatus(Number(downloadId), 'extracting')
+
+      const markerPath = path.join(installPath, '.of_update_extracting.json')
+      try {
+        fs.writeFileSync(markerPath, JSON.stringify({ downloadId: Number(downloadId), gameUrl, startedAt: Date.now() }, null, 2))
+      } catch {
+        // ignore
+      }
 
       const updateResult = await new Promise<{ success: boolean; error?: string; executablePath?: string }>((resolve, reject) => {
         const workerPath = path.join(__dirname, 'extractWorker.js')
@@ -519,17 +566,18 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         })
       })
 
-      // After extraction step, clean up archives left behind
-      removeArchives(installPath)
-      removeArchives(downloadDestPath)
-
       if (!updateResult.success) {
         console.error('[DownloadManager] Update extraction failed:', updateResult.error)
+        updateDownloadStatus(Number(downloadId), 'error', updateResult.error || 'Extraction failed')
         return {
           success: false,
           error: `Torrent completed but update extraction failed: ${updateResult.error}`
         }
       }
+
+      // After a successful extraction step, clean up archives left behind
+      removeArchives(installPath)
+      removeArchives(downloadDestPath)
 
       // Mark as installed after download (already in games folder)
       ensureGameRecord()
@@ -539,6 +587,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
       console.log('[DownloadManager] Marking torrent game installed with version:', version)
       markGameInstalled(gameUrl, installPath, version, executablePath || undefined)
+
+      // Mark download as finished
+      try { updateDownloadProgress(Number(downloadId), 100) } catch {}
+      updateDownloadStatus(Number(downloadId), 'completed')
+      try { fs.unlinkSync(markerPath) } catch {}
+      try { fs.writeFileSync(path.join(installPath, '.of_update_extracted'), String(Date.now())) } catch {}
     }
 
     // Send a final progress update to 100% to ensure UI switches to completed
@@ -702,6 +756,7 @@ export async function cancelDownloadByTorrentId(torrentId: string): Promise<bool
   if (download) {
     updateDownloadStatus(Number(download.id), 'cancelled')
     safelyRemoveDownloadData(download.dest_path)
+    safelyRemoveDownloadData(download.install_path)
     deleteDownload(Number(download.id))
     // Notify renderer to clear any stale cards
     try {
@@ -892,8 +947,34 @@ export async function processUpdateExtraction(
     }
   }
 
-  // Step 4: Extract each RAR file to the game's root folder (installPath)
+  // Step 4: Handle multipart RARs correctly.
+  // For releases like name.part01.rar/name.part02.rar..., you should extract only part01
+  // (the extractor will read subsequent parts automatically if present).
+  const partRe = /^(.*)\.part(\d+)\.rar$/i
+  const groups = new Map<string, { all: string[]; first: string }>()
+
   for (const rarFile of rarFiles) {
+    const baseName = path.basename(rarFile)
+    const m = baseName.match(partRe)
+    const key = m ? path.join(path.dirname(rarFile), m[1]) : rarFile
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, { all: [rarFile], first: rarFile })
+    } else {
+      existing.all.push(rarFile)
+    }
+  }
+
+  // Choose first part for multipart groups (prefer part01).
+  for (const [key, group] of groups.entries()) {
+    const candidates = group.all.slice().sort((a, b) => a.localeCompare(b))
+    const part01 = candidates.find(f => /\.part0*1\.rar$/i.test(path.basename(f)))
+    group.first = part01 || candidates[0]
+    groups.set(key, group)
+  }
+
+  for (const group of groups.values()) {
+    const rarFile = group.first
     console.log('[UpdateProcessor] Extracting:', rarFile, 'to:', installPath)
     try {
       await extractZipWithPassword(rarFile, installPath, undefined, onProgress)
@@ -904,16 +985,17 @@ export async function processUpdateExtraction(
       flattenDominantSubdir(installPath)
       flattenSingleSubdir(installPath)
 
-      // Step 5: Remove the RAR file after successful extraction
-      try {
-        if (fs.existsSync(rarFile)) {
-          fs.unlinkSync(rarFile)
-          console.log('[UpdateProcessor] Removed RAR file:', rarFile)
-        }
-      } catch (err) {
-        // Ignore missing file, warn on other errors
-        if ((err as any)?.code !== 'ENOENT') {
-          console.warn('[UpdateProcessor] Failed to remove RAR file:', rarFile, err)
+      // Step 5: Remove ALL RAR parts after successful extraction of the group.
+      for (const partPath of group.all) {
+        try {
+          if (fs.existsSync(partPath)) {
+            fs.unlinkSync(partPath)
+            console.log('[UpdateProcessor] Removed RAR file:', partPath)
+          }
+        } catch (err) {
+          if ((err as any)?.code !== 'ENOENT') {
+            console.warn('[UpdateProcessor] Failed to remove RAR file:', partPath, err)
+          }
         }
       }
 
