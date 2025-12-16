@@ -204,13 +204,32 @@ export function updateGameVersion(url: string, latest: string) {
 
 export function getGame(url: string) {
   initDb()
+  const candidates = buildUrlCandidates(url)
+  const resolvedUrl = candidates[0] || url
+  const gameId = extractGameIdFromUrl(resolvedUrl)
+
   if (sqliteAvailable) {
-    const stmt = dbInstance.prepare('SELECT * FROM games WHERE url = ?')
-    return stmt.get(url)
+    try {
+      const inList = candidates.length ? candidates : [resolvedUrl]
+      const placeholders = inList.map(() => '?').join(',')
+      const byUrl = dbInstance.prepare(`SELECT * FROM games WHERE url IN (${placeholders}) LIMIT 1`).get(...inList)
+      if (byUrl) return byUrl
+    } catch {}
+    if (gameId) {
+      try {
+        const byId = dbInstance.prepare('SELECT * FROM games WHERE game_id = ? LIMIT 1').get(gameId)
+        if (byId) return byId
+      } catch {}
+    }
+    return null
   }
+
   const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
   const store = JSON.parse(raw)
-  return store.games.find((g: any) => g.url === url) || null
+  const byUrl = (store.games || []).find((g: any) => candidates.includes(String(g.url)))
+  if (byUrl) return byUrl
+  if (gameId) return (store.games || []).find((g: any) => String(g.game_id || '') === gameId) || null
+  return null
 }
 
 export function getAllGames() {
@@ -450,14 +469,33 @@ export function toggleGameFavorite(url: string): { isFavorite: boolean } {
 
 export function deleteGame(url: string) {
   initDb()
+  const candidates = buildUrlCandidates(url)
+  const resolvedUrl = candidates[0] || url
+  const gameId = extractGameIdFromUrl(resolvedUrl)
+
   if (sqliteAvailable) {
-    const stmt = dbInstance.prepare('DELETE FROM games WHERE url = ?')
-    stmt.run(url)
+    try {
+      const inList = candidates.length ? candidates : [resolvedUrl]
+      const placeholders = inList.map(() => '?').join(',')
+      dbInstance.prepare(`DELETE FROM games WHERE url IN (${placeholders})`).run(...inList)
+    } catch {
+      // fallback
+      try { dbInstance.prepare('DELETE FROM games WHERE url = ?').run(url) } catch {}
+    }
+    if (gameId) {
+      try { dbInstance.prepare('DELETE FROM games WHERE game_id = ?').run(gameId) } catch {}
+    }
     return
   }
   const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
   const store = JSON.parse(raw)
-  store.games = store.games.filter((g: any) => g.url !== url)
+  store.games = (store.games || []).filter((g: any) => {
+    const u = String(g.url || '')
+    const gid = String(g.game_id || '')
+    if (candidates.includes(u)) return false
+    if (gameId && gid === gameId) return false
+    return true
+  })
   fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
 }
 

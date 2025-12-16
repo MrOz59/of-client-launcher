@@ -1,18 +1,17 @@
 import fs from 'fs'
 import path from 'path'
 import axios from 'axios'
-import WebTorrent, { type Torrent as WebTorrentTorrent } from 'webtorrent'
 import * as cheerio from 'cheerio'
 
-// Extended Torrent interface with runtime properties
-interface Torrent extends WebTorrentTorrent {
-  infoHash: string
-  downloadSpeed: number
-  timeRemaining: number
-  pause(): void
-  resume(): void
-  destroy(): void
-}
+export {
+  downloadTorrent,
+  pauseTorrent,
+  resumeTorrent,
+  cancelTorrent,
+  isTorrentActive,
+  getActiveTorrentIds,
+  type TorrentProgress
+} from './torrentLibtorrentRpc'
 
 export async function downloadFile(
   url: string,
@@ -88,181 +87,4 @@ export async function downloadTorrentFromDirectory(directoryUrl: string, cookieH
   console.log('[Torrent Downloader] Downloaded .torrent file to:', torrentFilePath)
 
   return torrentFilePath
-}
-
-export interface TorrentProgress {
-  progress: number
-  downloadSpeed: number // bytes per second
-  downloaded: number
-  total: number
-  timeRemaining: number // seconds
-  infoHash?: string
-}
-
-type ActiveTorrent = {
-  client: WebTorrent
-  torrent?: Torrent
-  aliases: Set<string>
-  finish?: (err?: Error) => void
-  pausedRequested?: boolean
-}
-
-// Keep track of active torrents for pause/resume/dedupe
-const activeTorrents = new Map<string, ActiveTorrent>()
-
-function registerActive(record: ActiveTorrent) {
-  for (const key of record.aliases) {
-    activeTorrents.set(key, record)
-  }
-}
-
-function unregisterActive(record: ActiveTorrent) {
-  for (const key of record.aliases) {
-    activeTorrents.delete(key)
-  }
-}
-
-function hasActiveAlias(ids: string[]): boolean {
-  return ids.some(id => activeTorrents.has(id))
-}
-
-export function isTorrentActive(torrentId: string): boolean {
-  return activeTorrents.has(torrentId)
-}
-
-export function downloadTorrent(
-  magnetOrTorrent: string,
-  destPath: string,
-  onProgress?: (progress: number, details?: TorrentProgress & { infoHash: string }) => void,
-  aliases: string[] = [],
-  shouldCancel?: () => boolean
-) {
-  const lookupIds = Array.from(new Set([magnetOrTorrent, ...aliases].filter(Boolean)))
-  if (hasActiveAlias(lookupIds)) {
-    return Promise.reject(new Error('Torrent already in progress'))
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    const client = new WebTorrent()
-    const record: ActiveTorrent = { client, aliases: new Set(lookupIds), pausedRequested: false }
-
-    let cleaned = false
-    let finished = false
-    const cleanup = () => {
-      if (cleaned) return
-      cleaned = true
-      unregisterActive(record)
-      record.torrent?.destroy?.()
-      client.destroy()
-    }
-    const finish = (err?: Error) => {
-      if (finished) return
-      finished = true
-      cleanup()
-      if (err) reject(err)
-      else resolve()
-    }
-    record.finish = finish
-
-    // Register immediately so parallel starts get blocked even before metadata is ready
-    registerActive(record)
-
-    const rejectIfCancelled = () => {
-      if (shouldCancel && shouldCancel()) {
-        finish(new Error('cancelled'))
-        return true
-      }
-      return false
-    }
-
-    client.add(magnetOrTorrent, { path: destPath }, (torrent: WebTorrentTorrent) => {
-      // Cast to our extended interface for type safety
-      const extendedTorrent = torrent as Torrent
-      record.torrent = extendedTorrent
-
-      // Track both infoHash and original aliases to prevent duplicate starts
-      record.aliases.add(extendedTorrent.infoHash || magnetOrTorrent)
-      registerActive(record)
-
-      torrent.on('download', () => {
-        if (rejectIfCancelled()) return
-        // If pause was requested before metadata was ready, enforce it.
-        if (record.pausedRequested) {
-          try { extendedTorrent.pause() } catch {}
-          return
-        }
-        const progress = (extendedTorrent.downloaded / extendedTorrent.length) * 100
-        const details = {
-          progress,
-          downloadSpeed: extendedTorrent.downloadSpeed,
-          downloaded: extendedTorrent.downloaded,
-          total: extendedTorrent.length,
-          timeRemaining: extendedTorrent.timeRemaining / 1000, // Convert ms to seconds
-          infoHash: extendedTorrent.infoHash
-        }
-        onProgress && onProgress(progress, details)
-      })
-
-      torrent.on('done', () => {
-        // Stop seeding immediately after download completes.
-        try { extendedTorrent.pause() } catch {}
-        finish()
-      })
-
-      torrent.on('error', (err: Error) => {
-        finish(err)
-      })
-
-      // Apply paused state ASAP once we have a torrent object.
-      if (record.pausedRequested) {
-        try { extendedTorrent.pause() } catch {}
-      }
-    })
-
-    client.on('error', (err: Error) => {
-      finish(err)
-    })
-
-    // If a cancellation is requested before metadata is ready, stop immediately
-    if (rejectIfCancelled()) return
-  })
-}
-
-export function pauseTorrent(torrentId: string): boolean {
-  const active = activeTorrents.get(torrentId)
-  if (!active) return false
-  active.pausedRequested = true
-  if (active.torrent) {
-    try { active.torrent.pause() } catch { /* ignore */ }
-  }
-  return true
-}
-
-export function resumeTorrent(torrentId: string): boolean {
-  const active = activeTorrents.get(torrentId)
-  if (!active) return false
-  active.pausedRequested = false
-  if (active.torrent) {
-    try { active.torrent.resume() } catch { /* ignore */ }
-  }
-  return true
-}
-
-export function cancelTorrent(torrentId: string): boolean {
-  const active = activeTorrents.get(torrentId)
-  if (active) {
-    if (active.finish) {
-      active.finish(new Error('cancelled'))
-    } else {
-      active.torrent?.destroy()
-      active.client.destroy()
-      unregisterActive(active)
-    }
-    return true
-  }
-  return false
-}
-
-export function getActiveTorrentIds(): string[] {
-  return Array.from(new Set([...activeTorrents.values()].flatMap(record => Array.from(record.aliases))))
 }

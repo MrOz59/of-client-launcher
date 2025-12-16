@@ -137,6 +137,8 @@ async function runQueuedUpdate(gameUrl: string) {
       downloaded: (details as any)?.downloaded || 0,
       total: (details as any)?.total || 0,
       eta: (details as any)?.timeRemaining || 0,
+        peers: (details as any)?.peers,
+        seeds: (details as any)?.seeds,
       infoHash: (details as any)?.infoHash || torrentUrl,
       stage: (details as any)?.stage || 'download',
       extractProgress: (details as any)?.extractProgress,
@@ -968,6 +970,8 @@ ipcMain.handle('start-torrent-download', async (_event: IpcMainInvokeEvent, torr
         downloaded: details?.downloaded || 0,
         total: details?.total || 0,
         eta: details?.timeRemaining || 0,
+        peers: (details as any)?.peers,
+        seeds: (details as any)?.seeds,
         infoHash: details?.infoHash || actualTorrentUrl,
         stage: details?.stage || 'download',
         extractProgress: (details as any)?.extractProgress,
@@ -1034,6 +1038,8 @@ async function handleExternalDownload(url: string) {
         downloaded: details?.downloaded || 0,
         total: details?.total || 0,
         eta: details?.timeRemaining || 0,
+        peers: (details as any)?.peers,
+        seeds: (details as any)?.seeds,
         infoHash: details?.infoHash || torrentUrl,
         stage: details?.stage || 'download',
         extractProgress: (details as any)?.extractProgress,
@@ -1666,11 +1672,20 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
 
       // Delete game folder if it exists
       if (game?.install_path) {
-        const installPath = path.isAbsolute(game.install_path)
-          ? game.install_path
-          : path.resolve(process.cwd(), game.install_path)
+        const rawPath = String(game.install_path)
+        let installPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)
 
-        if (fs.existsSync(installPath)) {
+        try {
+          if (fs.existsSync(installPath)) {
+            const st = fs.statSync(installPath)
+            if (st.isFile()) installPath = path.dirname(installPath)
+          }
+        } catch {}
+
+        // Basic safety guard: never delete filesystem root.
+        if (installPath && path.parse(installPath).root === installPath) {
+          console.warn('[DeleteGame] Refusing to delete root path:', installPath)
+        } else if (fs.existsSync(installPath)) {
           console.log('[DeleteGame] Removing game folder:', installPath)
           try {
             fs.rmSync(installPath, { recursive: true, force: true })
@@ -2832,6 +2847,68 @@ async function resumeActiveDownloads() {
     if (!active.length) return
     console.log(`[Launcher] Resuming ${active.length} downloads from previous session`)
 
+    const looksInstalled = (installPath: string): boolean => {
+      const p = String(installPath || '').trim()
+      if (!p) return false
+      const abs = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p)
+      try {
+        if (!fs.existsSync(abs)) return false
+        const st = fs.statSync(abs)
+        if (!st.isDirectory()) return false
+      } catch {
+        return false
+      }
+
+      // Prefer sentinel markers written by our extraction flows.
+      const sentinels = ['.of_extracted', '.of_update_extracted', '.of_game.json']
+      for (const s of sentinels) {
+        try {
+          if (fs.existsSync(path.join(abs, s))) return true
+        } catch {
+          // ignore
+        }
+      }
+
+      // Fallback heuristic: at least one .exe inside the install dir.
+      try {
+        return !!findExecutableInDir(abs)
+      } catch {
+        return false
+      }
+    }
+
+    const finalizeAsCompleted = (d: any, gameUrl: string, installPath: string) => {
+      const downloadId = Number(d?.id)
+      const idKey = String(d?.info_hash || d?.download_url || d?.id || '')
+
+      try { updateDownloadInstallPath(downloadId, installPath) } catch {}
+      try { updateDownloadProgress(downloadId, 100) } catch {}
+      try { updateDownloadStatus(downloadId, 'completed') } catch {}
+
+      try {
+        mainWindow?.webContents.send('download-complete', {
+          magnet: idKey,
+          infoHash: d?.info_hash || undefined,
+          destPath: installPath
+        })
+      } catch {
+        // ignore
+      }
+
+      // Best-effort: ensure the game is marked installed.
+      try {
+        const existing = getGame(gameUrl) as any
+        if (!existing?.install_path) {
+          const version = parseVersionFromName(String(d?.download_url || '')) || parseVersionFromName(String(d?.title || '')) || null
+          const exePath = findExecutableInDir(installPath)
+          addOrUpdateGame(gameUrl, d?.title)
+          markGameInstalled(gameUrl, installPath, version, exePath || undefined)
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const seen = new Set<string>()
     for (const d of active) {
       const dedupeKey = String(d.info_hash || d.download_url || d.id)
@@ -2840,6 +2917,36 @@ async function resumeActiveDownloads() {
         continue
       }
       seen.add(dedupeKey)
+
+      const gameUrl = String(d.game_url || d.download_url || '').trim()
+      if (gameUrl) {
+        // If the game is already installed, do NOT resume the download (prevents re-downloading after a successful extract/install).
+        try {
+          const g = getGame(gameUrl) as any
+          const ip = String(g?.install_path || d?.install_path || '').trim()
+          if (ip && looksInstalled(ip)) {
+            const abs = path.isAbsolute(ip) ? ip : path.resolve(process.cwd(), ip)
+            console.log('[Launcher] Download row is active but game looks installed; marking completed and skipping resume:', dedupeKey)
+            finalizeAsCompleted(d, gameUrl, abs)
+            continue
+          }
+        } catch {
+          // ignore
+        }
+
+        // If we have an install_path on the download row and it looks installed, also skip.
+        try {
+          const ip = String(d?.install_path || '').trim()
+          if (ip && looksInstalled(ip)) {
+            const abs = path.isAbsolute(ip) ? ip : path.resolve(process.cwd(), ip)
+            console.log('[Launcher] Active download has completed install markers; marking completed and skipping resume:', dedupeKey)
+            finalizeAsCompleted(d, gameUrl, abs)
+            continue
+          }
+        } catch {
+          // ignore
+        }
+      }
 
       const isTorrent = d.type === 'torrent'
 
@@ -2881,9 +2988,9 @@ async function resumeActiveDownloads() {
           destPath: res.installPath || d.dest_path
         })
         if (res.installPath) {
-          const gameUrl = String(d.game_url || d.download_url)
-          const title = String(d.title || gameUrl)
-          prepareGamePrefixAfterInstall(gameUrl, title, res.installPath).catch(() => {})
+          const resolvedGameUrl = String(d.game_url || d.download_url)
+          const title = String(d.title || resolvedGameUrl)
+          prepareGamePrefixAfterInstall(resolvedGameUrl, title, res.installPath).catch(() => {})
         }
       }).catch((err) => {
         console.warn('[Launcher] Failed to resume download', dedupeKey, err)

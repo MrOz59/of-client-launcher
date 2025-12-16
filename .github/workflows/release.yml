@@ -23,6 +23,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Cache Electron
         uses: actions/cache@v4
         with:
@@ -33,6 +36,10 @@ jobs:
             %LOCALAPPDATA%\\electron-builder\\Cache
           key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
       - run: npm ci
+      - name: Build bundled torrent-agent runtime
+        run: node scripts/build-torrent-agent-runtime.js
+        env:
+          OF_LIBTORRENT_VERSION: '2.0.11'
       - run: npm run dist:win
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -55,6 +62,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Cache Electron
         uses: actions/cache@v4
         with:
@@ -67,6 +77,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rpm libarchive-tools
       - run: npm ci
+      - name: Build bundled torrent-agent runtime
+        run: node scripts/build-torrent-agent-runtime.js
+        env:
+          OF_LIBTORRENT_VERSION: '2.0.11'
       - name: Build Linux artifacts
         run: |
           node scripts/patch-electron-builder.js
@@ -93,11 +107,18 @@ jobs:
       image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed nodejs npm git base-devel python libarchive libxcrypt-compat
       - run: npm ci
+      - name: Build bundled torrent-agent runtime
+        run: node scripts/build-torrent-agent-runtime.js
+        env:
+          OF_LIBTORRENT_VERSION: '2.0.11'
       - name: Build pacman package
         run: |
           node scripts/patch-electron-builder.js
@@ -140,7 +161,10 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
-          files=(artifacts/**/*)
+          files=()
+          for f in artifacts/**/*; do
+            [ -f "$f" ] && files+=("$f")
+          done
           if [ ${#files[@]} -eq 0 ]; then
             echo "No artifacts downloaded"; exit 1
           fi

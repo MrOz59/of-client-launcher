@@ -1583,9 +1583,9 @@ export default function LibraryTab() {
         </div>
       )}
 
-      {/* Topo da biblioteca: busca + ações (fora do grid) */}
+      {/* Topo da biblioteca: busca + filtros */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flex: '1 1 260px', minWidth: 220 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flex: '1 1 260px', minWidth: 220, flexWrap: 'wrap' }}>
           <div className="input-row" style={{ width: '100%', maxWidth: 420, gap: 6 }}>
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <span>Buscar</span>
@@ -1626,19 +1626,20 @@ export default function LibraryTab() {
               <option value="size">Tamanho</option>
             </select>
           </div>
-        </div>
 
-        <div className="library-toolbar" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            className="btn ghost"
-            onClick={scanInstalledGames}
-            disabled={scanningInstalled}
-            title="Escanear jogos instalados no disco"
-            aria-label="Escanear jogos instalados no disco"
-            style={{ padding: 8, opacity: 0.85, lineHeight: 1, minWidth: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-          >
-            {scanningInstalled ? <RefreshCw size={16} className="of-spin" /> : <Search size={16} />}
-          </button>
+          <div className="input-row" style={{ width: 44, maxWidth: 44, gap: 6 }}>
+            <label style={{ visibility: 'hidden' }}>Ação</label>
+            <button
+              className="btn ghost"
+              onClick={scanInstalledGames}
+              disabled={scanningInstalled}
+              title="Escanear jogos instalados no disco"
+              aria-label="Escanear jogos instalados no disco"
+              style={{ padding: 8, opacity: 0.9, lineHeight: 1, minWidth: 44, height: 42, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              {scanningInstalled ? <RefreshCw size={16} className="of-spin" /> : <Search size={16} />}
+            </button>
+          </div>
         </div>
       </div>
 

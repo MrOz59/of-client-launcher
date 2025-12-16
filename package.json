@@ -9,6 +9,7 @@
     "dev:renderer": "vite",
     "dev:main": "npm run build:preload && tsc -p tsconfig.build.json && ELECTRON_RUN_AS_NODE= ELECTRON_DISABLE_SANDBOX=1 NODE_ENV=development npx electron dist/main/main.js --no-sandbox --disable-setuid-sandbox --disable-seccomp-filter-sandbox --disable-namespace-sandbox --disable-gpu --disable-features=VizDisplayCompositor",
     "dev": "npm run build:preload && concurrently \"npm:dev:renderer\" \"npm:dev:main\"",
+    "torrent:deps": "node scripts/install-torrent-agent-deps.js",
     "build": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
     "dist:linux": "node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
     "dist:appimage": "node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
@@ -46,8 +47,7 @@
     "node-unrar-js": "^2.0.2",
     "open": "^9.0.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "webtorrent": "^1.9.0"
+    "react-dom": "^18.2.0"
   },
   "optionalDependencies": {
     "archiver": "^5.3.1",
@@ -64,6 +64,15 @@
       "dist/**",
       "dist-preload/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "services/torrent-agent",
+        "to": "torrent-agent",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "asar": true,
     "asarUnpack": [
