@@ -1,3 +1,10 @@
+// Disable sandbox on Linux to avoid /dev/shm permission issues in AppImage
+// Must be done before app is ready
+import { app } from 'electron'
+if (process.platform === 'linux' && app.isPackaged) {
+  app.commandLine.appendSwitch('no-sandbox')
+}
+
 import * as drive from './drive'
 import * as cloudSaves from './cloudSaves'
 import { appendCloudSavesHistory, listCloudSavesHistory, type CloudSavesHistoryEntry } from './cloudSavesHistory'
@@ -17,7 +24,7 @@ if (typeof global.File === 'undefined') {
   }
 }
 
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
