@@ -165,13 +165,29 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
+
+          # Collect files, excluding debug/metadata files and deduplicating by basename
+          declare -A seen
           files=()
           for f in artifacts/**/*; do
-            [ -f "$f" ] && files+=("$f")
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            # Skip debug and metadata files
+            case "$base" in
+              builder-debug.yml|builder-effective-config.yaml) continue ;;
+            esac
+            # Skip if we already have a file with this name
+            if [[ -z "${seen[$base]}" ]]; then
+              seen[$base]=1
+              files+=("$f")
+            fi
           done
+
           if [ ${#files[@]} -eq 0 ]; then
             echo "No artifacts downloaded"; exit 1
           fi
+
+          echo "Uploading ${#files[@]} files..."
           gh release create "${NIGHTLY_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --prerelease \
