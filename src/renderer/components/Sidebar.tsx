@@ -107,7 +107,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
               {isLoggedIn ? (profileName || 'Conectado') : 'Desconectado'}
             </div>
             <div className="user-status-action">
-              {isLoggedIn ? 'Ver perfil' : 'Fazer login'}
+              {isLoggedIn ? 'Ver perfil' : 'Abrir loja'}
             </div>
           </div>
         </div>

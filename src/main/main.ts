@@ -1123,8 +1123,8 @@ async function createAuthWindow() {
     }
   })
 
-  console.log('[Auth] Opening auth window with partition:', TORRENT_PARTITION)
-  authWin.loadURL('https://online-fix.me/login/')
+  console.log('[Auth] Opening store window with partition:', TORRENT_PARTITION)
+  authWin.loadURL('https://online-fix.me/')
 
   authWin.on('close', async () => {
     console.log('[Auth] Auth window closed, checking for cookies...')
