@@ -63,7 +63,9 @@ declare global {
     electronAPI: {
       openAuthWindow: () => Promise<boolean>
       checkGameVersion: (url: string) => Promise<VersionResult>
-      onCookiesSaved: (cb: (cookies: Cookie[]) => void) => void
+      onCookiesSaved: (cb: (cookies: Cookie[]) => void) => (() => void)
+      onCookiesCleared: (cb: () => void) => (() => void)
+      clearCookies: () => Promise<{ success: boolean; error?: string }>
       downloadHttp: (url: string, dest: string) => Promise<DownloadResult>
       downloadTorrent: (magnet: string, dest: string) => Promise<DownloadResult>
       startTorrentDownload: (url: string, referer?: string) => Promise<DownloadResult>

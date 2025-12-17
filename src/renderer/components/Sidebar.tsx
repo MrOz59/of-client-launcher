@@ -8,11 +8,12 @@ interface SidebarProps {
   onTabChange: (tab: Tab) => void
   isLoggedIn: boolean
   onLoginClick: () => void
+  onLogoutClick?: () => void
   hasDownloadActivity?: boolean
   onProfileNavigate?: (url: string) => void
 }
 
-export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginClick, hasDownloadActivity, onProfileNavigate }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginClick, onLogoutClick, hasDownloadActivity, onProfileNavigate }: SidebarProps) {
   const [profileName, setProfileName] = React.useState<string | null>(null)
   const [profileAvatar, setProfileAvatar] = React.useState<string | null>(null)
   const [profileUrl, setProfileUrl] = React.useState<string | null>(null)
@@ -111,6 +112,19 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
             </div>
           </div>
         </div>
+
+        {isLoggedIn && onLogoutClick ? (
+          <button
+            className="user-logout"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onLogoutClick()
+            }}
+          >
+            Sair
+          </button>
+        ) : null}
       </div>
     </div>
   )

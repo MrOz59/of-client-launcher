@@ -54,11 +54,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkGameVersion: (url: string) => ipcRenderer.invoke('check-game-version', url),
   getCookieHeader: (url: string) => ipcRenderer.invoke('get-cookie-header', url),
   exportCookies: (url?: string) => ipcRenderer.invoke('export-cookies', url),
+  clearCookies: () => ipcRenderer.invoke('clear-cookies'),
 
   onCookiesSaved: (cb: (cookies: Electron.Cookie[]) => void) => {
     const handler = (_event: IpcRendererEvent, cookies: Electron.Cookie[]) => cb(cookies)
     ipcRenderer.on('cookies-saved', handler)
     return () => ipcRenderer.removeListener('cookies-saved', handler)
+  },
+
+  onCookiesCleared: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('cookies-cleared', handler)
+    return () => ipcRenderer.removeListener('cookies-cleared', handler)
   },
 
   downloadHttp: (url: string, dest: string) => ipcRenderer.invoke('download-http', url, dest),

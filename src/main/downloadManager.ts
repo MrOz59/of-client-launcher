@@ -352,6 +352,7 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
   try {
     let lastDetails: ProgressDetails | undefined
+    let capturedInfoHash: string | undefined
 
     // Update status to downloading
     updateDownloadStatus(Number(downloadId), 'downloading')
@@ -403,6 +404,7 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         // Save infoHash once (it can repeat on every tick)
         if (!infoHashSaved && details?.infoHash) {
           infoHashSaved = true
+          capturedInfoHash = details.infoHash
           updateDownloadInfoHash(Number(downloadId), details.infoHash)
         }
 
@@ -522,6 +524,9 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         try { fs.unlinkSync(markerPath) } catch {}
         try { fs.writeFileSync(path.join(installPath, '.of_extracted'), String(Date.now())) } catch {}
 
+        // Emit final extraction progress to UI
+        onProgress?.(100, { stage: 'extract', extractProgress: 100 })
+
         finalInstallPath = installPath
       } catch (extractError: any) {
         console.error('Extraction failed:', extractError)
@@ -593,10 +598,19 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       updateDownloadStatus(Number(downloadId), 'completed')
       try { fs.unlinkSync(markerPath) } catch {}
       try { fs.writeFileSync(path.join(installPath, '.of_update_extracted'), String(Date.now())) } catch {}
-    }
 
-    // Send a final progress update to 100% to ensure UI switches to completed
-    onProgress?.(100, { ...lastDetails, stage: 'download' })
+      // Emit final extraction progress to UI
+      onProgress?.(100, { stage: 'extract', extractProgress: 100 })
+
+      // Stop torrent to prevent seeding and avoid re-download on restart
+      if (capturedInfoHash) {
+        try { cancelTorrent(capturedInfoHash) } catch {}
+      }
+    } else {
+      // Only send final download progress if we did NOT extract.
+      // If extraction happened, the extract progress event already signals completion.
+      onProgress?.(100, { ...lastDetails, stage: 'download' })
+    }
 
     return {
       success: true,

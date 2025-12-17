@@ -2,21 +2,55 @@ import { session, app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 
+const STORE_PARTITION = 'persist:online-fix'
+
 function cookieFilePath() {
   const userData = app?.getPath?.('userData') ?? path.join(process.cwd(), '.userData')
   return path.join(userData, 'cookies.json')
 }
 
+export function deleteCookiesFile() {
+  try {
+    const file = cookieFilePath()
+    if (fs.existsSync(file)) fs.unlinkSync(file)
+  } catch (err) {
+    console.warn('Failed to delete cookies file', err)
+  }
+}
+
 // Export cookies for a given URL (or all if url is undefined)
 export async function exportCookies(url?: string) {
-  const cookies = url ? await session.defaultSession.cookies.get({ url }) : await session.defaultSession.cookies.get({})
-  // Save to file
+  const collect = async (ses: Electron.Session | null | undefined) => {
+    if (!ses) return [] as Electron.Cookie[]
+    try {
+      return url ? await ses.cookies.get({ url }) : await ses.cookies.get({})
+    } catch {
+      return [] as Electron.Cookie[]
+    }
+  }
+
+  const fromDefault = await collect(session.defaultSession)
+  const fromPartition = await collect(session.fromPartition?.(STORE_PARTITION))
+
+  // Deduplicate by name+domain+path, preferring partition cookies over defaults
+  const combined = [...fromDefault, ...fromPartition]
+  const seen = new Set<string>()
+  const deduped: Electron.Cookie[] = []
+  for (let i = combined.length - 1; i >= 0; i--) {
+    const c = combined[i]
+    const key = `${c.name}|${c.domain ?? ''}|${c.path ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.unshift(c)
+  }
+
   try {
-    fs.writeFileSync(cookieFilePath(), JSON.stringify(cookies, null, 2))
+    fs.writeFileSync(cookieFilePath(), JSON.stringify(deduped, null, 2))
   } catch (err) {
     console.error('Failed to write cookies file', err)
   }
-  return cookies
+
+  return deduped
 }
 
 function cookieToSetDetails(c: Electron.Cookie) {
@@ -64,12 +98,17 @@ export async function importCookies(url?: string) {
   try {
     const data = fs.readFileSync(file, 'utf-8')
     const cookies: Electron.Cookie[] = JSON.parse(data)
+
+    const targets = [session.defaultSession, session.fromPartition?.(STORE_PARTITION)].filter(Boolean) as Electron.Session[]
     for (const c of cookies) {
       const details = cookieToSetDetails(c)
-      try {
-        await session.defaultSession.cookies.set(details)
-      } catch (err) {
-        console.warn('Failed to set cookie', details.name, err)
+
+      for (const ses of targets) {
+        try {
+          await ses.cookies.set(details)
+        } catch (err) {
+          console.warn('Failed to set cookie', details.name, err)
+        }
       }
     }
   } catch (err) {
@@ -89,7 +128,7 @@ export async function getCookieHeaderForUrl(url: string): Promise<string> {
 
   // Pull cookies from both default session and the webview partition used to log in
   const fromDefault = await collect(session.defaultSession)
-  const fromPartition = await collect(session.fromPartition?.('persist:online-fix'))
+  const fromPartition = await collect(session.fromPartition?.(STORE_PARTITION))
 
   // Deduplicate by cookie name, preferring partition cookies over defaults
   const combined = [...fromDefault, ...fromPartition]
@@ -106,16 +145,26 @@ export async function getCookieHeaderForUrl(url: string): Promise<string> {
 }
 
 export async function clearCookies() {
-  const cookies = await session.defaultSession.cookies.get({})
-  for (const c of cookies) {
-    try {
-      // Build a URL for the cookie deletion: https://domain/path
-      const domain = c.domain?.startsWith('.') ? c.domain.substring(1) : c.domain
-      const protocol = c.secure ? 'https' : 'http'
-      const url = `${protocol}://${domain}${c.path ?? '/'}`
-      await session.defaultSession.cookies.remove(url, c.name)
-    } catch (e) {
-      // ignore errors
+  const removeFrom = async (ses: Electron.Session) => {
+    const cookies = await ses.cookies.get({})
+    for (const c of cookies) {
+      try {
+        const domain = c.domain?.startsWith('.') ? c.domain.substring(1) : c.domain
+        const protocol = c.secure ? 'https' : 'http'
+        const url = `${protocol}://${domain}${c.path ?? '/'}`
+        await ses.cookies.remove(url, c.name)
+      } catch {
+        // ignore
+      }
     }
   }
+
+  await removeFrom(session.defaultSession)
+  const part = session.fromPartition?.(STORE_PARTITION)
+  if (part) await removeFrom(part)
+}
+
+export async function clearCookiesAndFile() {
+  await clearCookies()
+  deleteCookiesFile()
 }

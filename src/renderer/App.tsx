@@ -4,6 +4,7 @@ import StoreTab from './components/StoreTab'
 import LibraryTab from './components/LibraryTab'
 import DownloadsTab from './components/DownloadsTab'
 import SettingsTab from './components/SettingsTab'
+import LoginOverlay from './components/LoginOverlay'
 import './App.css'
 
 type Tab = 'store' | 'library' | 'downloads' | 'settings'
@@ -13,17 +14,33 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hasDownloadActivity, setHasDownloadActivity] = useState(false)
   const [storeTargetUrl, setStoreTargetUrl] = useState<string | null>(null)
+  const [loginOverlayOpen, setLoginOverlayOpen] = useState(false)
+  const [storeWebviewResetKey, setStoreWebviewResetKey] = useState(0)
 
   useEffect(() => {
     // Check if user has cookies (is logged in)
     checkLoginStatus()
 
     // Listen for cookie updates
-    window.electronAPI.onCookiesSaved((cookies) => {
+    const off = window.electronAPI.onCookiesSaved((cookies) => {
       if (cookies && cookies.length > 0) {
         setIsLoggedIn(true)
       }
+      // Keep renderer state in sync with persisted cookies
+      checkLoginStatus()
     })
+
+    const offCleared = window.electronAPI.onCookiesCleared(() => {
+      setIsLoggedIn(false)
+      setLoginOverlayOpen(false)
+      setStoreTargetUrl(null)
+      setStoreWebviewResetKey((k) => k + 1)
+    })
+
+    return () => {
+      try { off?.() } catch {}
+      try { offCleared?.() } catch {}
+    }
   }, [])
 
   const checkLoginStatus = async () => {
@@ -36,8 +53,21 @@ export default function App() {
   }
 
   const handleLoginClick = () => {
-    // Just switch to store tab instead of opening a new window
-    setActiveTab('store')
+    // Open a temporary embedded login webview; closes automatically when logged in.
+    setLoginOverlayOpen(true)
+  }
+
+  const handleLogoutClick = async () => {
+    try {
+      await window.electronAPI.clearCookies()
+    } finally {
+      // Even if IPC fails, reset local UI so it doesn't look stuck.
+      setIsLoggedIn(false)
+      setLoginOverlayOpen(false)
+      setStoreTargetUrl(null)
+      try { sessionStorage.removeItem('of_store_url') } catch {}
+      setStoreWebviewResetKey((k) => k + 1)
+    }
   }
 
   const getTabTitle = (tab: Tab) => {
@@ -58,7 +88,14 @@ export default function App() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'store':
-        return <StoreTab isLoggedIn={isLoggedIn} targetUrl={storeTargetUrl} onTargetConsumed={() => setStoreTargetUrl(null)} />
+        return (
+          <StoreTab
+            key={`store-${storeWebviewResetKey}`}
+            isLoggedIn={isLoggedIn}
+            targetUrl={storeTargetUrl}
+            onTargetConsumed={() => setStoreTargetUrl(null)}
+          />
+        )
       case 'library':
         return <LibraryTab />
       case 'settings':
@@ -70,11 +107,22 @@ export default function App() {
 
   return (
     <div className="app-container">
+      <LoginOverlay
+        open={loginOverlayOpen && !isLoggedIn}
+        onClose={() => setLoginOverlayOpen(false)}
+        onLoggedIn={() => {
+          setLoginOverlayOpen(false)
+          setIsLoggedIn(true)
+          setActiveTab('store')
+          setStoreWebviewResetKey((k) => k + 1)
+        }}
+      />
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}
         isLoggedIn={isLoggedIn}
         onLoginClick={handleLoginClick}
+        onLogoutClick={handleLogoutClick}
         hasDownloadActivity={hasDownloadActivity}
         onProfileNavigate={(url) => { setStoreTargetUrl(url); setActiveTab('store') }}
       />

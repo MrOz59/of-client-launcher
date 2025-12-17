@@ -14,7 +14,25 @@ interface InstalledGame {
 }
 
 // Persist webview URL across tab switches
-let persistedUrl: string | null = null
+const STORE_URL_STORAGE_KEY = 'of_store_url'
+
+function getPersistedUrl(): string | null {
+  try {
+    const v = sessionStorage.getItem(STORE_URL_STORAGE_KEY)
+    return v && v.trim().length > 0 ? v : null
+  } catch {
+    return null
+  }
+}
+
+function setPersistedUrl(url: string | null) {
+  try {
+    if (!url) sessionStorage.removeItem(STORE_URL_STORAGE_KEY)
+    else sessionStorage.setItem(STORE_URL_STORAGE_KEY, url)
+  } catch {
+    // ignore
+  }
+}
 
 // Comprehensive CSS rules for ad blocking
 const cssRules = [
@@ -716,7 +734,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
     const wv = document.createElement('webview') as any
     // Use persisted URL or default
-    wv.src = persistedUrl || 'https://online-fix.me'
+    wv.src = getPersistedUrl() || 'https://online-fix.me'
     wv.style.width = '100%'
     wv.style.height = '100%'
     wv.setAttribute('partition', 'persist:online-fix')
@@ -744,13 +762,13 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
     // Save URL when navigating (for persistence across tab switches)
     wv.addEventListener('did-navigate', (e: any) => {
       if (e.url && !e.url.startsWith('about:')) {
-        persistedUrl = e.url
-        console.log('[StoreTab] Persisted URL:', persistedUrl)
+        setPersistedUrl(e.url)
+        console.log('[StoreTab] Persisted URL:', e.url)
       }
     })
     wv.addEventListener('did-navigate-in-page', (e: any) => {
       if (e.url && !e.url.startsWith('about:')) {
-        persistedUrl = e.url
+        setPersistedUrl(e.url)
       }
     })
 
@@ -759,7 +777,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       const dest = url || targetUrlRef.current || targetUrl
       if (!dest || !ensureUsable()) return
       targetUrlRef.current = null
-      persistedUrl = dest
+      setPersistedUrl(dest)
       try {
         wv.loadURL(dest)
       } catch (err) {
@@ -892,7 +910,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       // Save current URL before unmounting
       if (wv && ensureUsable()) {
         try {
-          persistedUrl = wv.getURL()
+          setPersistedUrl(wv.getURL())
         } catch (e) {
           // Ignore errors when getting URL
         }
@@ -910,7 +928,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       try {
         webviewInstance.current.loadURL(targetUrl)
         targetUrlRef.current = null
-        persistedUrl = targetUrl
+        setPersistedUrl(targetUrl)
         if (onTargetConsumed) onTargetConsumed()
       } catch (err) {
         console.warn('[StoreTab] Failed to navigate existing webview to target', targetUrl, err)

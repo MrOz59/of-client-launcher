@@ -1,8 +1,47 @@
-// Disable sandbox on Linux to avoid /dev/shm permission issues in AppImage
-// Must be done before app is ready
+// Configure sandbox for Linux AppImage/packaged environments
+// The SUID sandbox requires chrome-sandbox to have setuid permissions (owned by root with 4755)
+// which is not possible in AppImage. We use user namespace sandbox as fallback.
+// IMPORTANT: This must run before any Electron initialization
 import { app } from 'electron'
-if (process.platform === 'linux' && app.isPackaged) {
-  app.commandLine.appendSwitch('no-sandbox')
+import fs from 'fs'
+
+// Configure Linux sandbox EARLY - before app is ready
+// This must happen before Chromium initializes
+if (process.platform === 'linux') {
+  // Check if user namespaces are available (required for namespace sandbox)
+  let userNamespacesAvailable = false
+  try {
+    const unprivUserns = fs.readFileSync('/proc/sys/kernel/unprivileged_userns_clone', 'utf8').trim()
+    userNamespacesAvailable = unprivUserns === '1'
+  } catch {
+    // File doesn't exist on some systems (e.g., newer kernels where it's always enabled)
+    // Try to detect by checking if we can access user namespace
+    try {
+      fs.accessSync('/proc/self/ns/user', fs.constants.R_OK)
+      userNamespacesAvailable = true
+    } catch {
+      userNamespacesAvailable = false
+    }
+  }
+
+  if (userNamespacesAvailable) {
+    // User namespace sandbox is available - disable SUID sandbox and let Chromium use namespace sandbox
+    console.log('[Sandbox] Using user namespace sandbox (SUID sandbox disabled)')
+    app.commandLine.appendSwitch('disable-setuid-sandbox')
+    // Do NOT disable namespace sandbox - this is what we want to use!
+  } else {
+    // No user namespaces available - must disable sandbox entirely (last resort)
+    console.warn('[Sandbox] User namespaces not available - disabling sandbox (security reduced)')
+    app.commandLine.appendSwitch('no-sandbox')
+  }
+  
+  // Check /dev/shm availability for shared memory
+  try {
+    fs.accessSync('/dev/shm', fs.constants.W_OK | fs.constants.X_OK)
+  } catch {
+    console.log('[Sandbox] /dev/shm not writable, disabling dev-shm-usage')
+    app.commandLine.appendSwitch('disable-dev-shm-usage')
+  }
 }
 
 import * as drive from './drive'
@@ -36,7 +75,7 @@ import { shouldBlockRequest } from './easylist-filters.js'
 import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir } from './downloadManager.js'
 import axios from 'axios'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResolver.js'
-import fs from 'fs'
+// fs is already imported at the top for early sandbox configuration
 import { isLinux, findProtonRuntime, setSavedProtonRuntime, buildProtonLaunch, getPrefixPath, getDefaultPrefixPath, listProtonRuntimes, setCustomProtonRoot, setCustomProtonRoots, ensurePrefixDefaults, ensureGamePrefixFromDefault, getPrefixRootDir, ensureDefaultPrefix, getExpectedDefaultPrefixPath, ensureGameCommonRedists } from './protonManager.js'
 import { spawn } from 'child_process'
 import { vpnControllerCreateRoom, vpnControllerJoinRoom, vpnControllerListPeers, vpnControllerStatus } from './vpnControllerClient.js'
@@ -873,15 +912,32 @@ async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, ins
   try {
     const game = getGame(gameUrl) as any
 
+    // Se já tem prefixo, não precisa criar
     if (game?.proton_prefix) return
 
     const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
     const slug = stableId ? `game_${stableId}` : slugify(title || game?.title || gameUrl || 'game')
     const runtime = (game?.proton_runtime as string | null) || findProtonRuntime() || undefined
-    const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, false)
+
+    // Evitar jobs duplicados
+    if (inFlightPrefixJobs.has(gameUrl)) return
+    inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
+
+    // Enviar feedback visual para o usuário
+    sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo do Proton...' })
+
+    const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
+      sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
+    })
     updateGameInfo(gameUrl, { proton_prefix: prefix })
-  } catch (err) {
+
+    // Notificar que terminou
+    sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
+    inFlightPrefixJobs.delete(gameUrl)
+  } catch (err: any) {
     console.warn('[Proton] Failed to prepare prefix after install:', err)
+    try { inFlightPrefixJobs.delete(gameUrl) } catch {}
+    sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
   }
 }
 
@@ -907,20 +963,7 @@ async function getCachedProtonRuntimes(force = false): Promise<any[]> {
   }
 }
 
-// Disable Chromium sandbox in constrained environments (CI/containers)
-app.commandLine.appendSwitch('no-sandbox')
-app.commandLine.appendSwitch('disable-setuid-sandbox')
-app.commandLine.appendSwitch('disable-seccomp-filter-sandbox')
-app.commandLine.appendSwitch('disable-gpu-sandbox')
-// Only disable /dev/shm usage if /dev/shm is missing/unusable (otherwise it may unnecessarily force /tmp).
-if (process.platform === 'linux' && (!fs.existsSync('/dev/shm') || !isDirWritableAndExecutable('/dev/shm'))) {
-  app.commandLine.appendSwitch('disable-dev-shm-usage')
-}
-app.commandLine.appendSwitch('disable-gpu')
-app.commandLine.appendSwitch('disable-software-rasterizer')
-app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor')
-app.commandLine.appendSwitch('disable-namespace-sandbox')
-app.disableHardwareAcceleration()
+// Sandbox configuration moved to top of file (before Chromium initialization)
 
 function isTorrentListing(url: string) {
   return url.includes('/torrents/') || url.endsWith('.torrent')
@@ -1081,6 +1124,7 @@ async function createMainWindow() {
       preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       webviewTag: true // Enable webview tag for embedded browser
     }
   })
@@ -1119,6 +1163,7 @@ async function createAuthWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       partition: TORRENT_PARTITION // Use same partition as webview!
     }
   })
@@ -1301,6 +1346,27 @@ app.whenReady().then(async () => {
   ipcMain.handle('export-cookies', async (event, url?: string) => {
     const cookies = await import('./cookieManager').then(m => m.exportCookies(url))
     return cookies
+  })
+
+  ipcMain.handle('clear-cookies', async () => {
+    try {
+      const cm = await import('./cookieManager')
+      await cm.clearCookiesAndFile()
+
+      // Reset webview storage as well (best effort)
+      try {
+        await session.defaultSession.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage'] as any })
+      } catch {}
+      try {
+        const ses = session.fromPartition(TORRENT_PARTITION)
+        await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage'] as any })
+      } catch {}
+
+      mainWindow?.webContents.send('cookies-cleared')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao limpar cookies' }
+    }
   })
 
   ipcMain.handle('check-game-version', async (_event: IpcMainInvokeEvent, url: string) => {
