@@ -91,8 +91,20 @@ function makeX25519Keypair() {
 }
 
 function isWgKeyB64(key) {
-  // WireGuard keys are base64 of 32 bytes -> 44 chars with == padding.
-  return /^[A-Za-z0-9+/]{42}==?$/.test(String(key || '').trim())
+  // WireGuard keys are base64 of 32 bytes (X25519 raw).
+  const s = String(key || '').trim()
+  if (!s) return false
+  // base64 chars + optional padding, and must be 4-aligned.
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return false
+  if (s.length % 4 !== 0) return false
+  try {
+    const buf = Buffer.from(s, 'base64')
+    if (buf.length !== 32) return false
+    // Reject non-canonical encodings.
+    return buf.toString('base64') === s
+  } catch {
+    return false
+  }
 }
 
 function parseCidrHost(cidr) {
