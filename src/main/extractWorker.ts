@@ -5,8 +5,8 @@ const { installPath, gameUrl } = workerData as { installPath: string; gameUrl: s
 
 async function run() {
   try {
-    const res = await processUpdateExtraction(installPath, gameUrl, (percent) => {
-      parentPort?.postMessage({ type: 'progress', percent })
+    const res = await processUpdateExtraction(installPath, gameUrl, (percent, details) => {
+      parentPort?.postMessage({ type: 'progress', percent, etaSeconds: details?.etaSeconds })
     })
     parentPort?.postMessage({ type: 'done', result: res })
   } catch (err: any) {

@@ -269,6 +269,7 @@ export function normalizeGameInstallDir(installPath: string) {
 interface ProgressDetails extends Partial<TorrentProgress> {
   stage?: 'download' | 'extract'
   extractProgress?: number
+  extractEtaSeconds?: number // Estimated time remaining for extraction
 }
 
 export async function startGameDownload(
@@ -479,14 +480,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
       try {
         console.log(`[DownloadManager] Extracting ${downloadFilePath} to ${installPath}`)
-        await extractZipWithPassword(downloadFilePath, installPath, undefined, (percent) => {
-          const elapsed = (Date.now() - extractStart) / 1000
-          const eta = percent > 0 ? ((100 - percent) * elapsed) / percent : undefined
+        await extractZipWithPassword(downloadFilePath, installPath, undefined, (percent, details) => {
           updateDownloadProgress(Number(downloadId), percent)
           onProgress?.(percent, {
             stage: 'extract',
             extractProgress: percent,
-            timeRemaining: eta
+            extractEtaSeconds: details?.etaSeconds,
+            timeRemaining: details?.etaSeconds
           })
         })
         console.log('[DownloadManager] Extraction completed')
@@ -563,7 +563,9 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
           if (msg?.type === 'progress') {
             const percent = Number(msg.percent) || 0
             updateDownloadProgress(Number(downloadId), percent)
-            onProgress?.(percent, { stage: 'extract', extractProgress: percent })
+            // Use ETA from worker (calculated from 7z extraction progress)
+            const etaSeconds = msg.etaSeconds != null ? Number(msg.etaSeconds) : undefined
+            onProgress?.(percent, { stage: 'extract', extractProgress: percent, extractEtaSeconds: etaSeconds })
           } else if (msg?.type === 'done') {
             resolve(msg.result || { success: true })
           } else if (msg?.type === 'error') {
@@ -942,7 +944,7 @@ export function writeOnlineFixIni(gameUrl: string, content: string): { success: 
 export async function processUpdateExtraction(
   installPath: string,
   gameUrl: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number, details?: { etaSeconds?: number }) => void
 ): Promise<{ success: boolean; error?: string; executablePath?: string }> {
   console.log('[UpdateProcessor] Starting update processing for:', installPath)
 
@@ -1005,7 +1007,9 @@ export async function processUpdateExtraction(
     const rarFile = group.first
     console.log('[UpdateProcessor] Extracting:', rarFile, 'to:', installPath)
     try {
-      await extractZipWithPassword(rarFile, installPath, undefined, onProgress)
+      await extractZipWithPassword(rarFile, installPath, undefined, (percent, details) => {
+        onProgress?.(percent, { etaSeconds: details?.etaSeconds })
+      })
       console.log('[UpdateProcessor] Extraction completed for:', rarFile)
 
       // Flatten duplicated nested folder if the update archive was wrapped in a single directory

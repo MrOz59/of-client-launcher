@@ -2790,13 +2790,14 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
           destPath: target
         })
 
-        const result = await processUpdateExtraction(target, gameUrl, (percent) => {
+        const result = await processUpdateExtraction(target, gameUrl, (percent, details) => {
           sendDownloadProgress({
             magnet: idKey,
             url: idKey,
             progress: percent,
             stage: 'extract',
             extractProgress: percent,
+            eta: details?.etaSeconds,
             destPath: target
           })
         })
@@ -3502,7 +3503,7 @@ async function resumeInterruptedExtractions() {
           destPath: installPath
         })
 
-        const res = await processUpdateExtraction(installPath, gameUrl, (percent) => {
+        const res = await processUpdateExtraction(installPath, gameUrl, (percent, details) => {
           const p = Number(percent) || 0
           try { updateDownloadProgress(downloadId, p) } catch {}
           sendDownloadProgress({
@@ -3511,6 +3512,7 @@ async function resumeInterruptedExtractions() {
             progress: p,
             stage: 'extract',
             extractProgress: p,
+            eta: details?.etaSeconds,
             destPath: installPath
           })
         })

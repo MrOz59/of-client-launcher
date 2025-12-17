@@ -1,44 +1,75 @@
 import { spawn } from 'child_process'
-import { path7za } from '7zip-bin'
+import { path7z } from '7zip-bin-full'
 import fs from 'fs'
-import { createExtractorFromFile as createRarExtractor } from 'node-unrar-js'
 import path from 'path'
-import crypto from 'crypto'
+import { Worker } from 'worker_threads'
+import os from 'os'
+
+export interface ExtractProgress {
+  percent: number
+  etaSeconds?: number // Estimated time remaining in seconds
+  speedMBps?: number  // Extraction speed in MB/s (approximate based on progress)
+}
+
+// Determine optimal thread count: use half of available cores (min 1, max 8)
+// This balances speed with leaving resources for the system
+function getOptimalThreadCount(): number {
+  const cpus = os.cpus().length
+  return Math.max(1, Math.min(8, Math.floor(cpus / 2))) || 2
+}
 
 export function extractZipWithPassword(
   zipPath: string,
   destDir: string,
   password?: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number, details?: ExtractProgress) => void
 ): Promise<void> {
   const ext = zipPath.toLowerCase()
+  
+  // 7z supports RAR natively and is much faster than node-unrar-js (WASM)
+  // Try 7z first for all formats, fall back to node-unrar-js only if needed
   if (ext.endsWith('.rar')) {
-    return extractRar(zipPath, destDir, password, onProgress)
+    return extract7z(zipPath, destDir, password, onProgress)
+      .catch((err) => {
+        console.warn('[Extract] 7z failed for RAR, falling back to node-unrar-js:', err.message)
+        return extractRarFallback(zipPath, destDir, password, onProgress)
+      })
   }
 
+  return extract7z(zipPath, destDir, password, onProgress)
+}
+
+function extract7z(
+  archivePath: string,
+  destDir: string,
+  password?: string,
+  onProgress?: (percent: number, details?: ExtractProgress) => void
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const binary = path7za
+    const binary = path7z
     if (!binary) {
-      return reject(new Error('7z/7za binary not found in bundled 7zip-bin'))
+      return reject(new Error('7z/7zz binary not found in bundled 7zip-bin-full'))
     }
 
     try {
       fs.mkdirSync(destDir, { recursive: true })
     } catch {}
 
-    console.log('[Extract] Starting extraction (spawn)', { zipPath, destDir, binary })
-
-    // Quote output dir because 7z expects no spaces unless quoted
-    const outputArg = `-o"${destDir}"`
+    const threads = getOptimalThreadCount()
+    console.log('[Extract] Starting extraction (7zz spawn)', { archivePath, destDir, binary, threads })
 
     const args = [
       'x',
-      zipPath,
+      archivePath,
       `-p${password || 'online-fix.me'}`,
-      outputArg,
+      `-o${destDir}`,
+      // Multi-threading for faster extraction
+      `-mmt=${threads}`,
       // Always overwrite existing files (avoid partial installs when re-extracting).
       '-aoa',
-      '-y'
+      '-y',
+      // Show progress indicator
+      '-bsp1'
     ]
 
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -47,12 +78,39 @@ export function extractZipWithPassword(
     let stderrBuf = ''
 
     let lastPercent = 0
+    const startTime = Date.now()
+    let lastProgressTime = startTime
+    let lastProgressPercent = 0
+
     const emitProgress = (p: number) => {
       const clamped = Math.max(0, Math.min(100, p))
       if (clamped !== lastPercent) {
         lastPercent = clamped
-        onProgress?.(clamped)
-        console.log('[Extract] progress', clamped)
+        
+        // Calculate ETA based on progress rate
+        const now = Date.now()
+        const elapsedMs = now - startTime
+        let etaSeconds: number | undefined
+        
+        if (clamped > 0 && clamped < 100) {
+          // Use overall progress for more stable ETA
+          const msPerPercent = elapsedMs / clamped
+          const remainingPercent = 100 - clamped
+          etaSeconds = Math.round((msPerPercent * remainingPercent) / 1000)
+        }
+        
+        onProgress?.(clamped, { percent: clamped, etaSeconds })
+        
+        if (etaSeconds !== undefined) {
+          const etaMin = Math.floor(etaSeconds / 60)
+          const etaSec = etaSeconds % 60
+          console.log(`[Extract] progress ${clamped}% (ETA: ${etaMin}m ${etaSec}s)`)
+        } else {
+          console.log('[Extract] progress', clamped)
+        }
+        
+        lastProgressTime = now
+        lastProgressPercent = clamped
       }
     }
 
@@ -81,7 +139,7 @@ export function extractZipWithPassword(
     child.on('exit', (code) => {
       if (code === 0) {
         emitProgress(100)
-        console.log('[Extract] finished', { zipPath, destDir })
+        console.log('[Extract] finished', { archivePath, destDir })
         resolve()
       } else {
         const msg = `Extraction failed with code ${code}. stdout: ${stdoutBuf.trim()} stderr: ${stderrBuf.trim()}`
@@ -97,82 +155,44 @@ export function extractZipWithPassword(
   })
 }
 
-function moveDirContentsOverwrite(srcDir: string, destDir: string) {
-  if (!fs.existsSync(srcDir)) return
-  fs.mkdirSync(destDir, { recursive: true })
-  const entries = fs.readdirSync(srcDir, { withFileTypes: true })
-  for (const entry of entries) {
-    const srcPath = path.join(srcDir, entry.name)
-    const destPath = path.join(destDir, entry.name)
-    try {
-      if (entry.isDirectory()) {
-        moveDirContentsOverwrite(srcPath, destPath)
-        try { fs.rmSync(srcPath, { recursive: true, force: true }) } catch {}
-      } else {
-        try {
-          if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true })
-        } catch {}
-        fs.mkdirSync(path.dirname(destPath), { recursive: true })
-        try {
-          fs.renameSync(srcPath, destPath)
-        } catch {
-          fs.cpSync(srcPath, destPath, { force: true })
-          try { fs.rmSync(srcPath, { force: true }) } catch {}
-        }
-      }
-    } catch (err) {
-      console.warn('[Extract] Failed to move extracted entry', srcPath, '->', destPath, err)
-    }
-  }
-}
-
-async function extractRar(
+// Fallback RAR extraction using node-unrar-js (slower, WASM-based)
+// Only used if 7z fails for some reason
+async function extractRarFallback(
   rarPath: string,
   destDir: string,
   password?: string,
   onProgress?: (percent: number) => void
 ): Promise<void> {
-  console.log('[ExtractRAR] Starting', { rarPath, destDir })
-  try {
-    fs.mkdirSync(destDir, { recursive: true })
-  } catch {}
+  console.log('[ExtractRAR] Starting via worker (fallback)', { rarPath, destDir })
 
-  // Extract to a temp dir first, then merge into destDir with overwrite.
-  // This avoids "partial installs" when extracting over an existing folder.
-  const tmpDir = path.join(destDir, `.of_extract_tmp_${crypto.randomBytes(4).toString('hex')}`)
-  try { fs.mkdirSync(tmpDir, { recursive: true }) } catch {}
+  // Resolve the worker script path (works in both dev and packaged builds)
+  // Use __dirname which works in both contexts
+  const workerPath = path.join(__dirname, 'rarExtractWorker.js')
 
-  const extractor = await createRarExtractor({
-    filepath: rarPath,
-    targetPath: tmpDir,
-    password: password || 'online-fix.me'
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(workerPath, {
+      workerData: { rarPath, destDir, password }
+    })
+
+    worker.on('message', (msg: { type: string; percent?: number; error?: string }) => {
+      if (msg.type === 'progress' && typeof msg.percent === 'number') {
+        onProgress?.(msg.percent)
+      } else if (msg.type === 'done') {
+        resolve()
+      } else if (msg.type === 'error') {
+        reject(new Error(msg.error || 'RAR extraction failed'))
+      }
+    })
+
+    worker.on('error', (err) => {
+      console.error('[ExtractRAR] worker error', err)
+      reject(err)
+    })
+
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`RAR worker exited with code ${code}`))
+      }
+    })
   })
-
-  const headersGen = extractor.getFileList().fileHeaders || []
-  const entries = Array.from(headersGen as Iterable<any>)
-  let processed = 0
-  const total = entries.length || 1
-
-  // Send an initial progress event so the UI shows extraction has begun
-  onProgress?.(0)
-
-  const iterator = extractor.extract().files || []
-  for (const entry of iterator) {
-    processed++
-    const percent = Math.min(100, Math.max(0, (processed / total) * 100))
-    // Keep merge time for the end.
-    onProgress?.(Math.min(95, percent))
-    console.log('[ExtractRAR] extracted', entry.fileHeader?.name, percent.toFixed(1) + '%')
-
-    // Yield back to the event loop so the app UI stays responsive during long extractions
-    // (node-unrar-js extraction is synchronous)
-    await new Promise(resolve => setImmediate(resolve))
-  }
-  try {
-    moveDirContentsOverwrite(tmpDir, destDir)
-  } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
-  }
-  onProgress?.(100)
-  console.log('[ExtractRAR] finished', { rarPath, destDir })
 }
