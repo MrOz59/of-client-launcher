@@ -102,26 +102,53 @@ export function extractTitleFromHtml(html: string): string | null {
 
 export function extractVersionFromHtml(html: string): string | null {
   const $ = cheerio.load(html)
-  // Selector discovered by the user: adjust if needed
-  const sel = '#dle-content > div > article > div.full-story-content > div:nth-child(3) > div:nth-child(21) > div > b'
-  const el = $(sel)
-  if (el && el.length > 0) {
-    const text = el.text().trim()
-    const match = text.match(/([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/)
-    if (match) return match[1]
+
+  // Strategy 1: Find elements containing version labels and extract the value
+  // This is more robust than fixed CSS selectors since it searches by content
+  const versionLabels = [
+    'Версия игры',      // Russian original
+    'Game version',     // English translation
+    'Versão do jogo',   // Portuguese translation
+    'Versión del juego', // Spanish translation
+    'Version du jeu',   // French translation
+  ]
+
+  // Search for elements containing version labels
+  const allText = $('body').text()
+  for (const label of versionLabels) {
+    // Pattern: "Label: Value" where Value can be Build XXXXX, vX.X.X, X.X.X, etc.
+    const labelPattern = new RegExp(
+      label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + // escape special chars
+      '[:\\s]+' + // colon or whitespace
+      '((?:Build\\s*)?[vV]?[0-9][0-9a-zA-Z._-]*)', // version value
+      'i'
+    )
+    const match = allText.match(labelPattern)
+    if (match && match[1]) {
+      const version = match[1].trim()
+      console.log(`[Scraper] Found version via label "${label}":`, version)
+      return version
+    }
   }
 
-  // fallback: search the whole body for common patterns
-  const text = $('body').text()
+  // Strategy 2: Look for common version patterns in the page
   const patterns = [
-    /Версия игры:\s*v?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/i,
-    /Version(?:\s*[:\-])?\s*v?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/i,
-    /v([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/i,
+    // Build format: Build 04122025, Build.04122025
+    /\b(Build[.\s]*\d{6,10})\b/i,
+    // Semantic versioning: v1.2.3, 1.2.3.4
+    /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i,
+    // Date-based: 2024.12.04, 04.12.2024
+    /\b(\d{2,4}[.-]\d{2}[.-]\d{2,4})\b/,
   ]
+
   for (const p of patterns) {
-    const m = text.match(p)
-    if (m) return m[1]
+    const m = allText.match(p)
+    if (m && m[1]) {
+      console.log('[Scraper] Found version via pattern:', m[1])
+      return m[1]
+    }
   }
+
   return null
 }
 

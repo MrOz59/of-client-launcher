@@ -115,18 +115,59 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     'online-fix hosters', 'online-fix drive'
   ];
 
-  // Version comparison helper
+  // Version comparison helper - supports semantic versions and Build dates
   function compareVersions(v1, v2) {
     if (!v1 || !v2) return 0;
-    const parts1 = v1.replace(/[^0-9.]/g, '').split('.').map(Number);
-    const parts2 = v2.replace(/[^0-9.]/g, '').split('.').map(Number);
+
+    // Normalize versions for comparison
+    const normalize = (v) => String(v).trim().toLowerCase();
+    const n1 = normalize(v1);
+    const n2 = normalize(v2);
+
+    // If exactly equal, no update needed
+    if (n1 === n2) return 0;
+
+    // Handle Build DDMMYYYY format - convert to YYYYMMDD for comparison
+    const parseBuildDate = (v) => {
+      const match = v.match(/build[.\s]*(\d{2})(\d{2})(\d{4})/i);
+      if (match) {
+        // DDMMYYYY -> YYYYMMDD for proper numeric comparison
+        return parseInt(match[3] + match[2] + match[1], 10);
+      }
+      // Also try MMDDYYYY format
+      const match2 = v.match(/build[.\s]*(\d{8})/i);
+      if (match2) {
+        const d = match2[1];
+        // Assume DDMMYYYY, convert to YYYYMMDD
+        return parseInt(d.slice(4, 8) + d.slice(2, 4) + d.slice(0, 2), 10);
+      }
+      return null;
+    };
+
+    const build1 = parseBuildDate(n1);
+    const build2 = parseBuildDate(n2);
+
+    // If both are Build dates, compare them
+    if (build1 !== null && build2 !== null) {
+      if (build1 < build2) return -1;
+      if (build1 > build2) return 1;
+      return 0;
+    }
+
+    // Fallback: semantic version comparison
+    const parts1 = n1.replace(/[^0-9.]/g, '').split('.').map(Number).filter(n => !isNaN(n));
+    const parts2 = n2.replace(/[^0-9.]/g, '').split('.').map(Number).filter(n => !isNaN(n));
+
     for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
       const p1 = parts1[i] || 0;
       const p2 = parts2[i] || 0;
       if (p1 < p2) return -1;
       if (p1 > p2) return 1;
     }
-    return 0;
+
+    // If numeric comparison is equal but strings differ, consider it an update
+    // This handles cases like "1.0.0a" vs "1.0.0b"
+    return n1 < n2 ? -1 : (n1 > n2 ? 1 : 0);
   }
 
   // Extract game version from page
@@ -135,18 +176,43 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     if (!article) return null;
 
     const text = article.textContent || '';
-    // Match patterns like "Версия игры: 1.1.0" or "Version: 1.2.3" or translated versions
+
+    // Version labels in different languages
+    const versionLabels = [
+      'Версия игры',      // Russian original
+      'Game version',     // English translation
+      'Versão do jogo',   // Portuguese translation
+      'Versión del juego', // Spanish translation
+      'Version du jeu',   // French translation
+    ];
+
+    // Try to find version by label first
+    for (const label of versionLabels) {
+      const labelPattern = new RegExp(
+        label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
+        '[:\\\\s]+' +
+        '((?:Build[.\\\\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)',
+        'i'
+      );
+      const match = text.match(labelPattern);
+      if (match && match[1]) {
+        console.log('[OF Store] Found page version via label:', match[1]);
+        return match[1].trim();
+      }
+    }
+
+    // Fallback patterns
     const patterns = [
-      /Версия\\s*(?:игры)?\\s*[:\\s]+([0-9][0-9.]+[0-9a-zA-Z]*)/i,
-      /Version\\s*[:\\s]+([0-9][0-9.]+[0-9a-zA-Z]*)/i,
-      /Versão\\s*(?:do jogo)?\\s*[:\\s]+([0-9][0-9.]+[0-9a-zA-Z]*)/i,
-      /v\\.?\\s*([0-9][0-9.]+[0-9a-zA-Z]*)/i
+      // Build format: Build 04122025, Build.04122025
+      /\\b(Build[.\\s]*\\d{6,10})\\b/i,
+      // Semantic versioning
+      /\\bv?([0-9]+\\.[0-9]+(?:\\.[0-9]+){1,3})\\b/i,
     ];
 
     for (const pattern of patterns) {
       const match = text.match(pattern);
       if (match) {
-        console.log('[AdBlock Pro] Found page version:', match[1]);
+        console.log('[OF Store] Found page version via pattern:', match[1]);
         return match[1];
       }
     }

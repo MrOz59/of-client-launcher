@@ -1050,7 +1050,36 @@ export default function LibraryTab() {
   }
 
   const hasUpdate = (game: Game) => {
-    return game.latest_version && game.installed_version && game.latest_version !== game.installed_version
+    if (!game.latest_version || !game.installed_version) return false
+    const v1 = String(game.installed_version).trim().toLowerCase()
+    const v2 = String(game.latest_version).trim().toLowerCase()
+    if (v1 === v2) return false
+
+    // Parse Build DDMMYYYY format to comparable number
+    const parseBuildDate = (v: string): number | null => {
+      const match = v.match(/build[.\s]*(\d{2})(\d{2})(\d{4})/i)
+      if (match) {
+        // DDMMYYYY -> YYYYMMDD for proper comparison
+        return parseInt(match[3] + match[2] + match[1], 10)
+      }
+      const match2 = v.match(/build[.\s]*(\d{8})/i)
+      if (match2) {
+        const d = match2[1]
+        return parseInt(d.slice(4, 8) + d.slice(2, 4) + d.slice(0, 2), 10)
+      }
+      return null
+    }
+
+    const build1 = parseBuildDate(v1)
+    const build2 = parseBuildDate(v2)
+
+    // If both are Build dates, compare them
+    if (build1 !== null && build2 !== null) {
+      return build2 > build1
+    }
+
+    // For semantic versions or other formats, different = update available
+    return true
   }
 
   const loadProtonFromGame = (game: Game) => {

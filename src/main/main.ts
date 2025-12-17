@@ -193,6 +193,9 @@ async function runQueuedUpdate(gameUrl: string) {
   })
 
   if (!result.success) throw new Error(result.error || 'Falha ao atualizar')
+
+  // Auto-fetch banner after successful install
+  fetchAndPersistBanner(url, title).catch(() => {})
 }
 
 async function pumpUpdateQueue() {
@@ -775,21 +778,30 @@ const fetchSteamBanner = async (title: string): Promise<string | null> => {
 
     const candidates: string[] = []
 
-    // Try library assets first (best quality for launcher library cards)
+    // Priority 1: Vertical covers (3:4 aspect ratio) - best for library cards
+    // library_600x900 is the ideal format for our 3:4 card aspect ratio
     candidates.push(
       `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900.jpg`,
-      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_hero.jpg`,
-      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
-      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`,
-      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_231x87.jpg`
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900_2x.jpg`
     )
 
-    // appdetails-provided URLs (often more reliable than guessing filenames)
-    if (appDetails?.header_image) candidates.unshift(String(appDetails.header_image))
+    // Priority 2: Other library assets (still good quality)
+    candidates.push(
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_hero.jpg`
+    )
+
+    // Priority 3: Horizontal covers (fallback - will be cropped to fit)
+    candidates.push(
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`
+    )
+
+    // appdetails-provided URLs (append as fallbacks, don't override vertical covers)
+    if (appDetails?.header_image) candidates.push(String(appDetails.header_image))
     if (appDetails?.capsule_image) candidates.push(String(appDetails.capsule_image))
     if (appDetails?.capsule_imagev5) candidates.push(String(appDetails.capsule_imagev5))
 
-    // storesearch-provided tiny_image fallback
+    // storesearch-provided tiny_image as last resort
     if (best?.tiny_image) candidates.push(String(best.tiny_image))
 
     // Pick the first URL that actually returns an image
@@ -1103,6 +1115,8 @@ async function handleExternalDownload(url: string) {
         infoHash: completed?.info_hash || undefined,
         destPath: result.installPath || completed?.dest_path
       })
+      // Auto-fetch banner once installed
+      fetchAndPersistBanner(referer, title).catch(() => {})
       if (result.installPath) {
         prepareGamePrefixAfterInstall(referer, title, result.installPath).catch(() => {})
       }
@@ -1301,6 +1315,10 @@ app.whenReady().then(async () => {
       resumed = true
       // Small delay to keep first paint snappy.
       setTimeout(() => {
+        // First, clean up orphaned downloads before resuming
+        cleanupOrphanedDownloads().catch((err) => {
+          console.warn('Failed to cleanup orphaned downloads', err)
+        })
         resumeActiveDownloads().catch((err) => {
           console.warn('Failed to resume active downloads', err)
         })
@@ -2798,7 +2816,18 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
           const version = parseVersionFromName(candidatePath) || parseVersionFromName(target) || 'unknown'
           addOrUpdateGame(gameUrl, record?.title)
           markGameInstalled(gameUrl, target, version, result.executablePath || undefined)
+          // Auto-fetch banner once installed
+          fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
           prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), target).catch(() => {})
+        }
+
+        // Clean up download record from database - game is now installed
+        if (record?.id) {
+          try {
+            deleteDownload(Number(record.id))
+            mainWindow?.webContents.send('download-deleted')
+            console.log('[Extract] Cleaned up download record after successful torrent extraction')
+          } catch {}
         }
 
         return { success: true, destPath: target }
@@ -2877,7 +2906,18 @@ ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string
         const version = parseVersionFromName(archivePath) || parseVersionFromName(destDir) || 'unknown'
         addOrUpdateGame(gameUrl, record?.title)
         markGameInstalled(gameUrl, destDir, version, exePath || undefined)
+        // Auto-fetch banner once installed
+        fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
         prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), destDir).catch(() => {})
+      }
+
+      // Clean up download record from database - game is now installed
+      if (record?.id) {
+        try {
+          deleteDownload(Number(record.id))
+          mainWindow?.webContents.send('download-deleted')
+          console.log('[Extract] Cleaned up download record after successful HTTP extraction')
+        } catch {}
       }
 
       return { success: true, destPath: destDir }
@@ -3076,6 +3116,8 @@ async function resumeActiveDownloads() {
         if (res.installPath) {
           const resolvedGameUrl = String(d.game_url || d.download_url)
           const title = String(d.title || resolvedGameUrl)
+          // Auto-fetch banner once installed
+          fetchAndPersistBanner(resolvedGameUrl, title).catch(() => {})
           prepareGamePrefixAfterInstall(resolvedGameUrl, title, res.installPath).catch(() => {})
         }
       }).catch((err) => {
@@ -3123,6 +3165,92 @@ async function reconcileInstalledGamesFromCompletedDownloads() {
     }
   } catch (err) {
     console.warn('Failed to reconcile installed games from completed downloads', err)
+  }
+}
+
+/**
+ * Clean up orphaned downloads on startup.
+ * - Removes completed downloads whose files no longer exist
+ * - Removes old error downloads (older than 7 days)
+ * - Removes downloads with invalid/missing paths
+ */
+async function cleanupOrphanedDownloads() {
+  try {
+    const activeDownloads = (getActiveDownloads() as any[]) || []
+    const completedDownloads = (getCompletedDownloads() as any[]) || []
+    const allDownloads = [...activeDownloads, ...completedDownloads]
+
+    let cleaned = 0
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
+
+    for (const d of allDownloads) {
+      const downloadId = Number(d?.id)
+      if (!downloadId) continue
+
+      const status = String(d?.status || '').toLowerCase()
+      const destPath = String(d?.dest_path || '').trim()
+      const installPath = String(d?.install_path || '').trim()
+      const updatedAt = d?.updated_at ? new Date(d.updated_at).getTime() : 0
+
+      let shouldDelete = false
+      let reason = ''
+
+      // Case 1: Completed downloads with no existing files
+      if (status === 'completed') {
+        const pathToCheck = installPath || destPath
+        if (!pathToCheck) {
+          shouldDelete = true
+          reason = 'completed download with no path'
+        } else {
+          try {
+            const absPath = path.isAbsolute(pathToCheck) ? pathToCheck : path.resolve(process.cwd(), pathToCheck)
+            if (!fs.existsSync(absPath)) {
+              shouldDelete = true
+              reason = `completed download with missing path: ${absPath}`
+            }
+          } catch {
+            shouldDelete = true
+            reason = 'completed download with invalid path'
+          }
+        }
+      }
+
+      // Case 2: Error downloads - clean up old ones or ones with missing files
+      if (status === 'error') {
+        // Old errors (>7 days) get cleaned
+        if (updatedAt && updatedAt < sevenDaysAgo) {
+          shouldDelete = true
+          reason = 'old error download (>7 days)'
+        }
+        // Error downloads with no valid dest_path or missing files get cleaned
+        else if (!destPath) {
+          shouldDelete = true
+          reason = 'error download with no dest_path'
+        }
+      }
+
+      // Case 3: Pending/downloading with no dest_path and no download_url
+      if ((status === 'pending' || status === 'downloading') && !destPath && !d?.download_url) {
+        shouldDelete = true
+        reason = 'pending/downloading with no valid download info'
+      }
+
+      if (shouldDelete) {
+        try {
+          deleteDownload(downloadId)
+          cleaned++
+          console.log(`[Launcher] Cleaned up orphaned download #${downloadId}: ${reason}`)
+        } catch (err) {
+          console.warn(`[Launcher] Failed to delete orphaned download #${downloadId}:`, err)
+        }
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log(`[Launcher] Cleaned up ${cleaned} orphaned download(s)`)
+    }
+  } catch (err) {
+    console.warn('Failed to cleanup orphaned downloads', err)
   }
 }
 

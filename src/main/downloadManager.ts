@@ -20,7 +20,7 @@ import {
 import path from 'path'
 import fs from 'fs'
 import { Worker } from 'worker_threads'
-import { session } from 'electron'
+import { session, BrowserWindow } from 'electron'
 
 export interface DownloadOptions {
   gameUrl: string
@@ -527,6 +527,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         // Emit final extraction progress to UI
         onProgress?.(100, { stage: 'extract', extractProgress: 100 })
 
+        // Clean up download record from database - game is now installed
+        try {
+          deleteDownload(Number(downloadId))
+          BrowserWindow.getAllWindows().forEach(w => w.webContents.send('download-deleted'))
+          console.log('[DownloadManager] Cleaned up download record after successful HTTP extraction')
+        } catch {}
+
         finalInstallPath = installPath
       } catch (extractError: any) {
         console.error('Extraction failed:', extractError)
@@ -606,6 +613,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       if (capturedInfoHash) {
         try { cancelTorrent(capturedInfoHash) } catch {}
       }
+
+      // Clean up download record from database - game is now installed
+      try {
+        deleteDownload(Number(downloadId))
+        BrowserWindow.getAllWindows().forEach(w => w.webContents.send('download-deleted'))
+        console.log('[DownloadManager] Cleaned up download record after successful torrent extraction')
+      } catch {}
     } else {
       // Only send final download progress if we did NOT extract.
       // If extraction happened, the extract progress event already signals completion.
