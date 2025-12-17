@@ -66,3 +66,7 @@ pnpm-debug.log*
 .vite/
 coverage/
 
+# Torrent agent runtime (generated per-platform by build-torrent-agent-runtime.js)
+services/torrent-agent/pydeps/
+services/torrent-agent/python/
+
