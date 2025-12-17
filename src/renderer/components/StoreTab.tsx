@@ -189,9 +189,9 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     // Try to find version by label first
     for (const label of versionLabels) {
       const labelPattern = new RegExp(
-        label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') +
-        '[:\\\\s]+' +
-        '((?:Build[.\\\\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)',
+        label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+        '[:\\s]+' +
+        '((?:Build[.\\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)',
         'i'
       );
       const match = text.match(labelPattern);
@@ -204,9 +204,9 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     // Fallback patterns
     const patterns = [
       // Build format: Build 04122025, Build.04122025
-      /\\b(Build[.\\s]*\\d{6,10})\\b/i,
+      /\b(Build[.\s]*\d{6,10})\b/i,
       // Semantic versioning
-      /\\bv?([0-9]+\\.[0-9]+(?:\\.[0-9]+){1,3})\\b/i,
+      /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i,
     ];
 
     for (const pattern of patterns) {
