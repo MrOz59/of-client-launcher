@@ -149,10 +149,15 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel python python-pip libarchive libxcrypt-compat
+          pacman -S --noconfirm --needed nodejs npm git base-devel python311 libarchive libxcrypt-compat
+          # Use python3.11 for cx_Freeze compatibility
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python
+          python3.11 -m ensurepip
+          python3.11 -m pip install --upgrade pip
       - run: npm ci
       - name: Install Python dependencies
-        run: pip install --break-system-packages -r requirements.txt
+        run: python3.11 -m pip install --break-system-packages -r requirements.txt
         working-directory: services/torrent-agent
       - name: Build bundled torrent-agent binary
         run: npm run bundle:torrent-agent
