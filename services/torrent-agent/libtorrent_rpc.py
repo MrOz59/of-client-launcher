@@ -10,16 +10,19 @@ Note: Requires python bindings for libtorrent (rasterbar).
 import json
 import os
 import sys
+import traceback
 
 try:
     import libtorrent as lt
 except Exception as e:
+    error_detail = traceback.format_exc()
     sys.stdout.write(
         json.dumps(
             {
                 "event": "fatal",
                 "message": "Missing python libtorrent bindings",
                 "detail": str(e),
+                "traceback": error_detail,
             }
         )
         + "\n"

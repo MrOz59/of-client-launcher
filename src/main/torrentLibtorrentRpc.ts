@@ -56,7 +56,10 @@ function hasActiveAlias(ids: string[]): boolean {
  * Returns null if not found (fallback to Python mode).
  */
 function getStandaloneBinaryPath(): string | null {
-  const exeName = process.platform === 'win32' ? 'torrent-agent.exe' : 'torrent-agent'
+  // On Windows, cx_Freeze may create with or without .exe extension
+  const possibleNames = process.platform === 'win32' 
+    ? ['torrent-agent.exe', 'torrent-agent'] 
+    : ['torrent-agent']
 
   console.log('[torrent-agent] Looking for standalone binary...')
   console.log('[torrent-agent] Platform:', process.platform, 'Arch:', process.arch)
@@ -66,12 +69,15 @@ function getStandaloneBinaryPath(): string | null {
   // Packaged app: look in resources/torrent-agent/
   if (app?.isPackaged && process.resourcesPath) {
     const resources = process.resourcesPath
-    const candidate = path.join(resources, 'torrent-agent', exeName)
-    console.log('[torrent-agent] Checking packaged path:', candidate)
     
-    if (fs.existsSync(candidate)) {
-      console.log('[torrent-agent] ✓ Found binary at:', candidate)
-      return candidate
+    for (const exeName of possibleNames) {
+      const candidate = path.join(resources, 'torrent-agent', exeName)
+      console.log('[torrent-agent] Checking packaged path:', candidate)
+      
+      if (fs.existsSync(candidate)) {
+        console.log('[torrent-agent] ✓ Found binary at:', candidate)
+        return candidate
+      }
     }
     
     // List what's actually in resources/torrent-agent to help debug
@@ -88,11 +94,13 @@ function getStandaloneBinaryPath(): string | null {
   }
 
   // Dev mode: look in services/torrent-agent/dist/
-  const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'dist', exeName)
-  console.log('[torrent-agent] Checking dev path:', devPath)
-  if (fs.existsSync(devPath)) {
-    console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
-    return devPath
+  for (const exeName of possibleNames) {
+    const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'dist', exeName)
+    console.log('[torrent-agent] Checking dev path:', devPath)
+    if (fs.existsSync(devPath)) {
+      console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
+      return devPath
+    }
   }
 
   console.log('[torrent-agent] No standalone binary found, will fallback to Python')
@@ -203,8 +211,14 @@ class LibtorrentRpcClient {
 
           // fatal early message (missing libtorrent)
           if (msg && msg.event === 'fatal') {
+            console.error('[torrent-agent] Fatal error from binary:', msg.message)
+            console.error('[torrent-agent] Detail:', msg.detail)
+            if (msg.traceback) {
+              console.error('[torrent-agent] Traceback:', msg.traceback)
+            }
             const err = new LibtorrentUnavailableError(msg.message || 'libtorrent unavailable')
             ;(err as any).detail = msg.detail
+            ;(err as any).traceback = msg.traceback
             reject(err)
             try { proc.kill() } catch {}
             return

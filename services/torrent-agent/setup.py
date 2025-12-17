@@ -9,50 +9,25 @@ Usage:
   python setup.py build_exe
 """
 
-import sys
 from cx_Freeze import setup, Executable
 
-# Build options
+# Dependencies are automatically detected, but it might need fine tuning.
+# This is the same configuration that Hydra Launcher uses.
 build_exe_options = {
-    "packages": ["libtorrent", "json", "os", "sys"],
-    "excludes": [
-        "tkinter",
-        "unittest",
-        "email",
-        "html",
-        "http",
-        "xml",
-        "pydoc",
-        "doctest",
-        "argparse",
-        "difflib",
-        "inspect",
-        "asyncio",
-        "concurrent",
-        "ctypes",
-        "distutils",
-        "lib2to3",
-        "logging",
-        "multiprocessing",
-        "sqlite3",
-        "ssl",
-        "urllib",
-        "zipfile",
-    ],
+    "packages": ["libtorrent"],
     "build_exe": "dist",
     "include_msvcr": True,
 }
-
-# Target executable
-target = Executable(
-    script="libtorrent_rpc.py",
-    target_name="torrent-agent.exe" if sys.platform == "win32" else "torrent-agent",
-)
 
 setup(
     name="of-torrent-agent",
     version="1.0.0",
     description="OF-Client Torrent Agent - libtorrent RPC service",
     options={"build_exe": build_exe_options},
-    executables=[target],
+    executables=[
+        Executable(
+            "libtorrent_rpc.py",
+            target_name="torrent-agent",
+        )
+    ],
 )
