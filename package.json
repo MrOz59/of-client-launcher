@@ -72,7 +72,7 @@
     ],
     "extraResources": [
       {
-        "from": "services/torrent-agent/dist",
+        "from": "services/torrent-agent/torrent-agent",
         "to": "torrent-agent",
         "filter": [
           "**/*"

@@ -2,10 +2,12 @@
 /**
  * Build script for torrent-agent standalone executable.
  * 
- * This script uses cx_Freeze (or PyInstaller as fallback) to compile 
- * libtorrent_rpc.py + libtorrent into a standalone executable.
+ * This script uses cx_Freeze to compile libtorrent_rpc.py + libtorrent
+ * into a standalone executable. This is the SAME approach used by Hydra Launcher.
  * 
- * The output goes to: services/torrent-agent/dist/
+ * See: https://github.com/hydralauncher/hydra/blob/main/.github/workflows/build.yml
+ * 
+ * The output goes to: services/torrent-agent/torrent-agent/
  * Which is then copied to resources/torrent-agent/ during packaging.
  */
 
@@ -14,22 +16,11 @@ const fs = require('fs')
 const path = require('path')
 
 const TORRENT_AGENT_DIR = path.join(__dirname, '..', 'services', 'torrent-agent')
-const DIST_DIR = path.join(TORRENT_AGENT_DIR, 'dist')
+const OUTPUT_DIR = path.join(TORRENT_AGENT_DIR, 'torrent-agent')  // Same name as Hydra uses
 
 function run(cmd, opts = {}) {
   console.log(`> ${cmd}`)
   execSync(cmd, { stdio: 'inherit', ...opts })
-}
-
-function tryRun(cmd, opts = {}) {
-  console.log(`> ${cmd}`)
-  try {
-    execSync(cmd, { stdio: 'inherit', ...opts })
-    return true
-  } catch (e) {
-    console.log(`Command failed: ${e.message}`)
-    return false
-  }
 }
 
 function getPythonCommand() {
@@ -45,69 +36,38 @@ function getPythonCommand() {
       // ignore
     }
   }
-  throw new Error('Python not found. Please install Python 3.8+ and add to PATH.')
+  throw new Error('Python not found. Please install Python 3.9 and add to PATH.')
 }
 
-function findAndMoveExecutable(exeName) {
-  let exePath = path.join(DIST_DIR, exeName)
-
-  if (!fs.existsSync(exePath)) {
-    // cx_Freeze puts output in a subfolder like exe.win-amd64-3.11
-    console.log('Executable not at root, searching for build output folder...')
+function copyOpenSSLDlls() {
+  // Copy OpenSSL DLLs with -x64 suffix (same as Hydra does)
+  // See: https://github.com/hydralauncher/hydra/blob/main/.github/workflows/build.yml
+  const libDir = path.join(OUTPUT_DIR, 'lib')
+  
+  if (!fs.existsSync(libDir)) {
+    console.log('No lib directory found, skipping OpenSSL DLL copy')
+    return
+  }
+  
+  const dllsToCopy = [
+    { src: 'libcrypto-1_1.dll', dst: 'libcrypto-1_1-x64.dll' },
+    { src: 'libssl-1_1.dll', dst: 'libssl-1_1-x64.dll' }
+  ]
+  
+  for (const { src, dst } of dllsToCopy) {
+    const srcPath = path.join(libDir, src)
+    const dstPath = path.join(libDir, dst)
     
-    if (fs.existsSync(DIST_DIR)) {
-      const dirs = fs.readdirSync(DIST_DIR).filter(d => {
-        const fullPath = path.join(DIST_DIR, d)
-        return fs.statSync(fullPath).isDirectory() && (d.startsWith('exe.') || d === 'dist')
-      })
-      
-      for (const dir of dirs) {
-        const exeDir = path.join(DIST_DIR, dir)
-        const candidateExe = path.join(exeDir, exeName)
-        
-        if (fs.existsSync(candidateExe)) {
-          console.log(`Found executable in ${dir}, moving contents to dist root...`)
-          
-          for (const item of fs.readdirSync(exeDir)) {
-            const src = path.join(exeDir, item)
-            const dest = path.join(DIST_DIR, item)
-            if (!fs.existsSync(dest)) {
-              fs.renameSync(src, dest)
-            }
-          }
-          
-          try { fs.rmdirSync(exeDir) } catch {}
-          exePath = path.join(DIST_DIR, exeName)
-          break
-        }
-      }
+    if (fs.existsSync(srcPath) && !fs.existsSync(dstPath)) {
+      console.log(`Copying ${src} -> ${dst}`)
+      fs.copyFileSync(srcPath, dstPath)
     }
   }
-  
-  return exePath
-}
-
-function buildWithCxFreeze(python) {
-  console.log('\n--- Building executable with cx_Freeze ---')
-  run(`${python} -m pip install cx_Freeze`)
-  run(`${python} setup.py build_exe`)
-}
-
-function buildWithPyInstaller(python) {
-  console.log('\n--- Building executable with PyInstaller ---')
-  run(`${python} -m pip install pyinstaller`)
-  
-  // PyInstaller puts output in dist/ subfolder
-  const pyinstallerDist = path.join(TORRENT_AGENT_DIR, 'dist')
-  if (fs.existsSync(pyinstallerDist)) {
-    fs.rmSync(pyinstallerDist, { recursive: true, force: true })
-  }
-  
-  run(`${python} -m PyInstaller torrent-agent.spec --distpath "${DIST_DIR}" --workpath "${path.join(TORRENT_AGENT_DIR, 'build')}"`)
 }
 
 function main() {
-  console.log('=== Building torrent-agent standalone executable ===\n')
+  console.log('=== Building torrent-agent standalone executable ===')
+  console.log('=== Using same approach as Hydra Launcher ===\n')
 
   const python = getPythonCommand()
 
@@ -116,7 +76,7 @@ function main() {
   console.log(`Working directory: ${TORRENT_AGENT_DIR}\n`)
 
   // Clean previous build
-  for (const dir of ['dist', 'build']) {
+  for (const dir of ['torrent-agent', 'build']) {
     const fullPath = path.join(TORRENT_AGENT_DIR, dir)
     if (fs.existsSync(fullPath)) {
       console.log(`Cleaning ${dir}/...`)
@@ -124,54 +84,48 @@ function main() {
     }
   }
 
-  // Install libtorrent
-  console.log('\n--- Installing libtorrent ---')
+  // Install dependencies from requirements.txt (same as Hydra)
+  console.log('\n--- Installing dependencies from requirements.txt ---')
   run(`${python} -m pip install --upgrade pip`)
-  run(`${python} -m pip install libtorrent`)
+  run(`${python} -m pip install -r requirements.txt`)
 
-  // Try cx_Freeze first, then PyInstaller as fallback
-  let buildSuccess = false
-  
-  try {
-    buildWithCxFreeze(python)
-    buildSuccess = true
-  } catch (e) {
-    console.log(`\n⚠️ cx_Freeze failed: ${e.message}`)
-    console.log('Trying PyInstaller as fallback...\n')
-    
-    try {
-      buildWithPyInstaller(python)
-      buildSuccess = true
-    } catch (e2) {
-      console.error(`PyInstaller also failed: ${e2.message}`)
-    }
+  // Build with cx_Freeze (same as Hydra: python setup.py build)
+  console.log('\n--- Building executable with cx_Freeze ---')
+  run(`${python} setup.py build`)
+
+  // Copy OpenSSL DLLs (same as Hydra does in their workflow)
+  if (process.platform === 'win32') {
+    console.log('\n--- Copying OpenSSL DLLs ---')
+    copyOpenSSLDlls()
   }
 
   // Verify output
   const platform = process.platform
   const exeName = platform === 'win32' ? 'torrent-agent.exe' : 'torrent-agent'
-  const exePath = findAndMoveExecutable(exeName)
+  const exePath = path.join(OUTPUT_DIR, exeName)
 
   if (fs.existsSync(exePath)) {
     const stats = fs.statSync(exePath)
     console.log(`\n✅ Build successful!`)
     console.log(`   Executable: ${exePath}`)
     console.log(`   Size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`)
+    
+    // List contents
+    console.log('\nOutput directory contents:')
+    const items = fs.readdirSync(OUTPUT_DIR)
+    for (const item of items) {
+      const itemPath = path.join(OUTPUT_DIR, item)
+      const stat = fs.statSync(itemPath)
+      console.log(`   ${item}${stat.isDirectory() ? '/' : ''}`)
+    }
   } else {
     // List what was created
-    console.log('\nDist directory contents:')
-    const listDir = (dir, indent = '') => {
-      for (const item of fs.readdirSync(dir)) {
-        const fullPath = path.join(dir, item)
-        const stat = fs.statSync(fullPath)
-        console.log(`${indent}${item}${stat.isDirectory() ? '/' : ''}`)
-        if (stat.isDirectory() && indent.length < 4) {
-          listDir(fullPath, indent + '  ')
-        }
+    console.log('\nOutput directory does not exist or missing executable.')
+    if (fs.existsSync(TORRENT_AGENT_DIR)) {
+      console.log('Directory contents:')
+      for (const item of fs.readdirSync(TORRENT_AGENT_DIR)) {
+        console.log(`   ${item}`)
       }
-    }
-    if (fs.existsSync(DIST_DIR)) {
-      listDir(DIST_DIR)
     }
     throw new Error(`Expected executable not found at ${exePath}`)
   }
