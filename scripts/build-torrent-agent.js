@@ -84,10 +84,13 @@ function main() {
     }
   }
 
+  // On Linux, we need --break-system-packages for externally managed environments (PEP 668)
+  const pipFlags = process.platform === 'linux' ? '--break-system-packages' : ''
+
   // Install dependencies from requirements.txt (same as Hydra)
   console.log('\n--- Installing dependencies from requirements.txt ---')
-  run(`${python} -m pip install --upgrade pip`)
-  run(`${python} -m pip install -r requirements.txt`)
+  run(`${python} -m pip install --upgrade pip ${pipFlags}`)
+  run(`${python} -m pip install ${pipFlags} -r requirements.txt`)
 
   // Build with cx_Freeze (same as Hydra: python setup.py build)
   console.log('\n--- Building executable with cx_Freeze ---')
