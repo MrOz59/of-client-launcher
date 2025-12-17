@@ -1677,8 +1677,9 @@ export default function LibraryTab() {
         {filteredGames.map((game) => {
           const updateAvailable = hasUpdate(game)
           const isFavorite = !!(game as any)?.is_favorite
+          const isGameUpdating = !!(updatingGames[game.url]) || (updateQueue?.running && updateQueue?.currentGameUrl === game.url)
           return (
-          <div key={game.id} className={`game-card-heroic ${updateAvailable ? 'has-update' : ''}`}>
+          <div key={game.id} className={`game-card-heroic ${updateAvailable ? 'has-update' : ''} ${isGameUpdating ? 'is-updating' : ''}`}>
             {(() => {
               const launchState = launchingGames[game.url]
               const prefixState = prefixJobs[game.url]
@@ -1691,15 +1692,17 @@ export default function LibraryTab() {
               const isError = launchState?.status === 'error' || (launchState?.status === 'exited' && launchState?.code != null && Number(launchState.code) !== 0)
               const isSyncing = syncState?.status === 'syncing'
 
-              const label = isSyncing
-                ? (syncState?.message || 'Sincronizando saves...')
-                : isPrefixing
-                  ? (prefixState?.message || 'Preparando prefixo...')
-                  : isLaunching
-                    ? (launchState?.message || (launchState?.status === 'running' ? 'Abrindo jogo...' : 'Iniciando...'))
-                    : isError
-                      ? `Falha ao iniciar${launchState?.code != null ? ` (cód. ${launchState.code})` : ''}`
-                      : ''
+              const label = isGameUpdating
+                ? 'Atualizando...'
+                : isSyncing
+                  ? (syncState?.message || 'Sincronizando saves...')
+                  : isPrefixing
+                    ? (prefixState?.message || 'Preparando prefixo...')
+                    : isLaunching
+                      ? (launchState?.message || (launchState?.status === 'running' ? 'Abrindo jogo...' : 'Iniciando...'))
+                      : isError
+                        ? `Falha ao iniciar${launchState?.code != null ? ` (cód. ${launchState.code})` : ''}`
+                        : ''
 
               return (
                 <div style={{ position: 'relative' }}>
@@ -1712,7 +1715,7 @@ export default function LibraryTab() {
                       </div>
                     )}
 
-                    {(isLaunching || isPrefixing || isError || isSyncing) && (
+                    {(isLaunching || isPrefixing || isError || isSyncing || isGameUpdating) && (
                       <div
                         style={{
                           position: 'absolute',
@@ -1732,7 +1735,7 @@ export default function LibraryTab() {
                         }}
                         title={syncState?.message || launchState?.stderrTail || prefixState?.message || launchState?.message || ''}
                       >
-                        {(isSyncing || isLaunching || isPrefixing) ? <RefreshCw size={14} className="of-spin" /> : <AlertCircle size={14} />}
+                        {(isSyncing || isLaunching || isPrefixing || isGameUpdating) ? <RefreshCw size={14} className="of-spin" /> : <AlertCircle size={14} />}
                         <span style={{ lineHeight: 1.1, flex: 1 }}>{label}</span>
                       </div>
                     )}

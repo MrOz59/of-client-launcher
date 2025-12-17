@@ -379,6 +379,20 @@ body {
   box-shadow: 0 0 0 2px #f59e0b;
 }
 
+.game-card-heroic.is-updating {
+  box-shadow: 0 0 0 2px #3b82f6;
+  animation: updating-pulse 2s ease-in-out infinite;
+}
+
+@keyframes updating-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px #3b82f6;
+  }
+  50% {
+    box-shadow: 0 0 12px 2px #3b82f6;
+  }
+}
+
 /* Game Cover */
 .game-cover {
   position: relative;

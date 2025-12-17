@@ -186,36 +186,35 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
       'Version du jeu',   // French translation
     ];
 
-    // Try to find version by label first
+    // Try to find version by label first (using indexOf to avoid regex escaping issues)
     for (const label of versionLabels) {
-      const labelPattern = new RegExp(
-        label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-        '[:\\s]+' +
-        '((?:Build[.\\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)',
-        'i'
-      );
-      const match = text.match(labelPattern);
-      if (match && match[1]) {
-        console.log('[OF Store] Found page version via label:', match[1]);
-        return match[1].trim();
+      const idx = text.toLowerCase().indexOf(label.toLowerCase());
+      if (idx !== -1) {
+        const after = text.slice(idx + label.length, idx + label.length + 50);
+        const versionMatch = after.match(/^[:\s]+((?:Build[.\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)/i);
+        if (versionMatch && versionMatch[1]) {
+          console.log('[OF Store] Found page version via label:', versionMatch[1]);
+          return versionMatch[1].trim();
+        }
       }
     }
 
     // Fallback patterns
-    const patterns = [
-      // Build format: Build 04122025, Build.04122025
-      /\b(Build[.\s]*\d{6,10})\b/i,
-      // Semantic versioning
-      /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i,
-    ];
+    const buildPattern = /\b(Build[.\s]*\d{6,10})\b/i;
+    const semverPattern = /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i;
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        console.log('[OF Store] Found page version via pattern:', match[1]);
-        return match[1];
-      }
+    let match = text.match(buildPattern);
+    if (match) {
+      console.log('[OF Store] Found page version via Build pattern:', match[1]);
+      return match[1];
     }
+
+    match = text.match(semverPattern);
+    if (match) {
+      console.log('[OF Store] Found page version via semver pattern:', match[1]);
+      return match[1];
+    }
+
     return null;
   }
 

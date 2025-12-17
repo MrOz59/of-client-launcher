@@ -1116,7 +1116,17 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         </div>
 
         <div className={`download-progress ${variant === 'primary' ? 'download-progress--primary' : ''}`}>
-          <div className="download-progress-bar" style={{ width: `${(item.status === 'extracting' ? (item.extractProgress ?? item.progress) : item.progress) ?? 0}%` }} />
+          <div
+            className="download-progress-bar"
+            style={{
+              width: `${(item.status === 'extracting' ? (item.extractProgress ?? item.progress) : item.progress) ?? 0}%`,
+              background: item.status === 'extracting'
+                ? 'linear-gradient(90deg, #8b5cf6, #7c3aed)'
+                : item.status === 'prefixing'
+                  ? 'linear-gradient(90deg, #a855f7, #9333ea)'
+                  : undefined
+            }}
+          />
         </div>
 
         <div className={`download-info ${variant === 'primary' ? 'download-info--primary' : ''}`}>
@@ -1273,7 +1283,17 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                     </div>
                   </div>
                   <div className="download-progress download-progress--primary">
-                    <div className="download-progress-bar" style={{ width: `${(primaryUiProgress ?? 0)}%` }} />
+                    <div
+                      className="download-progress-bar"
+                      style={{
+                        width: `${(primaryUiProgress ?? 0)}%`,
+                        background: primary.status === 'extracting'
+                          ? 'linear-gradient(90deg, #8b5cf6, #7c3aed)'
+                          : primary.status === 'prefixing'
+                            ? 'linear-gradient(90deg, #a855f7, #9333ea)'
+                            : undefined
+                      }}
+                    />
                   </div>
                   {primary.status === 'error' && primary.errorMessage ? (
                     <div className="download-error" title={primary.errorMessage}>• {primary.errorMessage}</div>
