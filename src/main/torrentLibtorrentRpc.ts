@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import readline from 'readline'
+import { app } from 'electron'
 
 // Minimal JSON-RPC-ish line protocol over stdin/stdout.
 // This is intentionally small: start/pause/resume/remove/status.
@@ -57,22 +58,44 @@ function hasActiveAlias(ids: string[]): boolean {
 function getStandaloneBinaryPath(): string | null {
   const exeName = process.platform === 'win32' ? 'torrent-agent.exe' : 'torrent-agent'
 
+  console.log('[torrent-agent] Looking for standalone binary...')
+  console.log('[torrent-agent] Platform:', process.platform, 'Arch:', process.arch)
+  console.log('[torrent-agent] app.isPackaged:', app?.isPackaged)
+  console.log('[torrent-agent] process.resourcesPath:', process.resourcesPath)
+
   // Packaged app: look in resources/torrent-agent/
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { app } = require('electron') as typeof import('electron')
-    if (app?.isPackaged) {
-      const candidate = path.join(process.resourcesPath, 'torrent-agent', exeName)
-      if (fs.existsSync(candidate)) return candidate
+  if (app?.isPackaged && process.resourcesPath) {
+    const resources = process.resourcesPath
+    const candidate = path.join(resources, 'torrent-agent', exeName)
+    console.log('[torrent-agent] Checking packaged path:', candidate)
+    
+    if (fs.existsSync(candidate)) {
+      console.log('[torrent-agent] ✓ Found binary at:', candidate)
+      return candidate
     }
-  } catch {
-    // ignore
+    
+    // List what's actually in resources/torrent-agent to help debug
+    const torrentAgentDir = path.join(resources, 'torrent-agent')
+    if (fs.existsSync(torrentAgentDir)) {
+      const contents = fs.readdirSync(torrentAgentDir)
+      console.log('[torrent-agent] Directory exists. Contents:', contents.slice(0, 15).join(', '), contents.length > 15 ? `... (${contents.length} total)` : '')
+    } else {
+      console.log('[torrent-agent] Directory does not exist:', torrentAgentDir)
+      // List resources root
+      const resourcesContents = fs.readdirSync(resources)
+      console.log('[torrent-agent] Resources root contents:', resourcesContents.join(', '))
+    }
   }
 
   // Dev mode: look in services/torrent-agent/dist/
   const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'dist', exeName)
-  if (fs.existsSync(devPath)) return devPath
+  console.log('[torrent-agent] Checking dev path:', devPath)
+  if (fs.existsSync(devPath)) {
+    console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
+    return devPath
+  }
 
+  console.log('[torrent-agent] No standalone binary found, will fallback to Python')
   return null
 }
 
@@ -82,20 +105,13 @@ function getPythonExecutable(): string {
 
   // If we ship an embedded python in resources, prefer it.
   // Layout: resources/torrent-agent/python/<platform>-<arch>/python(.exe)
-  try {
-    // Avoid hard electron import at module load.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { app } = require('electron') as typeof import('electron')
-    if (app?.isPackaged) {
-      const resources = process.resourcesPath
-      const folder = `${process.platform}-${process.arch}`
-      const base = path.join(resources, 'torrent-agent', 'python', folder)
-      const exe = process.platform === 'win32' ? 'python.exe' : 'python'
-      const candidate = path.join(base, exe)
-      if (fs.existsSync(candidate)) return candidate
-    }
-  } catch {
-    // ignore
+  if (app?.isPackaged && process.resourcesPath) {
+    const resources = process.resourcesPath
+    const folder = `${process.platform}-${process.arch}`
+    const base = path.join(resources, 'torrent-agent', 'python', folder)
+    const exe = process.platform === 'win32' ? 'python.exe' : 'python'
+    const candidate = path.join(base, exe)
+    if (fs.existsSync(candidate)) return candidate
   }
 
   return process.platform === 'win32' ? 'python' : 'python3'
@@ -110,15 +126,9 @@ function getSidecarScriptPath(): string {
   if (fs.existsSync(devPath)) return devPath
 
   // Packaged path (electron-builder extraResources)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { app } = require('electron') as typeof import('electron')
-    if (app?.isPackaged) {
-      const packaged = path.join(process.resourcesPath, 'torrent-agent', 'libtorrent_rpc.py')
-      if (fs.existsSync(packaged)) return packaged
-    }
-  } catch {
-    // ignore
+  if (app?.isPackaged && process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, 'torrent-agent', 'libtorrent_rpc.py')
+    if (fs.existsSync(packaged)) return packaged
   }
 
   // Last resort: legacy writable location (backwards compatibility)
@@ -160,27 +170,17 @@ class LibtorrentRpcClient {
         spawnArgs = ['-u', scriptPath]
 
         // Dev: if deps were installed into services/torrent-agent/pydeps, use them.
-        try {
-          const devDeps = path.join(process.cwd(), 'services', 'torrent-agent', 'pydeps')
-          if (fs.existsSync(devDeps)) {
-            const prev = String(childEnv.PYTHONPATH || '').trim()
-            childEnv.PYTHONPATH = prev ? `${devDeps}${path.delimiter}${prev}` : devDeps
-          }
-        } catch {
-          // ignore
+        const devDeps = path.join(process.cwd(), 'services', 'torrent-agent', 'pydeps')
+        if (fs.existsSync(devDeps)) {
+          const prev = String(childEnv.PYTHONPATH || '').trim()
+          childEnv.PYTHONPATH = prev ? `${devDeps}${path.delimiter}${prev}` : devDeps
         }
 
-        try {
-          // When packaged, dependencies are expected at: resources/torrent-agent/pydeps
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { app } = require('electron') as typeof import('electron')
-          if (app?.isPackaged) {
-            const deps = path.join(process.resourcesPath, 'torrent-agent', 'pydeps')
-            const prev = String(childEnv.PYTHONPATH || '').trim()
-            childEnv.PYTHONPATH = prev ? `${deps}${path.delimiter}${prev}` : deps
-          }
-        } catch {
-          // ignore
+        // When packaged, dependencies are expected at: resources/torrent-agent/pydeps
+        if (app?.isPackaged && process.resourcesPath) {
+          const deps = path.join(process.resourcesPath, 'torrent-agent', 'pydeps')
+          const prev = String(childEnv.PYTHONPATH || '').trim()
+          childEnv.PYTHONPATH = prev ? `${deps}${path.delimiter}${prev}` : deps
         }
       }
 

@@ -64,19 +64,39 @@ function main() {
   // Verify output
   const platform = process.platform
   const exeName = platform === 'win32' ? 'torrent-agent.exe' : 'torrent-agent'
-  const exePath = path.join(DIST_DIR, exeName)
+  let exePath = path.join(DIST_DIR, exeName)
 
   if (!fs.existsSync(exePath)) {
-    // cx_Freeze sometimes puts it in a subfolder
-    const altPath = path.join(DIST_DIR, 'exe.' + platform + '-' + process.arch, exeName)
-    if (fs.existsSync(altPath)) {
-      console.log(`Found executable at alternate location, moving...`)
-      // Move contents up
-      const altDir = path.dirname(altPath)
-      for (const item of fs.readdirSync(altDir)) {
-        fs.renameSync(path.join(altDir, item), path.join(DIST_DIR, item))
+    // cx_Freeze puts output in a subfolder like exe.win-amd64-3.11 or exe.linux-x86_64-3.11
+    // Find it dynamically
+    console.log('Executable not at root, searching for cx_Freeze output folder...')
+    
+    if (fs.existsSync(DIST_DIR)) {
+      const dirs = fs.readdirSync(DIST_DIR).filter(d => {
+        const fullPath = path.join(DIST_DIR, d)
+        return fs.statSync(fullPath).isDirectory() && d.startsWith('exe.')
+      })
+      
+      if (dirs.length > 0) {
+        const exeDir = path.join(DIST_DIR, dirs[0])
+        const candidateExe = path.join(exeDir, exeName)
+        
+        if (fs.existsSync(candidateExe)) {
+          console.log(`Found executable in ${dirs[0]}, moving contents to dist root...`)
+          
+          // Move all contents from subfolder to DIST_DIR root
+          for (const item of fs.readdirSync(exeDir)) {
+            const src = path.join(exeDir, item)
+            const dest = path.join(DIST_DIR, item)
+            fs.renameSync(src, dest)
+          }
+          
+          // Remove the now-empty subfolder
+          fs.rmdirSync(exeDir)
+          
+          exePath = path.join(DIST_DIR, exeName)
+        }
       }
-      fs.rmdirSync(altDir)
     }
   }
 
