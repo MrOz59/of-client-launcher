@@ -14,7 +14,7 @@
     "dev:main": "npm run build:preload && tsc -p tsconfig.build.json && ELECTRON_RUN_AS_NODE= ELECTRON_DISABLE_SANDBOX=1 NODE_ENV=development npx electron dist/main/main.js --no-sandbox --disable-setuid-sandbox --disable-seccomp-filter-sandbox --disable-namespace-sandbox --disable-gpu --disable-features=VizDisplayCompositor",
     "dev": "npm run build:preload && concurrently \"npm:dev:renderer\" \"npm:dev:main\"",
     "torrent:deps": "node scripts/install-torrent-agent-deps.js",
-    "bundle:torrent-agent": "node scripts/build-torrent-agent-runtime.js",
+    "bundle:torrent-agent": "node scripts/build-torrent-agent.js",
     "build": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
     "dist:linux": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
     "dist:appimage": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
@@ -72,7 +72,7 @@
     ],
     "extraResources": [
       {
-        "from": "services/torrent-agent",
+        "from": "services/torrent-agent/dist",
         "to": "torrent-agent",
         "filter": [
           "**/*"
