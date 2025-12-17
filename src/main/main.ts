@@ -5,6 +5,16 @@
 import { app } from 'electron'
 import fs from 'fs'
 
+// Windows workaround: some environments show a white screen unless Chromium sandbox is disabled.
+// Default to disabling sandbox on Windows builds; allow opting back in via OF_ENABLE_SANDBOX=1.
+if (process.platform === 'win32') {
+  const enableSandbox = String(process.env.OF_ENABLE_SANDBOX || '').trim() === '1'
+  if (!enableSandbox) {
+    console.warn('[Sandbox] Windows: disabling sandbox (OF_ENABLE_SANDBOX=1 to re-enable)')
+    app.commandLine.appendSwitch('no-sandbox')
+  }
+}
+
 // Configure Linux sandbox EARLY - before app is ready
 // This must happen before Chromium initializes
 if (process.platform === 'linux') {

@@ -46,6 +46,12 @@ function main() {
   const platform = process.env.OF_TARGET_PLATFORM || process.platform
   const arch = process.env.OF_TARGET_ARCH || process.arch
 
+  // Cross-platform bundling isn't supported because pip/python runtime are platform-specific.
+  // Build Windows artifacts on Windows, Linux artifacts on Linux.
+  if (platform !== process.platform) {
+    throw new Error(`Cross-platform bundling not supported (host=${process.platform}, target=${platform}). Run this on the target OS.`)
+  }
+
   const python = (process.env.OF_PYTHON_FOR_BUNDLE || process.env.PYTHON || (platform === 'win32' ? 'python' : 'python3')).trim()
   const libtorrentVersion = (process.env.OF_LIBTORRENT_VERSION || '').trim()
 
