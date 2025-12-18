@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'worker_threads'
-import { processUpdateExtraction } from './downloadManager.js'
+import { processUpdateExtraction } from './extractionUtils.js'
 
 const { installPath, gameUrl } = workerData as { installPath: string; gameUrl: string }
 
