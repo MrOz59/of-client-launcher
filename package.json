@@ -81,7 +81,8 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "**/7zip-bin-full/**"
     ],
     "linux": {
       "target": [

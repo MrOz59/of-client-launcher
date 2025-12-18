@@ -18,6 +18,31 @@ function getOptimalThreadCount(): number {
   return Math.max(1, Math.min(8, Math.floor(cpus / 2))) || 2
 }
 
+/**
+ * Get the correct path to 7z binary.
+ * When packaged with electron-builder and asarUnpack, the binary is extracted
+ * to app.asar.unpacked instead of being inside the .asar archive.
+ */
+function get7zBinaryPath(): string {
+  let binary = path7z
+  if (!binary) {
+    throw new Error('7z/7zz binary not found in bundled 7zip-bin-full')
+  }
+
+  // In packaged apps, convert .asar path to .asar.unpacked
+  if (binary.includes('.asar' + path.sep)) {
+    binary = binary.replace('.asar' + path.sep, '.asar.unpacked' + path.sep)
+  }
+
+  // Verify the binary exists
+  if (!fs.existsSync(binary)) {
+    console.warn('[7z] Binary not found at:', binary, '- falling back to original path')
+    binary = path7z
+  }
+
+  return binary
+}
+
 export function extractZipWithPassword(
   zipPath: string,
   destDir: string,
@@ -46,9 +71,11 @@ function extract7z(
   onProgress?: (percent: number, details?: ExtractProgress) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const binary = path7z
-    if (!binary) {
-      return reject(new Error('7z/7zz binary not found in bundled 7zip-bin-full'))
+    let binary: string
+    try {
+      binary = get7zBinaryPath()
+    } catch (err: any) {
+      return reject(err)
     }
 
     try {

@@ -269,14 +269,24 @@ export async function processUpdateExtraction(
 ): Promise<{ success: boolean; error?: string; executablePath?: string }> {
   console.log('[UpdateProcessor] Starting update processing for:', installPath)
 
-  const rarFiles = findFilesRecursive(installPath, /\.rar$/i)
+  // Find RAR files but exclude those in "Fix Repair" folders (these are optional repair tools, not game content)
+  const allRarFiles = findFilesRecursive(installPath, /\.rar$/i)
+  const rarFiles = allRarFiles.filter(f => {
+    const lowerPath = f.toLowerCase()
+    // Skip RARs inside "Fix Repair" folders
+    if (lowerPath.includes('fix repair') || lowerPath.includes('fix_repair') || lowerPath.includes('fixrepair')) {
+      console.log('[UpdateProcessor] Skipping Fix Repair RAR:', f)
+      return false
+    }
+    return true
+  })
 
   if (rarFiles.length === 0) {
-    console.log('[UpdateProcessor] No RAR files found, skipping update processing')
+    console.log('[UpdateProcessor] No RAR files found (excluding Fix Repair), skipping update processing')
     return { success: true }
   }
 
-  console.log('[UpdateProcessor] Found RAR files:', rarFiles)
+  console.log('[UpdateProcessor] Found RAR files to extract:', rarFiles)
   console.log('[UpdateProcessor] Previous executable path:', previousExePath)
 
   const onlineFixPath = findOnlineFixIni(installPath)

@@ -33,6 +33,7 @@ export default function LibraryTab() {
   const [librarySearch, setLibrarySearch] = useState<string>('')
   const [libraryCategory, setLibraryCategory] = useState<'all' | 'favorites' | 'installed' | 'updating'>('all')
   const [librarySort, setLibrarySort] = useState<'recent' | 'name' | 'size'>('recent')
+  const [isLinux, setIsLinux] = useState(false)
   const [openActionMenuGameUrl, setOpenActionMenuGameUrl] = useState<string | null>(null)
   const [configuring, setConfiguring] = useState<string | null>(null)
   const [versionValue, setVersionValue] = useState<string>('')
@@ -685,6 +686,14 @@ export default function LibraryTab() {
     loadGames()
     loadProtonRuntimes()
     refreshActiveUpdates()
+
+    // Check platform to conditionally show Proton options (Linux only)
+    ;(async () => {
+      try {
+        const settings = await window.electronAPI.getSettings()
+        setIsLinux(Boolean(settings?.isLinux || settings?.platform === 'linux'))
+      } catch {}
+    })()
 
     // Atualizações: o launcher verifica automaticamente ao iniciar.
     // (sem alertas pop-up aqui; só atualiza o DB/estado)
@@ -2235,7 +2244,7 @@ export default function LibraryTab() {
                 <div className="config-tabs">
                   <button className={configTab === 'geral' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => setConfigTab('geral')} type="button">Geral</button>
                   <button className={configTab === 'onlinefix' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => setConfigTab('onlinefix')} type="button">OnlineFix.ini</button>
-                  <button className={configTab === 'proton' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => setConfigTab('proton')} type="button">Proton</button>
+                  {isLinux && <button className={configTab === 'proton' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => setConfigTab('proton')} type="button">Proton</button>}
                   <button className={configTab === 'lan' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => setConfigTab('lan')} type="button">LAN</button>
                 </div>
 
@@ -2446,7 +2455,7 @@ export default function LibraryTab() {
                   </div>
                 )}
 
-                {configTab === 'proton' && (
+                {isLinux && configTab === 'proton' && (
                   <div className="modal-section">
                     <div className="section-title">Compatibilidade Proton</div>
                     <div className="input-row">
