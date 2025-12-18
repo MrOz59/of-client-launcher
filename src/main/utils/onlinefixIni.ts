@@ -74,15 +74,19 @@ export async function findAndReadOnlineFixIni(installPath: string): Promise<{ pa
   const candidates = [
     path.join(root, 'OnlineFix.ini'),
     path.join(root, 'onlinefix.ini'),
+    path.join(root, 'of_config.ini'),
 
     path.join(root, 'steam_settings', 'OnlineFix.ini'),
     path.join(root, 'steam_settings', 'onlinefix.ini'),
+    path.join(root, 'steam_settings', 'of_config.ini'),
 
     path.join(root, 'steam_settings', 'configs', 'OnlineFix.ini'),
     path.join(root, 'steam_settings', 'configs', 'onlinefix.ini'),
+    path.join(root, 'steam_settings', 'configs', 'of_config.ini'),
 
     path.join(root, 'steam_settings', 'settings', 'OnlineFix.ini'),
     path.join(root, 'steam_settings', 'settings', 'onlinefix.ini'),
+    path.join(root, 'steam_settings', 'settings', 'of_config.ini'),
   ]
 
   for (const p of candidates) {
@@ -110,7 +114,7 @@ export async function findAndReadOnlineFixIni(installPath: string): Promise<{ pa
 
       if (ent.isFile()) {
         const n = ent.name.toLowerCase()
-        if (n === 'onlinefix.ini') {
+        if (n === 'onlinefix.ini' || n === 'of_config.ini') {
           const txt = await readFileIfExists(full)
           if (txt != null) return { path: full, content: txt }
         }

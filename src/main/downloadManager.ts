@@ -1,6 +1,7 @@
 import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorrent, type TorrentProgress, isTorrentActive } from './downloader'
 import { extractZipWithPassword } from './zip'
 import { processUpdateExtraction, findFilesRecursive } from './extractionUtils'
+import { findAndReadOnlineFixIni } from './utils/onlinefixIni'
 import {
   getGame,
   createDownload,
@@ -888,7 +889,7 @@ function findOnlineFixIni(gameDir: string): string | null {
   return files.length > 0 ? files[0] : null
 }
 
-export function readOnlineFixIni(gameUrl: string): { success: boolean; path?: string; content?: string; exists?: boolean; error?: string } {
+export async function readOnlineFixIni(gameUrl: string): Promise<{ success: boolean; path?: string; content?: string; exists?: boolean; error?: string }> {
   try {
     const game = getGame(gameUrl) as { install_path?: string } | undefined
     const installPath = game?.install_path
@@ -896,16 +897,20 @@ export function readOnlineFixIni(gameUrl: string): { success: boolean; path?: st
       return { success: false, error: 'Pasta do jogo não encontrada' }
     }
 
-    const iniPath = findOnlineFixIni(installPath) || path.join(installPath, 'OnlineFix.ini')
-    const exists = fs.existsSync(iniPath)
-    const content = exists ? fs.readFileSync(iniPath, 'utf-8') : ''
-    return { success: true, path: iniPath, content, exists }
+    const found = await findAndReadOnlineFixIni(installPath)
+    if (found) {
+      return { success: true, path: found.path, content: found.content, exists: true }
+    }
+
+    // Legacy fallback: some parts of the app assume a path even when the file does not exist yet.
+    const legacyFallback = findOnlineFixIni(installPath) || path.join(installPath, 'OnlineFix.ini')
+    return { success: true, path: legacyFallback, content: '', exists: false }
   } catch (err: any) {
     return { success: false, error: err?.message || 'Falha ao ler OnlineFix.ini' }
   }
 }
 
-export function writeOnlineFixIni(gameUrl: string, content: string): { success: boolean; path?: string; error?: string } {
+export async function writeOnlineFixIni(gameUrl: string, content: string): Promise<{ success: boolean; path?: string; error?: string }> {
   try {
     const game = getGame(gameUrl) as { install_path?: string } | undefined
     const installPath = game?.install_path
@@ -913,8 +918,19 @@ export function writeOnlineFixIni(gameUrl: string, content: string): { success: 
       return { success: false, error: 'Pasta do jogo não encontrada' }
     }
 
-    const iniPath = findOnlineFixIni(installPath) || path.join(installPath, 'OnlineFix.ini')
-    fs.writeFileSync(iniPath, content ?? '', 'utf-8')
+    const found = await findAndReadOnlineFixIni(installPath)
+    let iniPath = found?.path
+
+    if (!iniPath) {
+      // Prefer steam_settings if present; it's a common location for OF config files.
+      const steamSettingsDir = path.join(installPath, 'steam_settings')
+      iniPath = fs.existsSync(steamSettingsDir)
+        ? path.join(steamSettingsDir, 'OnlineFix.ini')
+        : path.join(installPath, 'OnlineFix.ini')
+    }
+
+    await fs.promises.mkdir(path.dirname(iniPath), { recursive: true })
+    await fs.promises.writeFile(iniPath, content ?? '', 'utf-8')
     return { success: true, path: iniPath }
   } catch (err: any) {
     return { success: false, error: err?.message || 'Falha ao salvar OnlineFix.ini' }

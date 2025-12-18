@@ -1500,7 +1500,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('get-onlinefix-ini', async (_event, gameUrl: string) => {
     try {
-      return readOnlineFixIni(gameUrl)
+      return await readOnlineFixIni(gameUrl)
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao ler OnlineFix.ini' }
     }
@@ -1508,7 +1508,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('save-onlinefix-ini', async (_event, gameUrl: string, content: string) => {
     try {
-      return writeOnlineFixIni(gameUrl, content)
+      return await writeOnlineFixIni(gameUrl, content)
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao salvar OnlineFix.ini' }
     }
