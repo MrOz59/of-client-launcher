@@ -915,3 +915,6 @@ export function writeOnlineFixIni(gameUrl: string, content: string): { success: 
     return { success: false, error: err?.message || 'Falha ao salvar OnlineFix.ini' }
   }
 }
+
+// Re-export from extractionUtils for backwards compatibility
+export { processUpdateExtraction, findFilesRecursive } from './extractionUtils'
