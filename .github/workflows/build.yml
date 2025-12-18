@@ -53,16 +53,38 @@ jobs:
         run: python setup.py build
         working-directory: services/torrent-agent
       
-      # Copy OpenSSL DLLs with correct names (same as Hydra Launcher)
+      # Copy OpenSSL DLLs from Python installation
+      # cx_Freeze copies libcrypto but not libssl - we need both for libtorrent
       - name: Copy OpenSSL DLLs
         run: |
-          if (Test-Path "services/torrent-agent/torrent-agent/lib/libcrypto-1_1.dll") {
-            Copy-Item "services/torrent-agent/torrent-agent/lib/libcrypto-1_1.dll" "services/torrent-agent/torrent-agent/lib/libcrypto-1_1-x64.dll"
+          $pythonPath = (Get-Command python).Path | Split-Path
+          $dllsPath = Join-Path $pythonPath "DLLs"
+          $targetLib = "services/torrent-agent/torrent-agent/lib"
+
+          # Copy libcrypto with -x64 suffix (required by libtorrent)
+          if (Test-Path "$targetLib/libcrypto-1_1.dll") {
+            Copy-Item "$targetLib/libcrypto-1_1.dll" "$targetLib/libcrypto-1_1-x64.dll"
           }
-          if (Test-Path "services/torrent-agent/torrent-agent/lib/libssl-1_1.dll") {
-            Copy-Item "services/torrent-agent/torrent-agent/lib/libssl-1_1.dll" "services/torrent-agent/torrent-agent/lib/libssl-1_1-x64.dll"
+
+          # Copy libssl from Python DLLs folder (cx_Freeze doesn't include it)
+          $sslSource = Join-Path $dllsPath "libssl-1_1.dll"
+          if (Test-Path $sslSource) {
+            Copy-Item $sslSource "$targetLib/libssl-1_1.dll"
+            Copy-Item $sslSource "$targetLib/libssl-1_1-x64.dll"
+            Write-Host "Copied libssl-1_1.dll from Python installation"
+          } else {
+            Write-Host "WARNING: libssl-1_1.dll not found at $sslSource"
+            # Try alternate location
+            $altPath = Join-Path $pythonPath "libssl-1_1.dll"
+            if (Test-Path $altPath) {
+              Copy-Item $altPath "$targetLib/libssl-1_1.dll"
+              Copy-Item $altPath "$targetLib/libssl-1_1-x64.dll"
+              Write-Host "Copied libssl-1_1.dll from alternate location"
+            }
           }
+
           # List what we have
+          Write-Host "=== Contents of torrent-agent build ==="
           Get-ChildItem -Recurse "services/torrent-agent/torrent-agent/"
         shell: pwsh
       
