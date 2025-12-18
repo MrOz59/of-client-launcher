@@ -62,6 +62,7 @@
   "build": {
     "appId": "me.voidlauncher.app",
     "productName": "VoidLauncher",
+    "icon": "icon.png",
     "directories": {
       "output": "release"
     },
@@ -97,7 +98,13 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico"
     }
   }
 }
