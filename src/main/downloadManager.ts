@@ -557,9 +557,14 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         // ignore
       }
 
+      // Get previous executable path from database before spawning worker
+      // (worker can't access db since it imports electron)
+      const existingGame = getGame(gameUrl) as { executable_path?: string } | undefined
+      const previousExePath = existingGame?.executable_path || null
+
       const updateResult = await new Promise<{ success: boolean; error?: string; executablePath?: string }>((resolve, reject) => {
         const workerPath = path.join(__dirname, 'extractWorker.js')
-        const worker = new Worker(workerPath, { workerData: { installPath, gameUrl } })
+        const worker = new Worker(workerPath, { workerData: { installPath, gameUrl, previousExePath } })
         worker.on('message', (msg: any) => {
           if (msg?.type === 'progress') {
             const percent = Number(msg.percent) || 0

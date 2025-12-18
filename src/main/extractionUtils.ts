@@ -1,8 +1,8 @@
 /**
  * Extraction utilities that can run in worker threads (no Electron imports).
+ * IMPORTANT: Do not add any imports that depend on 'electron' module.
  */
 import { extractZipWithPassword } from './zip'
-import { getGame } from './db'
 import path from 'path'
 import fs from 'fs'
 
@@ -258,11 +258,14 @@ function findExecutable(gameDir: string): string | null {
  * that needs to be extracted over the existing game installation.
  *
  * NOTE: This function is designed to run in a Worker thread and has no Electron imports.
+ * The previousExePath should be passed from the caller (main process) since we can't
+ * access the database from a worker thread.
  */
 export async function processUpdateExtraction(
   installPath: string,
-  gameUrl: string,
-  onProgress?: (percent: number, details?: { etaSeconds?: number }) => void
+  _gameUrl: string,
+  onProgress?: (percent: number, details?: { etaSeconds?: number }) => void,
+  previousExePath?: string | null
 ): Promise<{ success: boolean; error?: string; executablePath?: string }> {
   console.log('[UpdateProcessor] Starting update processing for:', installPath)
 
@@ -274,9 +277,6 @@ export async function processUpdateExtraction(
   }
 
   console.log('[UpdateProcessor] Found RAR files:', rarFiles)
-
-  const existingGame = getGame(gameUrl) as { executable_path?: string } | undefined
-  const previousExePath = existingGame?.executable_path || null
   console.log('[UpdateProcessor] Previous executable path:', previousExePath)
 
   const onlineFixPath = findOnlineFixIni(installPath)
