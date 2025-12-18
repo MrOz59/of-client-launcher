@@ -1,7 +1,7 @@
 {
-  "name": "of-client-launcher",
+  "name": "voidlauncher",
   "version": "0.1.0",
-  "description": "Launcher/updater for online-fix.me games (prototype)",
+  "description": "VoidLauncher (prototype)",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
   "repository": {
     "type": "git",
@@ -60,8 +60,8 @@
     "fs-extra": "^11.1.1"
   },
   "build": {
-    "appId": "me.onlinefix.launcher",
-    "productName": "OnlineFix Launcher",
+    "appId": "me.voidlauncher.app",
+    "productName": "VoidLauncher",
     "directories": {
       "output": "release"
     },

@@ -1,4 +1,4 @@
-# OnlineFix Launcher (OF-Client)
+# VoidLauncher (OF-Client)
 
 Launcher/atualizador para jogos do **online-fix.me**.
 

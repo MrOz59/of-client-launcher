@@ -594,7 +594,7 @@ export default function SettingsTab() {
         <h3>Sobre</h3>
         <div className="settings-item">
           <div className="settings-label">
-            <div className="settings-label-title">OnlineFix Launcher</div>
+            <div className="settings-label-title">VoidLauncher</div>
             <div className="settings-label-description">
               Versão 0.1.0 • Protótipo em desenvolvimento
             </div>

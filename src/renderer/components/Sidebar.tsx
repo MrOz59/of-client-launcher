@@ -47,7 +47,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <h1>OnlineFix Launcher</h1>
+        <h1>VoidLauncher</h1>
       </div>
 
       <nav className="sidebar-nav">
