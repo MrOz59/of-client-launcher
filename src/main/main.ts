@@ -751,18 +751,80 @@ const fetchSteamBanner = async (title: string): Promise<string | null> => {
       return overlap * 50
     }
 
-    const isValidImageUrl = async (url: string) => {
+    const parseImageDimensions = (buf: Buffer): { width: number; height: number } | null => {
+      try {
+        if (!buf || buf.length < 24) return null
+
+        // PNG
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+          const width = buf.readUInt32BE(16)
+          const height = buf.readUInt32BE(20)
+          if (width > 0 && height > 0) return { width, height }
+        }
+
+        // GIF
+        const sig = buf.toString('ascii', 0, 6)
+        if (sig === 'GIF87a' || sig === 'GIF89a') {
+          const width = buf.readUInt16LE(6)
+          const height = buf.readUInt16LE(8)
+          if (width > 0 && height > 0) return { width, height }
+        }
+
+        // JPEG (scan SOF markers)
+        if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+          let offset = 2
+          while (offset + 4 < buf.length) {
+            if (buf[offset] !== 0xff) {
+              offset += 1
+              continue
+            }
+
+            let marker = buf[offset + 1]
+            offset += 2
+
+            // Standalone markers
+            if (marker === 0xd9 || marker === 0xda) break // EOI/SOS
+            if (offset + 2 > buf.length) break
+
+            const size = buf.readUInt16BE(offset)
+            if (size < 2) break
+
+            const isSOF = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)
+            if (isSOF) {
+              if (offset + 7 <= buf.length) {
+                const height = buf.readUInt16BE(offset + 3)
+                const width = buf.readUInt16BE(offset + 5)
+                if (width > 0 && height > 0) return { width, height }
+              }
+              break
+            }
+
+            offset += size
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return null
+    }
+
+    const fetchImageProbe = async (url: string): Promise<{ ok: boolean; width?: number; height?: number }> => {
       try {
         const resp = await axios.get(url, {
           timeout: 8000,
           responseType: 'arraybuffer',
-          headers: { Range: 'bytes=0-1023' },
+          headers: { Range: 'bytes=0-131071' },
           validateStatus: (s) => s === 200 || s === 206
         })
         const ct = String(resp.headers?.['content-type'] || '')
-        return ct.startsWith('image/')
+        if (!ct.startsWith('image/')) return { ok: false }
+
+        const buf = Buffer.from(resp.data)
+        const dim = parseImageDimensions(buf)
+        if (dim) return { ok: true, width: dim.width, height: dim.height }
+        return { ok: true }
       } catch {
-        return false
+        return { ok: false }
       }
     }
 
@@ -792,7 +854,9 @@ const fetchSteamBanner = async (title: string): Promise<string | null> => {
     // library_600x900 is the ideal format for our 3:4 card aspect ratio
     candidates.push(
       `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900.jpg`,
-      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900_2x.jpg`
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900_2x.jpg`,
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_capsule.jpg`,
+      `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_capsule_2x.jpg`
     )
 
     // Priority 2: Other library assets (still good quality)
@@ -814,15 +878,42 @@ const fetchSteamBanner = async (title: string): Promise<string | null> => {
     // storesearch-provided tiny_image as last resort
     if (best?.tiny_image) candidates.push(String(best.tiny_image))
 
-    // Pick the first URL that actually returns an image
+    // Prefer assets closest to the library card aspect ratio (3/4) when available.
+    // This prevents heavy cropping when we fall back to wide header/hero art.
+    const targetAspect = 3 / 4
+
+    const seen = new Set<string>()
+    const valid: Array<{ url: string; width?: number; height?: number; diff?: number; area?: number }> = []
+
     for (const url of candidates) {
       if (!url) continue
-      // avoid doing many requests if the first one already works
-      // (we validate because storesearch can return wrong appid and many apps don't have library_600x900)
+      if (seen.has(url)) continue
+      seen.add(url)
+
       // eslint-disable-next-line no-await-in-loop
-      const ok = await isValidImageUrl(url)
-      if (ok) return url
+      const probe = await fetchImageProbe(url)
+      if (!probe.ok) continue
+
+      const width = probe.width
+      const height = probe.height
+      const area = width && height ? width * height : undefined
+      const diff = width && height ? Math.abs(width / height - targetAspect) : undefined
+      valid.push({ url, width, height, diff, area })
+
+      // Early stop: we already have a near-perfect match
+      if (diff != null && diff <= 0.08 && (area || 0) >= 200 * 260) {
+        if (valid.length >= 4) break
+      }
     }
+
+    const withDims = valid.filter(v => typeof v.diff === 'number' && typeof v.area === 'number') as Array<{ url: string; diff: number; area: number }>
+    if (withDims.length > 0) {
+      withDims.sort((a, b) => (a.diff - b.diff) || (b.area - a.area))
+      return withDims[0].url
+    }
+
+    // Fallback: any image that returns image/*
+    if (valid[0]?.url) return valid[0].url
 
     return null
     })()
