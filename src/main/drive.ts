@@ -5,7 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { google } from 'googleapis'
 import crypto from 'crypto'
-import { getDb } from './db.js'
+import db from './db.js'
 
 const REDIRECT_PORT = 42813
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`
@@ -16,7 +16,6 @@ const APP_FOLDER_NAME = 'OF-Client-Saves'
 // OAuth proxy server URL (from settings or default)
 function getOAuthProxyUrl(): string {
   try {
-    const db = getDb()
     const row = db?.prepare('SELECT value FROM settings WHERE key = ?').get('lanControllerUrl') as { value: string } | undefined
     if (row?.value) return row.value
   } catch {}
@@ -25,6 +24,23 @@ function getOAuthProxyUrl(): string {
 
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth'
+
+// Type definitions for OAuth proxy responses
+interface OAuthConfigResponse {
+  ok?: boolean
+  client_id?: string
+  error?: string
+}
+
+interface OAuthTokenResponse {
+  ok?: boolean
+  access_token?: string
+  refresh_token?: string
+  expires_in?: number
+  token_type?: string
+  error?: string
+  error_description?: string
+}
 
 // Cache for client_id fetched from server
 let cachedClientId: string | null = null
@@ -35,7 +51,7 @@ async function getClientId(): Promise<string | null> {
   const proxyUrl = getOAuthProxyUrl()
   try {
     const res = await fetch(`${proxyUrl}/api/oauth/google/config`)
-    const data = await res.json()
+    const data = await res.json() as OAuthConfigResponse
     if (data?.ok && data?.client_id) {
       cachedClientId = data.client_id
       return cachedClientId
@@ -129,17 +145,21 @@ export async function authenticateWithDrive(): Promise<{ success: boolean; messa
       })
     })
     
-    const data = await r.json().catch(() => null)
+    const data = await r.json().catch(() => null) as OAuthTokenResponse | null
     console.log('[Drive] Token response status:', r.status, 'data:', data ? 'received' : 'null')
     
     if (!r.ok || !data?.ok) {
-      const msg = (data as any)?.error_description || (data as any)?.error || `HTTP ${r.status}`
+      const msg = data?.error_description || data?.error || `HTTP ${r.status}`
       console.error('[Drive] Token exchange failed:', msg)
       return { success: false, message: msg }
     }
 
-    // Remove 'ok' field before saving
-    const { ok, ...tokenData } = data
+    // Remove 'ok' field and calculate expiry_date from expires_in
+    const { ok, expires_in, ...restTokenData } = data
+    const tokenData = {
+      ...restTokenData,
+      expiry_date: expires_in ? Date.now() + (expires_in * 1000) : undefined
+    }
     fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2))
     console.log('[Drive] Token saved successfully')
     return { success: true }
@@ -160,7 +180,7 @@ function safeReadJson(p: string): any | null {
 }
 
 // Refresh token via proxy server
-async function refreshTokenViaProxy(refreshToken: string): Promise<any | null> {
+async function refreshTokenViaProxy(refreshToken: string): Promise<{ access_token?: string; expiry_date?: number } | null> {
   const proxyUrl = getOAuthProxyUrl()
   try {
     const r = await fetch(`${proxyUrl}/api/oauth/google/refresh`, {
@@ -168,10 +188,13 @@ async function refreshTokenViaProxy(refreshToken: string): Promise<any | null> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refreshToken })
     })
-    const data = await r.json()
+    const data = await r.json() as OAuthTokenResponse
     if (r.ok && data?.ok) {
-      const { ok, ...tokenData } = data
-      return tokenData
+      const { ok, expires_in, ...restTokenData } = data
+      return {
+        ...restTokenData,
+        expiry_date: expires_in ? Date.now() + (expires_in * 1000) : undefined
+      }
     }
   } catch (err) {
     console.error('[Drive] Token refresh via proxy failed:', err)

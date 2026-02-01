@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: lan-controller
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -29,7 +32,7 @@ services:
       VPN_ROOM_TTL_DAYS: ${VPN_ROOM_TTL_DAYS}
       VPN_PEER_TTL_DAYS: ${VPN_PEER_TTL_DAYS}
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
       - "51820:51820/udp"
     volumes:
       - ./data:/data

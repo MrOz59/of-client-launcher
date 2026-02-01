@@ -8,6 +8,7 @@ ENV PORT=8787
 RUN apk add --no-cache iproute2 wireguard-tools iptables procps
 
 COPY server.mjs /app/server.mjs
+COPY google-oauth-secrets.mjs /app/google-oauth-secrets.mjs
 
 EXPOSE 8787
 

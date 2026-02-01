@@ -1,9 +1,53 @@
 import http from 'node:http'
+import https from 'node:https'
 import { URL } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
+
+// Helper to make HTTPS POST requests using native https module (fetch has issues on Alpine)
+function httpsPost(urlStr, data, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlStr)
+    const postData = typeof data === 'string' ? data : JSON.stringify(data)
+    
+    const options = {
+      hostname: url.hostname,
+      port: url.port || 443,
+      path: url.pathname + url.search,
+      method: 'POST',
+      family: 4, // Force IPv4 (IPv6 doesn't work in this container)
+      timeout: 30000,
+      headers: {
+        'Content-Type': headers['Content-Type'] || 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        ...headers
+      }
+    }
+    
+    const req = https.request(options, (res) => {
+      let body = ''
+      res.on('data', chunk => body += chunk)
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body)
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, data: json })
+        } catch {
+          resolve({ ok: false, status: res.statusCode, data: { error: body } })
+        }
+      })
+    })
+    
+    req.on('timeout', () => {
+      req.destroy()
+      reject(new Error('Request timeout'))
+    })
+    req.on('error', reject)
+    req.write(postData)
+    req.end()
+  })
+}
 
 // Google OAuth (optional - only needed for Drive proxy auth)
 let GOOGLE_CLIENT_ID = null
@@ -818,20 +862,16 @@ const server = http.createServer(async (req, res) => {
         params.set('grant_type', grantType)
         if (codeVerifier) params.set('code_verifier', codeVerifier)
 
-        const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: params.toString()
+        const tokenRes = await httpsPost(GOOGLE_TOKEN_ENDPOINT, params.toString(), {
+          'Content-Type': 'application/x-www-form-urlencoded'
         })
 
-        const tokenData = await tokenRes.json()
-
         if (!tokenRes.ok) {
-          console.error('[OAuth] Token exchange failed:', tokenData)
-          return sendJson(res, tokenRes.status, { ok: false, error: tokenData?.error_description || tokenData?.error || 'Token exchange failed' })
+          console.error('[OAuth] Token exchange failed:', tokenRes.data)
+          return sendJson(res, tokenRes.status, { ok: false, error: tokenRes.data?.error_description || tokenRes.data?.error || 'Token exchange failed' })
         }
 
-        return sendJson(res, 200, { ok: true, ...tokenData })
+        return sendJson(res, 200, { ok: true, ...tokenRes.data })
       } catch (err) {
         console.error('[OAuth] Token exchange error:', err)
         return sendJson(res, 500, { ok: false, error: String(err?.message || err) })
@@ -856,20 +896,16 @@ const server = http.createServer(async (req, res) => {
         params.set('refresh_token', refreshToken)
         params.set('grant_type', 'refresh_token')
 
-        const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: params.toString()
+        const tokenRes = await httpsPost(GOOGLE_TOKEN_ENDPOINT, params.toString(), {
+          'Content-Type': 'application/x-www-form-urlencoded'
         })
 
-        const tokenData = await tokenRes.json()
-
         if (!tokenRes.ok) {
-          console.error('[OAuth] Token refresh failed:', tokenData)
-          return sendJson(res, tokenRes.status, { ok: false, error: tokenData?.error_description || tokenData?.error || 'Token refresh failed' })
+          console.error('[OAuth] Token refresh failed:', tokenRes.data)
+          return sendJson(res, tokenRes.status, { ok: false, error: tokenRes.data?.error_description || tokenRes.data?.error || 'Token refresh failed' })
         }
 
-        return sendJson(res, 200, { ok: true, ...tokenData })
+        return sendJson(res, 200, { ok: true, ...tokenRes.data })
       } catch (err) {
         console.error('[OAuth] Token refresh error:', err)
         return sendJson(res, 500, { ok: false, error: String(err?.message || err) })
