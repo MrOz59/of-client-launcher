@@ -148,10 +148,17 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         notifyAchievementUnlocked,
         notifyDownloadComplete,
         notifyDownloadError,
+        notifyDownloadProgress,
         notifyUpdateAvailable,
         notifyGameReady,
         notifyCloudSync,
-        notifyInfo
+        notifyInfo,
+        notifySuccess,
+        notifyWarning,
+        notifyError,
+        notifyWithActions,
+        createProgressNotification,
+        notifyConfirm
       } = require('../notificationOverlay.js')
 
       switch (type) {
@@ -164,6 +171,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         case 'download-error':
           notifyDownloadError('GTA VI', 'Conexão perdida durante o download')
           break
+        case 'download-progress':
+          notifyDownloadProgress('Red Dead Redemption 2', 67, 'test-progress')
+          break
         case 'update-available':
           notifyUpdateAvailable('Elden Ring', 'v1.12.3')
           break
@@ -172,6 +182,50 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           break
         case 'cloud-sync':
           notifyCloudSync('The Witcher 3', 'backup')
+          break
+        case 'success':
+          notifySuccess('Operação Concluída', 'Todos os arquivos foram processados')
+          break
+        case 'warning':
+          notifyWarning('Espaço em Disco', 'Apenas 5GB disponíveis')
+          break
+        case 'error':
+          notifyError('Erro de Conexão', 'Não foi possível conectar ao servidor')
+          break
+        case 'with-actions':
+          notifyWithActions(
+            'info',
+            'Atualização Disponível',
+            'Uma nova versão do launcher está disponível',
+            [
+              { id: 'update', label: 'Atualizar Agora', primary: true },
+              { id: 'later', label: 'Depois' }
+            ],
+            (actionId: string) => {
+              console.log('Notification action:', actionId)
+            }
+          )
+          break
+        case 'progress-demo':
+          const progress = createProgressNotification('Instalando Mod', 'Preparando arquivos...')
+          let p = 0
+          const interval = setInterval(() => {
+            p += 10
+            if (p >= 100) {
+              clearInterval(interval)
+              progress.complete('Mod instalado com sucesso!')
+            } else {
+              progress.update(p, `Instalando... ${p}%`)
+            }
+          }, 500)
+          break
+        case 'confirm':
+          notifyConfirm(
+            'Confirmar Ação',
+            'Deseja realmente excluir este jogo?',
+            () => console.log('Confirmed!'),
+            () => console.log('Cancelled!')
+          )
           break
         default:
           notifyInfo('Notificação de Teste', 'Esta é uma notificação de teste')

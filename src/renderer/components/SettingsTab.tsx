@@ -385,6 +385,12 @@ export default function SettingsTab() {
               </button>
               <button
                 className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('download-progress')}
+              >
+                ⬇️ Progresso
+              </button>
+              <button
+                className="settings-btn secondary"
                 onClick={() => window.electronAPI.testNotification?.('update-available')}
               >
                 🔄 Atualização
@@ -400,6 +406,42 @@ export default function SettingsTab() {
                 onClick={() => window.electronAPI.testNotification?.('cloud-sync')}
               >
                 ☁️ Cloud Sync
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('success')}
+              >
+                ✓ Sucesso
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('warning')}
+              >
+                ⚠️ Aviso
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('error')}
+              >
+                ✕ Erro
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('with-actions')}
+              >
+                🔘 Com Ações
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('progress-demo')}
+              >
+                📊 Progress Demo
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('confirm')}
+              >
+                ❓ Confirmação
               </button>
             </div>
           </div>
