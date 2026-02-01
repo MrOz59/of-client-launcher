@@ -74,7 +74,7 @@ if (typeof global.File === 'undefined') {
   }
 }
 
-import { BrowserWindow, dialog, ipcMain, session, shell, nativeImage, Tray, Menu, Notification, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, session, shell, nativeImage, Tray, Menu, type IpcMainInvokeEvent } from 'electron'
 import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
@@ -225,79 +225,6 @@ function sendDownloadProgress(payload: any) {
   } catch {
     // ignore
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Desktop Notifications
-// ─────────────────────────────────────────────────────────────────────────────
-function showNotification(title: string, body: string, onClick?: () => void) {
-  // Check if notifications are enabled in settings
-  const notificationsEnabled = getSetting('notifications_enabled') !== 'false'
-  if (!notificationsEnabled) return
-
-  if (!Notification.isSupported()) {
-    console.log('[Notification] Not supported on this platform')
-    return
-  }
-
-  try {
-    const notification = new Notification({
-      title,
-      body,
-      icon: app.isPackaged
-        ? path.join(process.resourcesPath, 'icon.png')
-        : path.join(__dirname, '../../icon.png'),
-      silent: false
-    })
-
-    if (onClick) {
-      notification.on('click', onClick)
-    }
-
-    notification.show()
-  } catch (e) {
-    console.warn('[Notification] Failed to show:', e)
-  }
-}
-
-// Exported for use in other modules
-export function notifyDownloadComplete(gameTitle: string, gameUrl?: string) {
-  showNotification(
-    'Download Concluído',
-    `${gameTitle} está pronto para jogar!`,
-    () => {
-      mainWindow?.show()
-      mainWindow?.focus()
-      if (gameUrl) {
-        mainWindow?.webContents.send('navigate-to-game', gameUrl)
-      }
-    }
-  )
-}
-
-export function notifyDownloadError(gameTitle: string, error?: string) {
-  showNotification(
-    'Erro no Download',
-    error ? `${gameTitle}: ${error}` : `Falha ao baixar ${gameTitle}`,
-    () => {
-      mainWindow?.show()
-      mainWindow?.focus()
-    }
-  )
-}
-
-export function notifyGameUpdate(gameTitle: string, newVersion: string, gameUrl?: string) {
-  showNotification(
-    'Atualização Disponível',
-    `${gameTitle} tem uma nova versão: ${newVersion}`,
-    () => {
-      mainWindow?.show()
-      mainWindow?.focus()
-      if (gameUrl) {
-        mainWindow?.webContents.send('navigate-to-game', gameUrl)
-      }
-    }
-  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -161,6 +161,16 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
             updateGameInfo(g.url, payload)
             results.push({ url: g.url, latest: info.version, torrentUrl: info.torrentUrl || undefined })
             ctx.getMainWindow()?.webContents.send('game-version-update', { url: g.url, latest: info.version })
+            
+            // Check if this is actually a new update (version differs from installed)
+            const currentVersion = String(g.installed_version || '').toLowerCase().trim()
+            const latestVersion = String(info.version || '').toLowerCase().trim()
+            if (currentVersion && latestVersion && currentVersion !== latestVersion && g.is_installed) {
+              try {
+                const { notifyUpdateAvailable } = require('../notificationOverlay.js')
+                notifyUpdateAvailable(g.title || 'Jogo', info.version)
+              } catch {}
+            }
           } catch (err: any) {
             results.push({ url: String(g.url), error: err?.message || 'unknown error' })
           }

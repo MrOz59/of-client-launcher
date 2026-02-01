@@ -478,8 +478,10 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
               try {
                 getMainWindow()?.webContents.send('achievement-unlocked', ev)
               } catch {}
+              // Use the new notification overlay
               try {
-                void achievementOverlay.show({ title: ev.title, description: ev.description, unlockedAt: ev.unlockedAt })
+                const { notifyAchievementUnlocked } = require('../notificationOverlay.js')
+                notifyAchievementUnlocked(ev.title, ev.description)
               } catch {}
             }
           )

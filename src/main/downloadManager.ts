@@ -25,22 +25,7 @@ import fs from 'fs'
 import os from 'os'
 import { Worker } from 'worker_threads'
 import { session, BrowserWindow, app } from 'electron'
-
-// Lazy import to avoid circular dependencies
-let notifyDownloadComplete: ((gameTitle: string, gameUrl?: string) => void) | null = null
-let notifyDownloadError: ((gameTitle: string, error?: string) => void) | null = null
-
-async function loadNotificationFunctions() {
-  if (!notifyDownloadComplete) {
-    try {
-      const main = await import('./main.js')
-      notifyDownloadComplete = main.notifyDownloadComplete
-      notifyDownloadError = main.notifyDownloadError
-    } catch (e) {
-      // Notifications not available
-    }
-  }
-}
+import { notifyDownloadComplete, notifyDownloadError } from './notificationOverlay'
 
 // ============================================================================
 // DOWNLOAD QUEUE SYSTEM
@@ -1021,10 +1006,8 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
           })
           console.log('[DownloadManager] Cleaned up download record after successful HTTP extraction')
           
-          // Send desktop notification
-          loadNotificationFunctions().then(() => {
-            notifyDownloadComplete?.(gameTitle || 'Jogo', gameUrl || undefined)
-          }).catch(() => {})
+          // Send overlay notification
+          notifyDownloadComplete(gameTitle || 'Jogo')
         } catch {}
 
         finalInstallPath = installPath
@@ -1197,10 +1180,8 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         })
         console.log('[DownloadManager] Cleaned up download record after successful torrent extraction')
         
-        // Send desktop notification
-        loadNotificationFunctions().then(() => {
-          notifyDownloadComplete?.(gameTitle || 'Jogo', gameUrl || undefined)
-        }).catch(() => {})
+        // Send overlay notification
+        notifyDownloadComplete(gameTitle || 'Jogo')
       } catch {}
     } else {
       // Only send final download progress if we did NOT extract.
@@ -1250,10 +1231,8 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
     updateDownloadStatus(Number(downloadId), 'error', userFriendlyError)
     
-    // Send desktop notification for error
-    loadNotificationFunctions().then(() => {
-      notifyDownloadError?.(gameTitle || 'Jogo', userFriendlyError)
-    }).catch(() => {})
+    // Send overlay notification for error
+    notifyDownloadError(gameTitle || 'Jogo', userFriendlyError)
     
     return {
       success: false,
