@@ -1,6 +1,6 @@
 {
   "name": "voidlauncher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "VoidLauncher (prototype)",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
   "repository": {
@@ -11,16 +11,19 @@
   "scripts": {
     "build:preload": "node build-preload.js",
     "dev:renderer": "vite",
-    "dev:main": "npm run build:preload && tsc -p tsconfig.build.json && ELECTRON_RUN_AS_NODE= ELECTRON_DISABLE_SANDBOX=1 NODE_ENV=development npx electron dist/main/main.js --no-sandbox --disable-setuid-sandbox --disable-seccomp-filter-sandbox --disable-namespace-sandbox --disable-gpu --disable-features=VizDisplayCompositor",
+    "dev:main": "npm run build:preload && tsc -p tsconfig.build.json && ELECTRON_RUN_AS_NODE= ELECTRON_DISABLE_SANDBOX=1 NODE_ENV=development OF_ALLOW_TORRENT_FALLBACK=1 npx electron dist/main/main.js --no-sandbox --disable-setuid-sandbox --disable-seccomp-filter-sandbox --disable-namespace-sandbox --disable-gpu --disable-features=VizDisplayCompositor",
     "dev": "npm run build:preload && concurrently \"npm:dev:renderer\" \"npm:dev:main\"",
     "torrent:deps": "node scripts/install-torrent-agent-deps.js",
     "bundle:torrent-agent": "node scripts/build-torrent-agent.js",
-    "build": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
-    "dist:linux": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
-    "dist:appimage": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
-    "dist:rpm": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
-    "dist:pacman": "npm run bundle:torrent-agent && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
-    "dist:win": "npm run bundle:torrent-agent && npm run build && electron-builder --win --publish never",
+    "bundle:torrent-agent-runtime": "node scripts/build-torrent-agent-runtime.js",
+    "fetch:ludusavi": "node scripts/fetch-ludusavi.js",
+    "build:app": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
+    "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:app",
+    "dist:linux": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
+    "dist:appimage": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
+    "dist:rpm": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
+    "dist:pacman": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
+    "dist:win": "npm run fetch:ludusavi && npm run build && electron-builder --win --publish never",
     "start": "electron .",
     "test:scraper": "node scripts/test-scraper-dist.js"
   },
@@ -28,6 +31,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
@@ -75,6 +79,31 @@
       {
         "from": "services/torrent-agent/torrent-agent",
         "to": "torrent-agent",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "services/torrent-agent/libtorrent_rpc.py",
+        "to": "torrent-agent/libtorrent_rpc.py"
+      },
+      {
+        "from": "services/torrent-agent/pydeps",
+        "to": "torrent-agent/pydeps",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "services/torrent-agent/python",
+        "to": "torrent-agent/python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/ludusavi",
+        "to": "ludusavi",
         "filter": [
           "**/*"
         ]

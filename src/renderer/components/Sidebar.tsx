@@ -1,5 +1,5 @@
 import React from 'react'
-import { Store, Library, Download, Settings, User } from 'lucide-react'
+import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight } from 'lucide-react'
 
 type Tab = 'store' | 'library' | 'downloads' | 'settings'
 
@@ -11,9 +11,11 @@ interface SidebarProps {
   onLogoutClick?: () => void
   hasDownloadActivity?: boolean
   onProfileNavigate?: (url: string) => void
+  collapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
-export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginClick, onLogoutClick, hasDownloadActivity, onProfileNavigate }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginClick, onLogoutClick, hasDownloadActivity, onProfileNavigate, collapsed, onToggleCollapse }: SidebarProps) {
   const [profileName, setProfileName] = React.useState<string | null>(null)
   const [profileAvatar, setProfileAvatar] = React.useState<string | null>(null)
   const [profileUrl, setProfileUrl] = React.useState<string | null>(null)
@@ -44,16 +46,26 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
 
     fetchProfile()
   }, [isLoggedIn])
+  const isCollapsed = !!collapsed
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-header">
         <h1>VoidLauncher</h1>
+        <button
+          className="sidebar-collapse"
+          onClick={() => onToggleCollapse?.()}
+          title={isCollapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+          aria-label={isCollapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+        >
+          {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+        </button>
       </div>
 
       <nav className="sidebar-nav">
         <div
           className={`nav-item ${activeTab === 'store' ? 'active' : ''}`}
           onClick={() => onTabChange('store')}
+          title="Loja"
         >
           <Store />
           <span>Loja</span>
@@ -62,6 +74,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'library' ? 'active' : ''}`}
           onClick={() => onTabChange('library')}
+          title="Biblioteca"
         >
           <Library />
           <span>Biblioteca</span>
@@ -70,6 +83,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'downloads' ? 'active' : ''} ${hasDownloadActivity ? 'downloading' : ''}`}
           onClick={() => onTabChange('downloads')}
+          title="Downloads"
         >
           <Download />
           <span>Downloads</span>
@@ -78,6 +92,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => onTabChange('settings')}
+          title="Configurações"
         >
           <Settings />
           <span>Configurações</span>
@@ -95,6 +110,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
             }
           }}
           style={{ cursor: 'pointer' }}
+          title={isLoggedIn ? (profileName || 'Ver perfil') : 'Abrir loja'}
         >
           <div className="user-avatar">
             {profileAvatar ? (
@@ -121,6 +137,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
               e.stopPropagation()
               onLogoutClick()
             }}
+            title="Sair"
           >
             Sair
           </button>

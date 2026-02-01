@@ -5,22 +5,45 @@ import fs from 'fs'
 import path from 'path'
 import { google } from 'googleapis'
 import crypto from 'crypto'
+import { getDb } from './db.js'
 
 const REDIRECT_PORT = 42813
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`
 const SCOPE = ['https://www.googleapis.com/auth/drive.file']
-const CREDENTIALS_FILE = path.join(app.getPath('userData'), 'drive_client.json')
 const TOKEN_FILE = path.join(app.getPath('userData'), 'drive_token.json')
 const APP_FOLDER_NAME = 'OF-Client-Saves'
 
-function loadCredentials() {
-  if (!fs.existsSync(CREDENTIALS_FILE)) return null
+// OAuth proxy server URL (from settings or default)
+function getOAuthProxyUrl(): string {
   try {
-    const raw = fs.readFileSync(CREDENTIALS_FILE, 'utf-8')
-    return JSON.parse(raw)
-  } catch (e) {
-    return null
+    const db = getDb()
+    const row = db?.prepare('SELECT value FROM settings WHERE key = ?').get('lanControllerUrl') as { value: string } | undefined
+    if (row?.value) return row.value
+  } catch {}
+  return 'https://vpn.mroz.dev.br'
+}
+
+const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
+const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth'
+
+// Cache for client_id fetched from server
+let cachedClientId: string | null = null
+
+async function getClientId(): Promise<string | null> {
+  if (cachedClientId) return cachedClientId
+  
+  const proxyUrl = getOAuthProxyUrl()
+  try {
+    const res = await fetch(`${proxyUrl}/api/oauth/google/config`)
+    const data = await res.json()
+    if (data?.ok && data?.client_id) {
+      cachedClientId = data.client_id
+      return cachedClientId
+    }
+  } catch (err) {
+    console.error('[Drive] Failed to fetch OAuth config:', err)
   }
+  return null
 }
 
 async function launchAuthInBrowser(authUrl: string) {
@@ -35,22 +58,24 @@ async function launchAuthInBrowser(authUrl: string) {
 }
 
 export async function authenticateWithDrive(): Promise<{ success: boolean; message?: string }> {
-  const creds = loadCredentials()
-  if (!creds) return { success: false, message: `Arquivo de credenciais ausente: ${CREDENTIALS_FILE}` }
-
-  const source = creds.installed || creds.web || creds
-  const { client_id, client_secret } = source || {}
-  if (!client_id || !client_secret) {
-    return { success: false, message: `Arquivo de credenciais não contém client_id/client_secret. Cole o JSON de tipo "OAuth client ID" para Desktop.` }
+  // Get client_id from proxy server
+  const clientId = await getClientId()
+  if (!clientId) {
+    return { success: false, message: 'Não foi possível obter configuração OAuth do servidor. Verifique sua conexão.' }
   }
 
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, REDIRECT_URI)
+  const codeVerifier = crypto.randomBytes(32).toString('base64url')
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
 
-  const authUrl = oAuth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: SCOPE,
-    prompt: 'consent'
-  })
+  const authUrl = new URL(AUTH_ENDPOINT)
+  authUrl.searchParams.set('client_id', clientId)
+  authUrl.searchParams.set('redirect_uri', REDIRECT_URI)
+  authUrl.searchParams.set('response_type', 'code')
+  authUrl.searchParams.set('scope', SCOPE.join(' '))
+  authUrl.searchParams.set('access_type', 'offline')
+  authUrl.searchParams.set('prompt', 'consent')
+  authUrl.searchParams.set('code_challenge', codeChallenge)
+  authUrl.searchParams.set('code_challenge_method', 'S256')
 
   // start a temporary local server to receive the code (with timeout)
   const codePromise: Promise<string> = new Promise((resolve, reject) => {
@@ -84,14 +109,42 @@ export async function authenticateWithDrive(): Promise<{ success: boolean; messa
     server.on('error', cleanup)
   })
 
-  await launchAuthInBrowser(authUrl)
+  await launchAuthInBrowser(authUrl.toString())
 
   try {
     const code = await codePromise
-    const { tokens } = await oAuth2Client.getToken(code)
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2))
+    
+    // Exchange code for token via proxy server
+    const proxyUrl = getOAuthProxyUrl()
+    console.log('[Drive] Exchanging code for token via proxy...')
+    
+    const r = await fetch(`${proxyUrl}/api/oauth/google/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        code_verifier: codeVerifier,
+        redirect_uri: REDIRECT_URI,
+        grant_type: 'authorization_code'
+      })
+    })
+    
+    const data = await r.json().catch(() => null)
+    console.log('[Drive] Token response status:', r.status, 'data:', data ? 'received' : 'null')
+    
+    if (!r.ok || !data?.ok) {
+      const msg = (data as any)?.error_description || (data as any)?.error || `HTTP ${r.status}`
+      console.error('[Drive] Token exchange failed:', msg)
+      return { success: false, message: msg }
+    }
+
+    // Remove 'ok' field before saving
+    const { ok, ...tokenData } = data
+    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2))
+    console.log('[Drive] Token saved successfully')
     return { success: true }
   } catch (e: any) {
+    console.error('[Drive] Auth error:', e)
     return { success: false, message: e?.message || String(e) }
   }
 }
@@ -106,33 +159,78 @@ function safeReadJson(p: string): any | null {
   }
 }
 
+// Refresh token via proxy server
+async function refreshTokenViaProxy(refreshToken: string): Promise<any | null> {
+  const proxyUrl = getOAuthProxyUrl()
+  try {
+    const r = await fetch(`${proxyUrl}/api/oauth/google/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken })
+    })
+    const data = await r.json()
+    if (r.ok && data?.ok) {
+      const { ok, ...tokenData } = data
+      return tokenData
+    }
+  } catch (err) {
+    console.error('[Drive] Token refresh via proxy failed:', err)
+  }
+  return null
+}
+
+// Custom auth that uses proxy for token refresh
+function createProxyAuth(token: any) {
+  let currentToken = { ...token }
+  
+  const isExpired = () => {
+    if (!currentToken.expiry_date) return true
+    return Date.now() >= currentToken.expiry_date - 60000 // 1 min buffer
+  }
+  
+  const getAccessToken = async () => {
+    if (isExpired() && currentToken.refresh_token) {
+      console.log('[Drive] Token expired, refreshing via proxy...')
+      const newToken = await refreshTokenViaProxy(currentToken.refresh_token)
+      if (newToken) {
+        currentToken = { ...currentToken, ...newToken }
+        // Persist refreshed token
+        try {
+          fs.writeFileSync(TOKEN_FILE, JSON.stringify(currentToken, null, 2))
+        } catch {}
+      }
+    }
+    return currentToken.access_token
+  }
+  
+  return {
+    getAccessToken,
+    get credentials() { return currentToken },
+    setCredentials(creds: any) { currentToken = { ...currentToken, ...creds } }
+  }
+}
+
 function loadOAuthClient(): { auth: any; drive: any } | null {
-  const creds = loadCredentials()
-  if (!creds) return null
-
-  const source = creds.installed || creds.web || creds
-  const { client_id, client_secret } = source || {}
-  if (!client_id || !client_secret) return null
-
   const token = safeReadJson(TOKEN_FILE)
 
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, REDIRECT_URI)
+  if (!token) return null
 
-  if (token) oAuth2Client.setCredentials(token)
-
-  // Persist refreshed tokens automatically
-  oAuth2Client.on('tokens', (tokens: any) => {
-    try {
-      const prev = safeReadJson(TOKEN_FILE) || {}
-      const next = { ...prev, ...tokens }
-      fs.writeFileSync(TOKEN_FILE, JSON.stringify(next, null, 2))
-    } catch {
-      // ignore
+  // Use proxy-based auth instead of googleapis OAuth2Client
+  const proxyAuth = createProxyAuth(token)
+  
+  // Create a minimal auth object compatible with googleapis
+  const authClient = {
+    getAccessToken: async () => ({ token: await proxyAuth.getAccessToken() }),
+    request: async (opts: any) => {
+      const accessToken = await proxyAuth.getAccessToken()
+      const headers = { ...opts.headers, Authorization: `Bearer ${accessToken}` }
+      const response = await fetch(opts.url, { ...opts, headers })
+      return { data: await response.json(), status: response.status }
     }
-  })
+  }
 
-  const drive = google.drive({ version: 'v3', auth: oAuth2Client })
-  return { auth: oAuth2Client, drive }
+  const drive = google.drive({ version: 'v3', auth: authClient as any })
+  return { auth: authClient, drive }
 }
 
 async function ensureAppFolder(drive: any) {
@@ -286,9 +384,15 @@ export async function uploadSave(
       media: { body: stream },
       fields: 'id'
     })
-    return { success: true, id: res.data.id }
+    return { success: true, id: res.data.id ?? undefined }
   } catch (e: any) {
-    return { success: false, message: e.message || String(e) }
+    const errMsg = e.message || String(e)
+    console.error('[Drive] Upload failed:', errMsg)
+    // Check for auth-related errors
+    if (errMsg.includes('invalid_grant') || errMsg.includes('invalid_request') || errMsg.includes('Token has been expired')) {
+      return { success: false, message: 'Token expirado. Por favor, faça login novamente no Google Drive nas configurações.' }
+    }
+    return { success: false, message: errMsg }
   }
 }
 
@@ -376,32 +480,40 @@ export async function downloadSave(fileId: string, destPath: string): Promise<{ 
 }
 
 export function getCredentialsPath() {
-  return CREDENTIALS_FILE
+  return null
 }
 
 export function getTokenPath() {
   return TOKEN_FILE
 }
 
-export function getCredentialsContent(): { success: boolean; content?: string; message?: string } {
+export function isDriveConfigured(): boolean {
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE)) return { success: false, message: 'Credenciais não encontradas' }
-    const raw = fs.readFileSync(CREDENTIALS_FILE, 'utf-8')
-    return { success: true, content: raw }
-  } catch (e: any) {
-    return { success: false, message: e?.message || String(e) }
+    if (!fs.existsSync(TOKEN_FILE)) return false
+    const token = safeReadJson(TOKEN_FILE)
+    if (!token) return false
+    // Minimal sanity: access_token or refresh_token must exist
+    return Boolean(token.access_token || token.refresh_token)
+  } catch {
+    return false
   }
 }
 
+// Check if cloud saves feature is enabled (user can disable even if Drive is configured)
+let cloudSavesEnabled = true
+export function setCloudSavesEnabled(enabled: boolean) {
+  cloudSavesEnabled = enabled
+}
+export function isCloudSavesEnabled(): boolean {
+  return cloudSavesEnabled && isDriveConfigured()
+}
+
+export function getCredentialsContent(): { success: boolean; content?: string; message?: string } {
+  return { success: false, message: 'Credenciais fixas do VoidLauncher (PKCE). Não há arquivo local.' }
+}
+
 export async function openCredentialsFile(): Promise<{ success: boolean; message?: string }> {
-  try {
-    if (!fs.existsSync(CREDENTIALS_FILE)) return { success: false, message: 'Arquivo de credenciais não existe' }
-    const r = await shell.openPath(CREDENTIALS_FILE)
-    if (r) return { success: false, message: r }
-    return { success: true }
-  } catch (e: any) {
-    return { success: false, message: e?.message || String(e) }
-  }
+  return { success: false, message: 'Credenciais fixas do VoidLauncher (PKCE). Não há arquivo local.' }
 }
 
 export async function openTokenFile(): Promise<{ success: boolean; message?: string }> {
@@ -415,39 +527,19 @@ export async function openTokenFile(): Promise<{ success: boolean; message?: str
   }
 }
 
-export function saveClientCredentials(raw: string) {
+export function clearToken(): { success: boolean; message?: string } {
   try {
-    // Try parse as JSON first
-    const parsed = JSON.parse(raw)
-    const source = parsed?.installed || parsed?.web || parsed
-    const hasOauth =
-      Boolean(source?.client_id && source?.client_secret) ||
-      Boolean(parsed?.client_id && parsed?.client_secret)
-
-    // api_key alone is NOT sufficient for Drive file access in this flow, but keep compatibility if user pastes it
-    const hasApiKey = Boolean(parsed?.api_key)
-
-    if (!hasOauth && !hasApiKey) {
-      return { success: false, message: 'JSON inválido: não foram encontrados campos OAuth (client_id/client_secret) nem api_key.' }
+    if (fs.existsSync(TOKEN_FILE)) {
+      fs.rmSync(TOKEN_FILE, { force: true })
     }
-
-    fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(parsed, null, 2))
     return { success: true }
   } catch (e: any) {
-    // Not JSON — maybe it's a raw API key
-    try {
-      const trimmed = String(raw || '').trim()
-      const apiKeyPattern = /^AIza[0-9A-Za-z-_]{16,}$/
-      if (apiKeyPattern.test(trimmed)) {
-        const obj = { api_key: trimmed }
-        fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(obj, null, 2))
-        return { success: true }
-      }
-      return { success: false, message: 'Falha ao parsear JSON e o conteúdo não parece ser uma API key válida.' }
-    } catch (e2: any) {
-      return { success: false, message: 'Falha ao salvar credenciais: ' + (e2?.message || String(e2)) }
-    }
+    return { success: false, message: e?.message || String(e) }
   }
+}
+
+export function saveClientCredentials(raw: string) {
+  return { success: false, message: 'Credenciais fixas do VoidLauncher (PKCE). Não é necessário salvar JSON.' }
 }
 
 // Helpers to locate Proton prefix saves for OnlineFix

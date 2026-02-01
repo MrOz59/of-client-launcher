@@ -40,6 +40,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   const prefixDoneRemovalTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const downloadsRef = useRef<DownloadItem[]>([])
   const lastEventAtRef = useRef<Map<string, number>>(new Map())
+  // Track downloads that have been completed/deleted to prevent zombie updates
+  const completedDownloadsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     downloadsRef.current = downloads
@@ -219,6 +221,9 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     const pick = <T,>(first: T | undefined, second: T | undefined) =>
       second !== undefined && second !== null ? second : first
 
+    // If b explicitly sets errorMessage to undefined, clear it (don't inherit from a)
+    const errorMessage = 'errorMessage' in b ? b.errorMessage : a.errorMessage
+
     return {
       ...a,
       ...b,
@@ -229,6 +234,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       infoHash: pick(a.infoHash, b.infoHash) || a.infoHash,
       progress: mergedProgress,
       status: chooseStatus,
+      errorMessage,
       speed: pick(a.speed, b.speed),
       eta: pick(a.eta, b.eta),
       downloaded: pick(a.downloaded, b.downloaded),
@@ -274,6 +280,11 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     const matchKey = String(data?.infoHash || data?.magnet || data?.url || '').trim()
     if (!matchKey) return
 
+    // Ignore updates for downloads that have been completed/deleted
+    if (completedDownloadsRef.current.has(matchKey)) {
+      return
+    }
+
     try { lastEventAtRef.current.set(matchKey, Date.now()) } catch {}
 
     // Check if this is a new download (not in current list) - trigger activity immediately
@@ -306,41 +317,30 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                 d.url === (updateData.url || key) ||
                 d.id === key
               ) {
-                // Se o download já está em prefixing ou completed, ignorar eventos de progresso de extração
-                if (d.status === 'prefixing' || d.status === 'completed') {
-                  return d
-                }
-
                 hasChanges = true
                 const isExtract =
                   updateData.stage === 'extract' ||
                   updateData.stage === 'extracting' ||
                   updateData.status === 'extracting' ||
-                  updateData.extractProgress !== undefined ||
-                  d.status === 'extracting' // Se já está extraindo, continuar tratando como extração
-
-                // Check if extraction just finished (progress is 100%)
-                // Considerar tanto extractProgress quanto progress quando em modo extração
-                const extractFinished = isExtract && (
-                  (updateData.extractProgress ?? 0) >= 100 ||
-                  (d.status === 'extracting' && updateData.progress >= 100)
-                )
+                  updateData.extractProgress !== undefined
 
                 const nextStatus: DownloadItem['status'] =
-                  extractFinished
-                    ? 'completed'
-                    : isExtract
-                      ? 'extracting'
-                      : updateData.progress >= 100
-                        ? 'completed'
-                        : d.status === 'paused'
-                          ? 'paused'
-                          : 'downloading'
+                  isExtract
+                    ? 'extracting'
+                    : updateData.progress >= 100
+                      ? 'completed'
+                      : d.status === 'paused'
+                        ? 'paused'
+                        : 'downloading'
+
+                // Clear error message when download is progressing (not paused/error)
+                const clearError = nextStatus === 'downloading' || nextStatus === 'extracting' || nextStatus === 'completed'
 
                 const merged = mergeDownloads(d, {
                   ...d,
                   progress: isExtract ? (updateData.extractProgress ?? updateData.progress) : updateData.progress,
                   status: nextStatus,
+                  errorMessage: clearError ? undefined : d.errorMessage,
                   infoHash: updateData.infoHash || d.infoHash,
                   speed: updateData.speed ?? d.speed,
                   eta: isExtract ? d.eta : (updateData.eta ?? d.eta),
@@ -369,19 +369,13 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               updateData.status === 'extracting' ||
               updateData.extractProgress !== undefined
 
-            // Check if extraction just finished (progress is 100%)
-            const extractFinished = isExtract && (
-              (updateData.extractProgress ?? 0) >= 100 ||
-              updateData.progress >= 100
-            )
-
             const newItem: DownloadItem = {
               id: url || key || Math.random().toString(36).slice(2),
               title: title.replace(/%20/g, ' '),
               type: type as 'http' | 'torrent',
               url: url || key,
               progress: isExtract ? (updateData.extractProgress ?? updateData.progress) : updateData.progress,
-              status: extractFinished ? 'completed' : isExtract ? 'extracting' : updateData.progress >= 100 ? 'completed' : 'downloading',
+              status: isExtract ? 'extracting' : updateData.progress >= 100 ? 'completed' : 'downloading',
               infoHash: updateData.infoHash,
               speed: updateData.speed,
               eta: isExtract ? undefined : updateData.eta,
@@ -389,8 +383,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               downloaded: updateData.downloaded,
               total: updateData.total,
               destPath: updateData.destPath,
-              stage: extractFinished ? undefined : (isExtract ? 'extract' : updateData.stage) as any,
-              extractProgress: extractFinished ? undefined : updateData.extractProgress,
+              stage: (isExtract ? 'extract' : updateData.stage) as any,
+              extractProgress: updateData.extractProgress,
               seeds: updateData.seeds,
               peers: updateData.peers
             }
@@ -410,7 +404,13 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         throttleTimerRef.current = null
 
         if (hasChanges) {
-          const active = updated.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing')
+          const active = updated.some(d =>
+            d.status === 'pending' ||
+            d.status === 'downloading' ||
+            d.status === 'paused' ||
+            d.status === 'extracting' ||
+            d.status === 'prefixing'
+          )
           setHasActive(active)
           setHistoryTick(t => t + 1)
         }
@@ -476,7 +476,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   // Check if a download should be kept in the list
   const shouldKeepDownload = (d: DownloadItem): boolean => {
-    // Keep if in progress (including prefixing)
+    // Keep if in progress
     if (d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing') {
       return true
     }
@@ -525,7 +525,6 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             speed: d.speed ? Number(d.speed) : undefined,
             eta: d.eta ? Number(d.eta) : undefined,
             destPath: dirFromPath(d.dest_path) || undefined,
-            gameUrl: d.game_url || undefined,
             stage: String(d.status || '').toLowerCase() === 'extracting' ? ('extract' as any) : ('download' as any),
             extractProgress: String(d.status || '').toLowerCase() === 'extracting' ? Number(d.progress || 0) : undefined,
             extractEta: String(d.status || '').toLowerCase() === 'extracting' && d.eta ? Number(d.eta) : undefined,
@@ -550,7 +549,6 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             speed: d.speed ? Number(d.speed) : undefined,
             eta: d.eta ? Number(d.eta) : undefined,
             destPath: d.dest_path || undefined,
-            gameUrl: d.game_url || undefined,
             seeds: d.seeds != null ? Number(d.seeds) : undefined,
             peers: d.peers != null ? Number(d.peers) : undefined
           }))
@@ -673,21 +671,29 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     })
 
     const completeSub = window.electronAPI.onDownloadComplete((data) => {
+      const matchKey = data.infoHash || data.magnet
+      // Mark this download as completed to ignore future progress updates
+      if (matchKey) {
+        completedDownloadsRef.current.add(matchKey)
+        // Also clear any pending updates for this download
+        pendingUpdatesRef.current.delete(matchKey)
+      }
+
       setDownloads(prev => {
         const updated: DownloadItem[] = prev.map(d => {
-          const matchKey = data.infoHash || data.magnet
           if (matchKey && (d.infoHash === matchKey || d.url === matchKey || d.id === matchKey)) {
-            // Se está em prefixing, não mudar o status - deixar o onPrefixJobStatus controlar
-            if (d.status === 'prefixing') {
-              return d
-            }
             return { ...d, status: 'completed' as const, progress: 100, destPath: data.destPath || d.destPath }
           }
           return d
         })
         // Filter out completed torrents (they don't need extraction)
         const filtered = updated.filter(shouldKeepDownload)
-        const active = filtered.some(d => d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing')
+        const active = filtered.some(d =>
+          d.status === 'downloading' ||
+          d.status === 'paused' ||
+          d.status === 'extracting' ||
+          d.status === 'prefixing'
+        )
         setHasActive(active)
         return filtered
       })
@@ -702,6 +708,12 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         }
         pendingUpdatesRef.current.clear()
       } catch {}
+
+      // Clear the completed downloads set after a delay (allow time for cleanup)
+      setTimeout(() => {
+        completedDownloadsRef.current.clear()
+      }, 2000)
+
       // Reload from source to ensure no stale entries remain after deletion/cancel
       Promise.all([
         window.electronAPI.getActiveDownloads(),
@@ -731,7 +743,6 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               speed: d.speed ? Number(d.speed) : undefined,
               eta: d.eta ? Number(d.eta) : undefined,
               destPath: dirFromPath(d.dest_path) || undefined,
-              gameUrl: d.game_url || undefined,
               stage: String(d.status || '').toLowerCase() === 'extracting' ? ('extract' as any) : ('download' as any),
               extractProgress: String(d.status || '').toLowerCase() === 'extracting' ? Number(d.progress || 0) : undefined,
               extractEta: String(d.status || '').toLowerCase() === 'extracting' && d.eta ? Number(d.eta) : undefined,
@@ -756,7 +767,6 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               speed: d.speed ? Number(d.speed) : undefined,
               eta: d.eta ? Number(d.eta) : undefined,
               destPath: d.dest_path || undefined,
-              gameUrl: d.game_url || undefined,
               seeds: d.seeds != null ? Number(d.seeds) : undefined,
               peers: d.peers != null ? Number(d.peers) : undefined
             }))
@@ -789,58 +799,27 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         prefixDoneRemovalTimersRef.current.delete(key)
       }
 
-      // Tentar encontrar o download existente pelo gameUrl
-      const findDownloadByGameUrl = (list: DownloadItem[]) =>
-        list.find(d => d.gameUrl === gameUrl || d.url === gameUrl)
-
       if (status === 'done') {
-        // Prefixo concluído - remover o download da lista (já está instalado)
-        setDownloads(prev => {
-          const existing = findDownloadByGameUrl(prev)
-          const existingKey = existing ? downloadKey(existing) : null
-
-          // Remover tanto o download real quanto qualquer item virtual de prefixo
-          const filtered = prev.filter(d => {
-            if (downloadKey(d) === key) return false // remove item virtual prefix:...
-            if (existing && downloadKey(d) === existingKey) return false // remove download real
-            return true
-          })
-
-          return filtered
-        })
-        setHasActive(false)
+        // Briefly keep it around to avoid flicker, then remove.
+        setDownloads(prev => prev.filter(d => downloadKey(d) !== key))
+        const t = setTimeout(() => {
+          setDownloads(prev => prev.filter(d => downloadKey(d) !== key))
+          prefixDoneRemovalTimersRef.current.delete(key)
+        }, 800)
+        prefixDoneRemovalTimersRef.current.set(key, t)
         return
       }
 
       if (status === 'error') {
         setDownloads(prev => {
-          const existing = findDownloadByGameUrl(prev)
-          const virtualPrefix = prev.find(d => downloadKey(d) === key)
-
-          // Se encontrou um download existente, marcar como erro
-          if (existing) {
-            return prev.map(d => {
-              if (d === existing) {
-                return {
-                  ...d,
-                  status: 'error' as const,
-                  errorMessage: message || 'Falha ao preparar prefixo',
-                  prefixPath: prefix,
-                  prefixMessage: message
-                }
-              }
-              return d
-            }).filter(d => downloadKey(d) !== key)
-          }
-
-          // Fallback: criar/atualizar item virtual
-          const next: DownloadItem = virtualPrefix
+          const existing = prev.find(d => downloadKey(d) === key)
+          const next: DownloadItem = existing
             ? {
-                ...virtualPrefix,
+                ...existing,
                 status: 'error',
-                errorMessage: message || virtualPrefix.errorMessage || 'Falha ao preparar prefixo',
-                prefixPath: prefix || virtualPrefix.prefixPath,
-                prefixMessage: message || virtualPrefix.prefixMessage
+                errorMessage: message || existing.errorMessage || 'Falha ao preparar prefixo',
+                prefixPath: prefix || existing.prefixPath,
+                prefixMessage: message || existing.prefixMessage
               }
             : {
                 id: key,
@@ -859,36 +838,17 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         return
       }
 
-      // starting/progress - atualizar status para prefixing
+      // starting/progress
       const p = parsePercentFromMessage(message)
       setDownloads(prev => {
-        const existing = findDownloadByGameUrl(prev)
-        const virtualPrefix = prev.find(d => downloadKey(d) === key)
-
-        // Se encontrou um download existente, atualizar para prefixing
-        if (existing) {
-          return prev.map(d => {
-            if (d === existing) {
-              return {
-                ...d,
-                status: 'prefixing' as const,
-                progress: p ?? d.progress ?? 0,
-                prefixMessage: message,
-                prefixPath: prefix
-              }
-            }
-            return d
-          }).filter(d => downloadKey(d) !== key) // remover item virtual se existir
-        }
-
-        // Fallback: criar/atualizar item virtual de prefixo
-        const next: DownloadItem = virtualPrefix
+        const existing = prev.find(d => downloadKey(d) === key)
+        const next: DownloadItem = existing
           ? {
-              ...virtualPrefix,
+              ...existing,
               status: 'prefixing',
-              progress: p ?? virtualPrefix.progress ?? 0,
-              prefixMessage: message || virtualPrefix.prefixMessage,
-              prefixPath: prefix || virtualPrefix.prefixPath
+              progress: p ?? existing.progress ?? 0,
+              prefixMessage: message || existing.prefixMessage,
+              prefixPath: prefix || existing.prefixPath
             }
           : {
               id: key,
@@ -1017,6 +977,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     sortedDownloads[0]
 
   const primaryKey = primary ? downloadKey(primary) : ''
+  const primaryIsTorrent = primary?.type === 'torrent'
   const queue = primary ? sortedDownloads.filter(d => downloadKey(d) !== primaryKey) : []
 
   const primaryStage: RateStage = primary?.status === 'extracting' || primary?.stage === 'extract' ? 'extract' : 'download'
@@ -1047,12 +1008,16 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   const DownloadCard = ({ item, variant }: { item: DownloadItem; variant: 'primary' | 'queue' }) => {
     const statusColor = getStatusColor(item.status)
+    const isTorrent = item.type === 'torrent'
     const showCancel =
-      item.status === 'pending' ||
-      item.status === 'downloading' ||
-      item.status === 'paused' ||
-      item.status === 'extracting' ||
-      item.status === 'error'
+      (isTorrent && (
+        item.status === 'pending' ||
+        item.status === 'downloading' ||
+        item.status === 'paused' ||
+        item.status === 'extracting' ||
+        item.status === 'error'
+      )) ||
+      (!isTorrent && item.status === 'error')
 
     return (
       <div className={`download-item ${variant === 'primary' ? 'download-item--primary' : 'download-item--queue'}`}>
@@ -1074,12 +1039,12 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
           </div>
 
           <div className="download-actions">
-            {item.status === 'downloading' && (
+            {isTorrent && item.status === 'downloading' && (
               <button onClick={() => handlePause(item)} className="btn warning btn-icon" title="Pausar">
                 <Pause size={16} />
               </button>
             )}
-            {item.status === 'paused' && (
+            {isTorrent && item.status === 'paused' && (
               <button onClick={() => handleResume(item)} className="btn accent btn-icon" title="Continuar">
                 <Play size={16} />
               </button>
@@ -1116,17 +1081,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         </div>
 
         <div className={`download-progress ${variant === 'primary' ? 'download-progress--primary' : ''}`}>
-          <div
-            className="download-progress-bar"
-            style={{
-              width: `${(item.status === 'extracting' ? (item.extractProgress ?? item.progress) : item.progress) ?? 0}%`,
-              background: item.status === 'extracting'
-                ? 'linear-gradient(90deg, #8b5cf6, #7c3aed)'
-                : item.status === 'prefixing'
-                  ? 'linear-gradient(90deg, #a855f7, #9333ea)'
-                  : undefined
-            }}
-          />
+          <div className="download-progress-bar" style={{ width: `${(item.status === 'extracting' ? (item.extractProgress ?? item.progress) : item.progress) ?? 0}%` }} />
         </div>
 
         <div className={`download-info ${variant === 'primary' ? 'download-info--primary' : ''}`}>
@@ -1193,21 +1148,22 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               </div>
 
               <div className="downloads-hero-actions">
-                {primary.status === 'downloading' && (
+                {primaryIsTorrent && primary.status === 'downloading' && (
                   <button onClick={() => handlePause(primary)} className="btn warning btn-icon" title="Pausar">
                     <Pause size={16} />
                   </button>
                 )}
-                {primary.status === 'paused' && (
+                {primaryIsTorrent && primary.status === 'paused' && (
                   <button onClick={() => handleResume(primary)} className="btn accent btn-icon" title="Continuar">
                     <Play size={16} />
                   </button>
                 )}
-                {(primary.status === 'pending' ||
+                {((primaryIsTorrent && (primary.status === 'pending' ||
                   primary.status === 'downloading' ||
                   primary.status === 'paused' ||
                   primary.status === 'extracting' ||
-                  primary.status === 'error') && (
+                  primary.status === 'error')) ||
+                  (!primaryIsTorrent && primary.status === 'error')) && (
                   <button onClick={() => handleCancel(primary)} className="btn danger btn-icon" title="Cancelar">
                     <X size={16} />
                   </button>
@@ -1283,17 +1239,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                     </div>
                   </div>
                   <div className="download-progress download-progress--primary">
-                    <div
-                      className="download-progress-bar"
-                      style={{
-                        width: `${(primaryUiProgress ?? 0)}%`,
-                        background: primary.status === 'extracting'
-                          ? 'linear-gradient(90deg, #8b5cf6, #7c3aed)'
-                          : primary.status === 'prefixing'
-                            ? 'linear-gradient(90deg, #a855f7, #9333ea)'
-                            : undefined
-                      }}
-                    />
+                    <div className="download-progress-bar" style={{ width: `${(primaryUiProgress ?? 0)}%` }} />
                   </div>
                   {primary.status === 'error' && primary.errorMessage ? (
                     <div className="download-error" title={primary.errorMessage}>• {primary.errorMessage}</div>

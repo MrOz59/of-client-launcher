@@ -5,6 +5,22 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 
+// Google OAuth (optional - only needed for Drive proxy auth)
+let GOOGLE_CLIENT_ID = null
+let GOOGLE_CLIENT_SECRET = null
+try {
+  const secrets = await import('./google-oauth-secrets.mjs')
+  GOOGLE_CLIENT_ID = secrets.GOOGLE_CLIENT_ID
+  GOOGLE_CLIENT_SECRET = secrets.GOOGLE_CLIENT_SECRET
+  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+    console.log('[lan-controller] Google OAuth credentials loaded')
+  }
+} catch {
+  // google-oauth-secrets.mjs not found - OAuth proxy disabled
+}
+
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
+
 const port = Number(process.env.PORT || 8787)
 const apiKey = String(process.env.LAN_CONTROLLER_API_KEY || '').trim()
 const ztToken = String(process.env.ZT_API_TOKEN || '').trim()
@@ -24,6 +40,11 @@ const wgDns = String(process.env.WG_DNS || '').trim()
 const vpnStateFile = String(process.env.VPN_STATE_FILE || '').trim() || path.join(process.cwd(), 'vpn-state.json')
 const vpnRoomTtlDays = Number(process.env.VPN_ROOM_TTL_DAYS || 2)
 const vpnPeerTtlDays = Number(process.env.VPN_PEER_TTL_DAYS || 7)
+
+// Hash function for passwords
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(String(password || '')).digest('hex')
+}
 
 function nowMs() {
   return Date.now()
@@ -465,13 +486,29 @@ const server = http.createServer(async (req, res) => {
       cleanupVpn()
       const body = await readJson(req)
       const userName = String(body?.name || '').trim().slice(0, 64)
+      const roomName = String(body?.roomName || '').trim().slice(0, 64)
+      const gameName = String(body?.gameName || '').trim().slice(0, 128)
+      const password = String(body?.password || '').trim()
+      const isPublic = body?.public === true
+      const maxPlayers = Math.min(Math.max(Number(body?.maxPlayers || 8), 2), 32)
 
       // Create room
       let code = randomCode(10)
       const existing = new Set((Array.isArray(state.vpn?.rooms) ? state.vpn.rooms : []).map((r) => r?.code))
       for (let i = 0; i < 5 && existing.has(code); i++) code = randomCode(10)
 
-      state.vpn.rooms.push({ code, createdAt: nowMs() })
+      const room = {
+        code,
+        name: roomName || `Sala de ${userName || 'Anônimo'}`,
+        gameName: gameName || null,
+        hostName: userName || 'Anônimo',
+        passwordHash: password ? hashPassword(password) : null,
+        public: isPublic,
+        maxPlayers,
+        createdAt: nowMs(),
+        lastActivity: nowMs()
+      }
+      state.vpn.rooms.push(room)
 
       // Create host peer
       const usedIps = new Set((Array.isArray(state.vpn?.peers) ? state.vpn.peers : []).map((p) => p?.ip).filter(Boolean))
@@ -486,7 +523,9 @@ const server = http.createServer(async (req, res) => {
         ip: ipAddr,
         publicKey: kp.publicKey,
         createdAt: nowMs(),
-        role: 'host'
+        lastSeen: nowMs(),
+        role: 'host',
+        online: true
       }
       state.vpn.peers.push(peer)
       safeWriteJsonFile(vpnStateFile, state.vpn)
@@ -495,7 +534,7 @@ const server = http.createServer(async (req, res) => {
       if (!add.ok) return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
 
       const config = buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey })
-      return sendJson(res, 200, { ok: true, code, config, vpnIp: peer.ip })
+      return sendJson(res, 200, { ok: true, code, config, vpnIp: peer.ip, peerId: peer.id, roomName: room.name })
     }
 
     if (u.pathname === '/api/vpn/rooms/join' && req.method === 'POST') {
@@ -508,12 +547,26 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req)
       const code = String(body?.code || '').trim().toUpperCase()
       const userName = String(body?.name || '').trim().slice(0, 64)
+      const password = String(body?.password || '').trim()
       if (!isRoomCode(code)) return sendJson(res, 400, { ok: false, error: 'code inválido' })
 
       const room = state.vpn.rooms.find((r) => String(r?.code || '').toUpperCase() === code)
       if (!room) return sendJson(res, 404, { ok: false, error: 'room_not_found' })
 
-      const hostPeer = state.vpn.peers.find((p) => p?.roomCode === room.code && p?.role === 'host')
+      // Check password if set
+      if (room.passwordHash) {
+        if (!password || hashPassword(password) !== room.passwordHash) {
+          return sendJson(res, 403, { ok: false, error: 'password_required', needsPassword: true })
+        }
+      }
+
+      // Check max players
+      const currentPeers = state.vpn.peers.filter((p) => p?.roomCode === room.code)
+      if (room.maxPlayers && currentPeers.length >= room.maxPlayers) {
+        return sendJson(res, 400, { ok: false, error: 'room_full' })
+      }
+
+      const hostPeer = currentPeers.find((p) => p?.role === 'host')
       const hostIp = hostPeer?.ip || null
 
       const usedIps = new Set((Array.isArray(state.vpn?.peers) ? state.vpn.peers : []).map((p) => p?.ip).filter(Boolean))
@@ -528,16 +581,126 @@ const server = http.createServer(async (req, res) => {
         ip: ipAddr,
         publicKey: kp.publicKey,
         createdAt: nowMs(),
-        role: 'peer'
+        lastSeen: nowMs(),
+        role: 'peer',
+        online: true
       }
       state.vpn.peers.push(peer)
+      
+      // Update room activity
+      room.lastActivity = nowMs()
       safeWriteJsonFile(vpnStateFile, state.vpn)
 
       const add = await wgAddPeer(peer.publicKey, peer.ip)
       if (!add.ok) return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
 
       const config = buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey })
-      return sendJson(res, 200, { ok: true, config, vpnIp: peer.ip, hostIp })
+      return sendJson(res, 200, { ok: true, config, vpnIp: peer.ip, hostIp, peerId: peer.id, roomName: room.name })
+    }
+
+    // List public rooms (like Hamachi network browser)
+    if (u.pathname === '/api/vpn/rooms/list' && req.method === 'GET') {
+      if (!vpnEnabled) return sendJson(res, 400, { ok: false, error: 'vpn_disabled' })
+      const gameName = String(u.searchParams.get('game') || '').trim().toLowerCase()
+      
+      cleanupVpn()
+      
+      // Only return public rooms
+      const publicRooms = (Array.isArray(state.vpn?.rooms) ? state.vpn.rooms : [])
+        .filter((r) => r?.public === true)
+        .filter((r) => !gameName || String(r?.gameName || '').toLowerCase().includes(gameName))
+        .map((r) => {
+          const peers = state.vpn.peers.filter((p) => p?.roomCode === r.code)
+          const onlinePeers = peers.filter((p) => p?.online)
+          return {
+            code: r.code,
+            name: r.name,
+            gameName: r.gameName,
+            hostName: r.hostName,
+            hasPassword: !!r.passwordHash,
+            playerCount: peers.length,
+            onlineCount: onlinePeers.length,
+            maxPlayers: r.maxPlayers || 8,
+            createdAt: r.createdAt,
+            lastActivity: r.lastActivity
+          }
+        })
+        .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0))
+        .slice(0, 50)
+      
+      return sendJson(res, 200, { ok: true, rooms: publicRooms })
+    }
+
+    // Heartbeat/keepalive - peers call this periodically to stay "online"
+    if (u.pathname === '/api/vpn/heartbeat' && req.method === 'POST') {
+      if (!vpnEnabled) return sendJson(res, 400, { ok: false, error: 'vpn_disabled' })
+      const body = await readJson(req)
+      const peerId = String(body?.peerId || '').trim()
+      if (!peerId) return sendJson(res, 400, { ok: false, error: 'peerId required' })
+      
+      const peer = state.vpn.peers.find((p) => p?.id === peerId)
+      if (!peer) return sendJson(res, 404, { ok: false, error: 'peer_not_found' })
+      
+      peer.lastSeen = nowMs()
+      peer.online = true
+      
+      // Update room activity
+      const room = state.vpn.rooms.find((r) => r?.code === peer.roomCode)
+      if (room) room.lastActivity = nowMs()
+      
+      // Mark peers as offline if no heartbeat for 60 seconds
+      const offlineThreshold = nowMs() - 60000
+      state.vpn.peers.forEach((p) => {
+        if (p?.lastSeen && p.lastSeen < offlineThreshold) p.online = false
+      })
+      
+      safeWriteJsonFile(vpnStateFile, state.vpn)
+      
+      // Return current peers in the room
+      const roomPeers = state.vpn.peers
+        .filter((p) => p?.roomCode === peer.roomCode)
+        .map((p) => ({ id: p.id, name: p.name, ip: p.ip, role: p.role, online: !!p.online }))
+      
+      return sendJson(res, 200, { ok: true, peers: roomPeers })
+    }
+
+    // Leave room / disconnect
+    if (u.pathname === '/api/vpn/rooms/leave' && req.method === 'POST') {
+      if (!vpnEnabled) return sendJson(res, 400, { ok: false, error: 'vpn_disabled' })
+      const body = await readJson(req)
+      const peerId = String(body?.peerId || '').trim()
+      if (!peerId) return sendJson(res, 400, { ok: false, error: 'peerId required' })
+      
+      const peerIndex = state.vpn.peers.findIndex((p) => p?.id === peerId)
+      if (peerIndex === -1) return sendJson(res, 200, { ok: true }) // Already gone
+      
+      const peer = state.vpn.peers[peerIndex]
+      
+      // Remove peer from WireGuard
+      if (peer.publicKey) {
+        await runCmd('wg', ['set', wgInterface, 'peer', peer.publicKey, 'remove'], { timeoutMs: 3000 })
+      }
+      
+      // If host leaves, mark room for cleanup (optional: transfer host)
+      if (peer.role === 'host') {
+        const roomIndex = state.vpn.rooms.findIndex((r) => r?.code === peer.roomCode)
+        if (roomIndex !== -1) {
+          // Remove all peers from this room
+          const roomPeers = state.vpn.peers.filter((p) => p?.roomCode === peer.roomCode)
+          for (const rp of roomPeers) {
+            if (rp.publicKey) {
+              await runCmd('wg', ['set', wgInterface, 'peer', rp.publicKey, 'remove'], { timeoutMs: 3000 })
+            }
+          }
+          state.vpn.peers = state.vpn.peers.filter((p) => p?.roomCode !== peer.roomCode)
+          state.vpn.rooms.splice(roomIndex, 1)
+        }
+      } else {
+        state.vpn.peers.splice(peerIndex, 1)
+      }
+      
+      safeWriteJsonFile(vpnStateFile, state.vpn)
+      return sendJson(res, 200, { ok: true })
     }
 
     if (u.pathname === '/api/vpn/rooms/peers' && req.method === 'GET') {
@@ -545,9 +708,17 @@ const server = http.createServer(async (req, res) => {
       const code = String(u.searchParams.get('code') || '').trim().toUpperCase()
       if (!isRoomCode(code)) return sendJson(res, 400, { ok: false, error: 'code inválido' })
       cleanupVpn()
+      
+      // Mark offline peers
+      const offlineThreshold = nowMs() - 60000
+      state.vpn.peers.forEach((p) => {
+        if (p?.lastSeen && p.lastSeen < offlineThreshold) p.online = false
+      })
+      
+      const room = state.vpn.rooms.find((r) => String(r?.code || '').toUpperCase() === code)
       const peers = (Array.isArray(state.vpn?.peers) ? state.vpn.peers : [])
         .filter((p) => String(p?.roomCode || '').toUpperCase() === code)
-        .map((p) => ({ id: p.id, name: p.name, ip: p.ip, role: p.role }))
+        .map((p) => ({ id: p.id, name: p.name, ip: p.ip, role: p.role, online: !!p.online }))
       return sendJson(res, 200, { ok: true, peers })
     }
 
@@ -616,6 +787,101 @@ const server = http.createServer(async (req, res) => {
       const out = await ztAuthorizeMember(networkId, memberId)
       if (!out.ok) return sendJson(res, 400, { ok: false, error: out.error })
       return sendJson(res, 200, { ok: true })
+    }
+
+    // ===========================================
+    // Google OAuth Token Exchange Proxy
+    // ===========================================
+    // This endpoint allows the launcher to exchange OAuth codes for tokens
+    // without exposing the client_secret in the app code.
+
+    if (u.pathname === '/api/oauth/google/token' && req.method === 'POST') {
+      if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        return sendJson(res, 503, { ok: false, error: 'OAuth not configured on this server' })
+      }
+
+      const body = await readJson(req)
+      const code = String(body?.code || '').trim()
+      const codeVerifier = String(body?.code_verifier || '').trim()
+      const redirectUri = String(body?.redirect_uri || '').trim()
+      const grantType = String(body?.grant_type || 'authorization_code').trim()
+
+      if (!code) return sendJson(res, 400, { ok: false, error: 'code is required' })
+      if (!redirectUri) return sendJson(res, 400, { ok: false, error: 'redirect_uri is required' })
+
+      try {
+        const params = new URLSearchParams()
+        params.set('client_id', GOOGLE_CLIENT_ID)
+        params.set('client_secret', GOOGLE_CLIENT_SECRET)
+        params.set('code', code)
+        params.set('redirect_uri', redirectUri)
+        params.set('grant_type', grantType)
+        if (codeVerifier) params.set('code_verifier', codeVerifier)
+
+        const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString()
+        })
+
+        const tokenData = await tokenRes.json()
+
+        if (!tokenRes.ok) {
+          console.error('[OAuth] Token exchange failed:', tokenData)
+          return sendJson(res, tokenRes.status, { ok: false, error: tokenData?.error_description || tokenData?.error || 'Token exchange failed' })
+        }
+
+        return sendJson(res, 200, { ok: true, ...tokenData })
+      } catch (err) {
+        console.error('[OAuth] Token exchange error:', err)
+        return sendJson(res, 500, { ok: false, error: String(err?.message || err) })
+      }
+    }
+
+    // Refresh token endpoint
+    if (u.pathname === '/api/oauth/google/refresh' && req.method === 'POST') {
+      if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        return sendJson(res, 503, { ok: false, error: 'OAuth not configured on this server' })
+      }
+
+      const body = await readJson(req)
+      const refreshToken = String(body?.refresh_token || '').trim()
+
+      if (!refreshToken) return sendJson(res, 400, { ok: false, error: 'refresh_token is required' })
+
+      try {
+        const params = new URLSearchParams()
+        params.set('client_id', GOOGLE_CLIENT_ID)
+        params.set('client_secret', GOOGLE_CLIENT_SECRET)
+        params.set('refresh_token', refreshToken)
+        params.set('grant_type', 'refresh_token')
+
+        const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString()
+        })
+
+        const tokenData = await tokenRes.json()
+
+        if (!tokenRes.ok) {
+          console.error('[OAuth] Token refresh failed:', tokenData)
+          return sendJson(res, tokenRes.status, { ok: false, error: tokenData?.error_description || tokenData?.error || 'Token refresh failed' })
+        }
+
+        return sendJson(res, 200, { ok: true, ...tokenData })
+      } catch (err) {
+        console.error('[OAuth] Token refresh error:', err)
+        return sendJson(res, 500, { ok: false, error: String(err?.message || err) })
+      }
+    }
+
+    // Return client_id for the launcher to use in auth URL (no secret exposed)
+    if (u.pathname === '/api/oauth/google/config' && req.method === 'GET') {
+      if (!GOOGLE_CLIENT_ID) {
+        return sendJson(res, 503, { ok: false, error: 'OAuth not configured on this server' })
+      }
+      return sendJson(res, 200, { ok: true, client_id: GOOGLE_CLIENT_ID })
     }
 
     return sendJson(res, 404, { ok: false, error: 'not_found' })

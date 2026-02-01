@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Folder } from 'lucide-react'
+import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff } from 'lucide-react'
 
 interface Settings {
   downloadPath: string
+  gamesPath: string
+  downloadPathDefault?: string
+  gamesPathDefault?: string
   autoExtract: boolean
   autoUpdate: boolean
   parallelDownloads: number
@@ -12,24 +15,10 @@ interface Settings {
   protonExtraPaths: string[]
   lanDefaultNetworkId?: string
   lanControllerUrl?: string
+  cloudSavesEnabled: boolean
 }
 
 type DriveFile = { id: string; name: string; modifiedTime?: string }
-
-function isLikelyOAuthJson(raw: string): boolean {
-  try {
-    const p = JSON.parse(raw)
-    const has =
-      Boolean(
-        (p.installed && p.installed.client_id && p.installed.client_secret) ||
-        (p.web && p.web.client_id && p.web.client_secret) ||
-        (p.client_id && p.client_secret)
-      )
-    return has
-  } catch {
-    return false
-  }
-}
 
 function formatMaybeDate(s?: string) {
   if (!s) return '—'
@@ -46,6 +35,7 @@ export default function SettingsTab() {
 
   const [settings, setSettings] = useState<Settings>({
     downloadPath: '',
+    gamesPath: '',
     autoExtract: true,
     autoUpdate: false,
     parallelDownloads: 3,
@@ -55,26 +45,17 @@ export default function SettingsTab() {
     protonExtraPaths: [],
     lanDefaultNetworkId: '',
     lanControllerUrl: 'https://vpn.mroz.dev.br',
+    cloudSavesEnabled: true,
   })
 
   const [runtimes, setRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const [defaultPrefixBusy, setDefaultPrefixBusy] = useState(false)
-  const [defaultPrefixPath, setDefaultPrefixPath] = useState<string | null>(null)
-
   // Drive UI state
-  const [driveCredentials, setDriveCredentials] = useState<string>('')
   const [driveFiles, setDriveFiles] = useState<DriveFile[] | null>(null)
   const [driveStatus, setDriveStatus] = useState<string | null>(null)
-
-  const [driveModalOpen, setDriveModalOpen] = useState(false)
-  const [driveModalMessage, setDriveModalMessage] = useState<string | null>(null)
-  const [driveModalMessageType, setDriveModalMessageType] = useState<'info' | 'success' | 'error' | null>(null)
-  const [driveModalBusy, setDriveModalBusy] = useState(false)
-  const [driveHasOAuth, setDriveHasOAuth] = useState<boolean | null>(null)
-
+  const [driveConnected, setDriveConnected] = useState(false)
   const driveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setDriveStatusTimed = (msg: string | null, ms = 4000) => {
@@ -97,7 +78,12 @@ export default function SettingsTab() {
       if (isLinux) {
         refreshRuntimes(false)
       }
-      loadDriveCredentialsOnStart()
+      try {
+        const res = await (window as any).electronAPI.driveStatus?.()
+        if (res && typeof res.connected === 'boolean') setDriveConnected(res.connected)
+      } catch {
+        // ignore
+      }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -119,7 +105,10 @@ export default function SettingsTab() {
         setSettings((prev) => ({
           ...prev,
           ...raw,
-          protonDefaultRuntimePath: typeof raw?.protonDefaultRuntimePath === 'string' ? raw.protonDefaultRuntimePath : (typeof raw?.protonPath === 'string' ? raw.protonPath : prev.protonDefaultRuntimePath),
+          gamesPath: typeof raw?.gamesPath === 'string' ? raw.gamesPath : prev.gamesPath,
+          protonDefaultRuntimePath: typeof raw?.protonDefaultRuntimePath === 'string'
+            ? raw.protonDefaultRuntimePath
+            : (typeof raw?.protonPath === 'string' ? raw.protonPath : prev.protonDefaultRuntimePath),
           protonExtraPaths: Array.isArray(raw?.protonExtraPaths)
             ? raw.protonExtraPaths.filter((p: any) => typeof p === 'string' && p.trim()).map((p: string) => p.trim())
             : prev.protonExtraPaths,
@@ -166,6 +155,13 @@ export default function SettingsTab() {
     }
   }
 
+  const selectGamesPath = async () => {
+    const res = await window.electronAPI.selectDirectory()
+    if (res.success && res.path) {
+      setSettings(prev => ({ ...prev, gamesPath: res.path || prev.gamesPath }))
+    }
+  }
+
   const addProtonSearchPath = async () => {
     if (!platformInfo.isLinux) return
     const res = await window.electronAPI.selectDirectory()
@@ -173,7 +169,6 @@ export default function SettingsTab() {
       const p = String(res.path).trim()
       if (!p) return
 
-      // Persiste no backend (acumula paths; não sobrescreve mais).
       try {
         const update = await window.electronAPI.protonSetRoot(p)
         if (update.success) setRuntimes(update.runtimes || [])
@@ -205,66 +200,34 @@ export default function SettingsTab() {
     }
   }
 
-  const recreateDefaultPrefix = async () => {
-    if (!platformInfo.isLinux) return
-    setDefaultPrefixBusy(true)
-    try {
-      const res = await window.electronAPI.protonDefaultPrefix(true)
-      if (res.success) {
-        setDefaultPrefixPath(res.prefix || null)
-        alert('Prefixo default recriado com sucesso')
-      } else {
-        alert(res.error || 'Falha ao recriar prefixo default')
-      }
-    } finally {
-      setDefaultPrefixBusy(false)
-    }
-  }
-
   // =========================
   // DRIVE helpers
   // =========================
-  // 🔧 Alterado: retorna boolean pra você não depender do setState async
-  const loadDriveCredentialsOnStart = async (): Promise<boolean> => {
-    try {
-      const res = await window.electronAPI.driveGetCredentials()
-      if (res?.success && res.content) {
-        setDriveCredentials(res.content)
-        const has = isLikelyOAuthJson(res.content)
-        setDriveHasOAuth(has)
-        return has
-      } else {
-        setDriveHasOAuth(false)
-        return false
-      }
-    } catch {
-      setDriveHasOAuth(false)
-      return false
-    }
-  }
-
-  const saveDriveCredentials = async () => {
-    try {
-      const res = await window.electronAPI.driveSaveCredentials(driveCredentials)
-      if (!res.success) {
-        alert('Falha ao salvar credenciais: ' + (res.message || ''))
-      } else {
-        setDriveHasOAuth(isLikelyOAuthJson(driveCredentials))
-        alert('Credenciais salvas com sucesso')
-      }
-    } catch (e) {
-      alert('Erro ao salvar credenciais: ' + String(e))
-    }
-  }
 
   const driveAuth = async () => {
     setDriveStatusTimed('Iniciando autenticação...')
     try {
       const res = await window.electronAPI.driveAuth()
-      if (res.success) setDriveStatusTimed('Autenticado')
-      else setDriveStatusTimed('Erro: ' + (res.message || ''))
+      if (res.success) {
+        setDriveConnected(true)
+        const prepared = (res as any)?.ludusaviPrepared
+        const downloaded = (res as any)?.ludusaviDownloaded
+        const err = String((res as any)?.ludusaviError || '').trim()
+
+        if (prepared === true) {
+          setDriveStatusTimed(downloaded ? 'Autenticado (Ludusavi baixado e pronto)' : 'Autenticado (Ludusavi pronto)')
+        } else if (prepared === false) {
+          setDriveStatusTimed('Autenticado, mas falhou preparar Ludusavi' + (err ? ': ' + err : ''), 9000)
+        } else {
+          setDriveStatusTimed('Autenticado')
+        }
+      } else {
+        setDriveStatusTimed('Erro: ' + (res.message || ''))
+        setDriveConnected(false)
+      }
     } catch (e) {
       setDriveStatusTimed('Erro: ' + String(e))
+      setDriveConnected(false)
     }
   }
 
@@ -309,570 +272,484 @@ export default function SettingsTab() {
     }
   }
 
-  const driveUiNote = useMemo(() => {
-    if (driveHasOAuth === null) return null
-    if (driveHasOAuth === true) return { type: 'success' as const, text: 'Credenciais OAuth detectadas.' }
-    return { type: 'info' as const, text: 'Cole um JSON de OAuth Client (Desktop) para usar o Drive.' }
-  }, [driveHasOAuth])
-
-  const openDriveModal = async () => {
-    setDriveModalOpen(true)
-    setDriveModalMessage(null)
-    setDriveModalMessageType(null)
-    setDriveModalBusy(false)
-
-    try {
-      const res = await window.electronAPI.driveGetCredentials()
-      if (res?.success && res.content) {
-        setDriveCredentials(res.content)
-        const has = isLikelyOAuthJson(res.content)
-        setDriveHasOAuth(has)
-        setDriveModalMessage('Credenciais carregadas a partir do sistema.')
-        setDriveModalMessageType('success')
-      } else {
-        setDriveHasOAuth(false)
-        setDriveModalMessage('Nenhuma credencial salva encontrada. Cole o JSON ou abra o Console para criar.')
-        setDriveModalMessageType('info')
-      }
-    } catch {
-      setDriveHasOAuth(false)
-      setDriveModalMessage('Falha ao ler credenciais salvas.')
-      setDriveModalMessageType('error')
-    }
-  }
-
+  const gamesPathHint = settings.gamesPathDefault
+    ? `Padrão: ${settings.gamesPathDefault}`
+    : 'Padrão: ~/Games/VoidLauncher'
+  const downloadPathHint = settings.downloadPathDefault
+    ? `Padrão: ${settings.downloadPathDefault}`
+    : 'Padrão: ~/Downloads'
   return (
-    <div>
-      {loading && <div style={{ marginBottom: 12, color: '#aaa' }}>Carregando configurações...</div>}
+    <div className="settings-page">
+      {loading && (
+        <div className="settings-loading">
+          <RefreshCw size={20} className="of-spin" />
+          <span>Carregando configurações...</span>
+        </div>
+      )}
 
+      {/* Header */}
+      <div className="settings-header">
+        <div className="settings-header-icon">
+          <Settings2 size={24} />
+        </div>
+        <div>
+          <h1>Configurações</h1>
+          <p>Personalize o VoidLauncher de acordo com suas preferências</p>
+        </div>
+      </div>
+
+      {/* Downloads Section */}
       <div className="settings-section">
-        <h3>Downloads</h3>
-
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Pasta de downloads</div>
-            <div className="settings-label-description">
-              Local onde os jogos serão baixados e instalados
-            </div>
-          </div>
-          <div className="settings-control" style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="text"
-              value={settings.downloadPath}
-              onChange={(e) => setSettings({ ...settings, downloadPath: e.target.value })}
-            />
-            <button onClick={selectDownloadPath}>
-              <Folder size={16} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-              Selecionar
-            </button>
-          </div>
+        <div className="settings-section-header">
+          <Download size={18} />
+          <h3>Downloads</h3>
         </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Extrair automaticamente</div>
-            <div className="settings-label-description">
-              Extrai arquivos comprimidos automaticamente após o download
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <HardDrive size={16} />
+                Pasta de jogos
+              </div>
+              <div className="settings-card-description">
+                Local onde os jogos serão instalados. {gamesPathHint}
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <div className="settings-input-group">
+                <input
+                  type="text"
+                  className="settings-input"
+                  value={settings.gamesPath}
+                  onChange={(e) => setSettings({ ...settings, gamesPath: e.target.value })}
+                  placeholder={settings.gamesPathDefault || ''}
+                />
+                <button className="settings-btn secondary" onClick={selectGamesPath}>
+                  <Folder size={14} />
+                  Selecionar
+                </button>
+              </div>
             </div>
           </div>
-          <div className="settings-control">
-            <input
-              type="checkbox"
-              checked={settings.autoExtract}
-              onChange={(e) => setSettings({ ...settings, autoExtract: e.target.checked })}
-            />
-          </div>
-        </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Downloads paralelos</div>
-            <div className="settings-label-description">
-              Número máximo de downloads simultâneos
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Download size={16} />
+                Pasta de downloads
+              </div>
+              <div className="settings-card-description">
+                Local onde os arquivos serão baixados. {downloadPathHint}
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <div className="settings-input-group">
+                <input
+                  type="text"
+                  className="settings-input"
+                  value={settings.downloadPath}
+                  onChange={(e) => setSettings({ ...settings, downloadPath: e.target.value })}
+                  placeholder={settings.downloadPathDefault || ''}
+                />
+                <button className="settings-btn secondary" onClick={selectDownloadPath}>
+                  <Folder size={14} />
+                  Selecionar
+                </button>
+              </div>
             </div>
           </div>
-          <div className="settings-control">
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={Number.isFinite(settings.parallelDownloads) ? settings.parallelDownloads : 3}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10)
-                setSettings({ ...settings, parallelDownloads: Number.isFinite(n) && n > 0 ? n : 1 })
-              }}
-              style={{ width: '80px' }}
-            />
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Extrair automaticamente</div>
+              <div className="settings-card-description">
+                Extrai arquivos comprimidos automaticamente após o download
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.autoExtract}
+                  onChange={(e) => setSettings({ ...settings, autoExtract: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Downloads paralelos</div>
+              <div className="settings-card-description">
+                Número máximo de downloads simultâneos
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <input
+                type="number"
+                className="settings-input settings-input-sm"
+                min="1"
+                max="10"
+                value={Number.isFinite(settings.parallelDownloads) ? settings.parallelDownloads : 3}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10)
+                  setSettings({ ...settings, parallelDownloads: Number.isFinite(n) && n > 0 ? n : 1 })
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Updates Section */}
       <div className="settings-section">
-        <h3>Atualizações</h3>
-
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Atualizar jogos automaticamente</div>
-            <div className="settings-label-description">
-              Verifica e baixa atualizações automaticamente
-            </div>
-          </div>
-          <div className="settings-control">
-            <input
-              type="checkbox"
-              checked={settings.autoUpdate}
-              onChange={(e) => setSettings({ ...settings, autoUpdate: e.target.checked })}
-            />
-          </div>
+        <div className="settings-section-header">
+          <RefreshCw size={18} />
+          <h3>Atualizações & Steam</h3>
         </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Steam Web API Key (conquistas)</div>
-            <div className="settings-label-description">
-              Necessária para baixar o schema completo de conquistas via API oficial da Steam.
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Atualizar jogos automaticamente</div>
+              <div className="settings-card-description">
+                Verifica e baixa atualizações automaticamente
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.autoUpdate}
+                  onChange={(e) => setSettings({ ...settings, autoUpdate: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
             </div>
           </div>
-          <div className="settings-control">
-            <input
-              type="password"
-              value={settings.steamWebApiKey || ''}
-              onChange={(e) => setSettings({ ...settings, steamWebApiKey: e.target.value })}
-              placeholder="Cole sua Steam Web API Key aqui"
-            />
-          </div>
-        </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Schema comunitário (conquistas escondidas)</div>
-            <div className="settings-label-description">
-              Opcional. URL base que disponibiliza <code>&lt;appid&gt;.json</code> com nome/descrição das conquistas.
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Key size={16} />
+                Steam Web API Key
+              </div>
+              <div className="settings-card-description">
+                Necessária para baixar o schema completo de conquistas via API oficial da Steam.
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <input
+                type="password"
+                className="settings-input"
+                value={settings.steamWebApiKey || ''}
+                onChange={(e) => setSettings({ ...settings, steamWebApiKey: e.target.value })}
+                placeholder="Cole sua Steam Web API Key aqui"
+              />
             </div>
           </div>
-          <div className="settings-control">
-            <input
-              type="text"
-              value={settings.achievementSchemaBaseUrl || ''}
-              onChange={(e) => setSettings({ ...settings, achievementSchemaBaseUrl: e.target.value })}
-              placeholder="Ex: https://meu-servidor/schemas"
-            />
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Link size={16} />
+                Schema comunitário (conquistas)
+              </div>
+              <div className="settings-card-description">
+                Opcional. URL base que disponibiliza <code>&lt;appid&gt;.json</code> com nome/descrição das conquistas.
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <input
+                type="text"
+                className="settings-input"
+                value={settings.achievementSchemaBaseUrl || ''}
+                onChange={(e) => setSettings({ ...settings, achievementSchemaBaseUrl: e.target.value })}
+                placeholder="Ex: https://meu-servidor/schemas"
+              />
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="settings-section">
-        {platformInfo.isLinux && (
-          <>
+      {/* Proton Section (Linux only) */}
+      {platformInfo.isLinux && (
+        <div className="settings-section">
+          <div className="settings-section-header">
+            <Monitor size={18} />
             <h3>Proton (Linux)</h3>
+          </div>
 
-            <div className="settings-item">
-              <div className="settings-label">
-                <div className="settings-label-title">Proton padrão</div>
-                <div className="settings-label-description">
-                  No Linux, jogos Windows rodam via Proton automaticamente. Usamos os Protons instalados na Steam (steamapps/common e compatibilitytools.d).
+          <div className="settings-card">
+            <div className="settings-card-item vertical">
+              <div className="settings-card-info">
+                <div className="settings-card-title">
+                  <Gamepad2 size={16} />
+                  Proton padrão
+                </div>
+                <div className="settings-card-description">
+                  No Linux, jogos Windows rodam via Proton automaticamente. Usamos os Protons instalados na Steam.
                 </div>
               </div>
-              <div className="settings-control" style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <select
-                  value={settings.protonDefaultRuntimePath}
-                  onChange={(e) => setSettings({ ...settings, protonDefaultRuntimePath: e.target.value })}
-                  title={selectedRuntimeTitle}
-                  style={{
-                    flex: 1,
-                    minWidth: '260px',
-                    maxWidth: '100%',
-                    padding: '8px',
-                    background: '#2a2a2a',
-                    color: '#fff',
-                    border: '1px solid #333',
-                    borderRadius: '6px',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  <option value="">Auto (recomendado)</option>
-                  {runtimes.map((rt) => (
-                    <option key={rt.runner} value={rt.path}>
-                      {rt.name} • {shortenPathForLabel(rt.path)}
-                    </option>
-                  ))}
-                </select>
-                <button onClick={() => refreshRuntimes(true)}>Recarregar</button>
-                <button onClick={addProtonSearchPath}>Adicionar caminho</button>
+              <div className="settings-proton-control">
+                <div className="settings-select-wrapper">
+                  <select
+                    className="settings-select"
+                    value={settings.protonDefaultRuntimePath}
+                    onChange={(e) => setSettings({ ...settings, protonDefaultRuntimePath: e.target.value })}
+                    title={selectedRuntimeTitle}
+                  >
+                    <option value="">Auto (recomendado)</option>
+                    {runtimes.map((rt) => (
+                      <option key={rt.runner} value={rt.path}>
+                        {rt.name} • {shortenPathForLabel(rt.path)}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="settings-select-icon" />
+                </div>
+                <div className="settings-btn-row">
+                  <button className="settings-btn ghost" onClick={() => refreshRuntimes(true)}>
+                    <RefreshCw size={14} />
+                    Recarregar
+                  </button>
+                  <button className="settings-btn ghost" onClick={addProtonSearchPath}>
+                    <FolderPlus size={14} />
+                    Adicionar caminho
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="settings-item">
-              <div className="settings-label">
-                <div className="settings-label-title">Caminhos extras (opcional)</div>
-                <div className="settings-label-description">
-                  Adicione diretórios adicionais onde existam instalações do Proton (ex.: outra Steam, Wine/Proton custom). Isso só afeta a lista acima.
+            {(settings.protonExtraPaths || []).length > 0 && (
+              <div className="settings-card-item vertical">
+                <div className="settings-card-info">
+                  <div className="settings-card-title">Caminhos extras</div>
+                  <div className="settings-card-description">
+                    Diretórios adicionais onde existam instalações do Proton.
+                  </div>
                 </div>
-              </div>
-              <div className="settings-control" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {(settings.protonExtraPaths || []).length === 0 ? (
-                  <div style={{ color: '#9ca3af', fontSize: 12 }}>Nenhum caminho extra adicionado.</div>
-                ) : (
-                  (settings.protonExtraPaths || []).map((p) => (
-                    <div key={p} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <code style={{ color: '#9ca3af', fontSize: 12, wordBreak: 'break-all' }}>{p}</code>
+                <div className="settings-paths-list">
+                  {(settings.protonExtraPaths || []).map((p) => (
+                    <div key={p} className="settings-path-item">
+                      <code>{p}</code>
                       <button
+                        className="settings-btn-icon"
                         onClick={() => setSettings((prev) => ({
                           ...prev,
                           protonExtraPaths: (prev.protonExtraPaths || []).filter((x) => x !== p)
                         }))}
                       >
-                        Remover
+                        <Trash2 size={14} />
                       </button>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="settings-item">
-              <div className="settings-label">
-                <div className="settings-label-title">Prefixo Proton default (manutenção)</div>
-                <div className="settings-label-description">
-                  Cria/Recria um prefixo base com pré-requisitos para clonar em jogos.
+                  ))}
                 </div>
               </div>
-              <div className="settings-control" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <button onClick={recreateDefaultPrefix} disabled={defaultPrefixBusy}>
-                  {defaultPrefixBusy ? 'Recriando...' : 'Recriar prefixo default'}
-                </button>
-                {defaultPrefixPath && (
-                  <span style={{ color: '#9ca3af', fontSize: 12 }}>({defaultPrefixPath})</span>
-                )}
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VPN Section */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Globe size={18} />
+          <h3>VPN / LAN Online</h3>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Sala padrão (código)</div>
+              <div className="settings-card-description">
+                Usado para conectar automaticamente ao abrir o jogo (se habilitado por jogo). Deixe vazio se você só cria/entra manualmente.
               </div>
             </div>
-          </>
-        )}
-      </div>
-
-      <div className="settings-section">
-        <h3>VPN (OF)</h3>
-
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Sala padrão (código)</div>
-            <div className="settings-label-description">
-              Usado para conectar automaticamente ao abrir o jogo (se habilitado por jogo). Deixe vazio se você só cria/entra manualmente.
+            <div className="settings-card-control">
+              <input
+                type="text"
+                className="settings-input"
+                placeholder="(opcional) Código da sala"
+                value={settings.lanDefaultNetworkId || ''}
+                onChange={(e) => setSettings((prev) => ({ ...prev, lanDefaultNetworkId: e.target.value }))}
+              />
             </div>
           </div>
-          <div className="settings-control">
-            <input
-              type="text"
-              placeholder="(opcional) Código da sala"
-              value={settings.lanDefaultNetworkId || ''}
-              onChange={(e) => setSettings((prev) => ({ ...prev, lanDefaultNetworkId: e.target.value }))}
-            />
-          </div>
-        </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">VPN Controller URL</div>
-            <div className="settings-label-description">
-              Por padrão: <code>https://vpn.mroz.dev.br</code>. Só altere se você estiver rodando seu próprio controller.
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Link size={16} />
+                VPN Controller URL
+              </div>
+              <div className="settings-card-description">
+                Por padrão: <code>https://vpn.mroz.dev.br</code>. Só altere se você estiver rodando seu próprio controller.
+              </div>
             </div>
-          </div>
-          <div className="settings-control">
-            <input
-              type="text"
-              placeholder="https://vpn.mroz.dev.br"
-              value={settings.lanControllerUrl || ''}
-              onChange={(e) => setSettings((prev) => ({ ...prev, lanControllerUrl: e.target.value }))}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <h3>Sobre</h3>
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">VoidLauncher</div>
-            <div className="settings-label-description">
-              Versão 0.1.0 • Protótipo em desenvolvimento
+            <div className="settings-card-control">
+              <input
+                type="text"
+                className="settings-input"
+                placeholder="https://vpn.mroz.dev.br"
+                value={settings.lanControllerUrl || ''}
+                onChange={(e) => setSettings((prev) => ({ ...prev, lanControllerUrl: e.target.value }))}
+              />
             </div>
           </div>
         </div>
       </div>
 
-      {/* =========================
-          Cloud Saves (Google Drive)
-         ========================= */}
+      {/* Cloud Saves Section */}
       <div className="settings-section">
-        <h3>Cloud Saves (Google Drive)</h3>
+        <div className="settings-section-header">
+          <Cloud size={18} />
+          <h3>Cloud Saves (Google Drive)</h3>
+        </div>
 
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Status & Ações</div>
-            <div className="settings-label-description">
-              Conecte sua conta Google para salvar/restaurar backups.
-              {driveUiNote && (
-                <div style={{ marginTop: 6, color: driveUiNote.type === 'success' ? '#10b981' : '#9ca3af' }}>
-                  {driveUiNote.text}
-                </div>
-              )}
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                {driveConnected ? <Cloud size={16} /> : <CloudOff size={16} />}
+                Status da conexão
+              </div>
+              <div className="settings-card-description">
+                Conecte sua conta Google para salvar/restaurar backups.
+              </div>
+            </div>
+            <div className="settings-card-control" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+              <div className={`settings-status-badge ${driveConnected ? 'connected' : 'disconnected'}`}>
+                {driveConnected ? <Check size={14} /> : <X size={14} />}
+                {driveConnected ? 'Conectado ao Google Drive' : 'Não conectado'}
+              </div>
               {driveStatus && (
-                <div style={{ marginTop: 6, color: '#9ca3af' }}>
-                  {driveStatus}
-                </div>
+                <div className="settings-status-message">{driveStatus}</div>
               )}
-            </div>
-          </div>
-
-          <div className="settings-control" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={openDriveModal}>Configurar credenciais</button>
-
-            <button
-              onClick={async () => {
-                const has = await loadDriveCredentialsOnStart()
-                if (!has) {
-                  setDriveStatusTimed('Cole um OAuth Client JSON (Desktop) antes de conectar.', 4500)
-                  openDriveModal()
-                  return
-                }
-                await driveAuth()
-              }}
-              title={driveHasOAuth === false ? 'Cole um OAuth Client JSON antes de conectar.' : ''}
-            >
-              Conectar Google Drive
-            </button>
-
-            <button onClick={driveList}>Listar backups</button>
-          </div>
-        </div>
-
-        <div className="settings-item">
-          <div className="settings-label">
-            <div className="settings-label-title">Backups no Drive</div>
-            <div className="settings-label-description">
-              Lista dos arquivos dentro da pasta <code>OF-Client-Saves</code> no seu Drive.
-            </div>
-          </div>
-
-          <div className="settings-control" style={{ width: '100%' }}>
-            {!driveFiles && (
-              <div style={{ color: '#9ca3af', fontSize: 13 }}>
-                Nenhuma lista carregada ainda. Clique em <b>“Listar backups”</b>.
-              </div>
-            )}
-
-            {driveFiles && driveFiles.length === 0 && (
-              <div style={{ color: '#9ca3af', fontSize: 13 }}>
-                Nenhum backup encontrado no Drive.
-              </div>
-            )}
-
-            {driveFiles && driveFiles.length > 0 && (
-              <div style={{ border: '1px solid #333', borderRadius: 8, overflow: 'hidden' }}>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 190px 110px',
-                    padding: '10px 12px',
-                    background: '#2a2a2a',
-                    color: '#9ca3af',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    borderBottom: '1px solid #333'
+              <div className="settings-btn-row">
+                <button className="settings-btn secondary" onClick={driveAuth}>
+                  <Cloud size={14} />
+                  Conectar
+                </button>
+                <button
+                  className="settings-btn ghost"
+                  onClick={async () => {
+                    try {
+                      const res = await (window as any).electronAPI.driveDisconnect?.()
+                      if (res?.success) {
+                        setDriveConnected(false)
+                        setDriveStatusTimed('Desconectado')
+                      } else {
+                        setDriveStatusTimed('Erro: ' + (res?.message || 'Falha ao desconectar'))
+                      }
+                    } catch (e: any) {
+                      setDriveStatusTimed('Erro: ' + (e?.message || String(e)))
+                    }
                   }}
+                  disabled={!driveConnected}
                 >
+                  Desconectar
+                </button>
+                <button className="settings-btn ghost" onClick={driveList}>
+                  <RefreshCw size={14} />
+                  Listar backups
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Sincronização automática</div>
+              <div className="settings-card-description">
+                Sincroniza saves automaticamente ao iniciar e fechar jogos (estilo Steam Cloud).
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.cloudSavesEnabled}
+                  onChange={(e) => setSettings({ ...settings, cloudSavesEnabled: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          {driveFiles && driveFiles.length > 0 && (
+            <div className="settings-card-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+              <div className="settings-card-info" style={{ marginBottom: '12px' }}>
+                <div className="settings-card-title">Backups no Drive</div>
+                <div className="settings-card-description">
+                  Lista dos arquivos dentro da pasta <code>OF-Client-Saves</code> no seu Drive.
+                </div>
+              </div>
+              <div className="settings-drive-list">
+                <div className="settings-drive-list-header">
                   <div>Arquivo</div>
                   <div>Modificado</div>
-                  <div style={{ textAlign: 'right' }}>Ações</div>
+                  <div></div>
                 </div>
-
                 {driveFiles.map(f => (
-                  <div
-                    key={f.id}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 190px 110px',
-                      gap: 8,
-                      alignItems: 'center',
-                      padding: '10px 12px',
-                      background: '#1f1f1f',
-                      borderBottom: '1px solid #333'
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ color: '#e5e7eb', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {f.name}
-                      </div>
-                    </div>
-
-                    <div style={{ color: '#9ca3af', fontSize: 12 }}>
-                      {formatMaybeDate(f.modifiedTime)}
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <button onClick={() => driveDownload(f.id, f.name)}>Baixar</button>
+                  <div key={f.id} className="settings-drive-list-item">
+                    <div className="settings-drive-file-name">{f.name}</div>
+                    <div className="settings-drive-file-date">{formatMaybeDate(f.modifiedTime)}</div>
+                    <div>
+                      <button className="settings-btn ghost sm" onClick={() => driveDownload(f.id, f.name)}>
+                        <Download size={12} />
+                        Baixar
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* Modal do Drive - agora com cara de “settings” */}
-        {driveModalOpen && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-            <div style={{ width: 760, maxWidth: '94%', background: '#111827', borderRadius: 10, padding: 18, border: '1px solid #334155', color: '#e5e7eb' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h3 style={{ margin: 0 }}>Configurar Google Drive</h3>
-                <button onClick={() => setDriveModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
-                  Fechar ✕
-                </button>
-              </div>
-
-              <div style={{ marginBottom: 12, color: '#9ca3af', fontSize: 13 }}>
-                Cole o JSON do <b>OAuth Client ID (Desktop)</b> do Google Cloud Console. Depois salve e conecte.
-              </div>
-
-              <div className="settings-item" style={{ marginBottom: 12 }}>
-                <div className="settings-label">
-                  <div className="settings-label-title">Credenciais OAuth (JSON)</div>
-                  <div className="settings-label-description">
-                    Dica: no Console, crie credenciais do tipo <b>OAuth Client ID</b> e selecione <b>Desktop app</b>.
-                  </div>
-                </div>
-                <div className="settings-control" style={{ width: '100%' }}>
-                  <textarea
-                    value={driveCredentials}
-                    onChange={(e) => setDriveCredentials(e.target.value)}
-                    style={{
-                      minHeight: 180,
-                      width: '100%',
-                      padding: 10,
-                      background: '#0b1220',
-                      color: '#e5e7eb',
-                      border: '1px solid #334155',
-                      borderRadius: 8,
-                      outline: 'none',
-                      resize: 'vertical'
-                    }}
-                  />
-                  {driveModalMessage && (
-                    <div style={{ marginTop: 8, color: driveModalMessageType === 'success' ? '#10b981' : driveModalMessageType === 'error' ? '#ef4444' : '#9ca3af' }}>
-                      {driveModalMessage}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button onClick={() => window.electronAPI.openExternal('https://console.cloud.google.com/apis/credentials')}>
-                  Abrir Console
-                </button>
-
-                <button
-                  onClick={async () => {
-                    setDriveModalBusy(true)
-                    try {
-                      const res = await window.electronAPI.driveSaveCredentials(driveCredentials)
-                      if (res.success) {
-                        const has = isLikelyOAuthJson(driveCredentials)
-                        setDriveHasOAuth(has)
-                        setDriveModalMessage('Credenciais salvas com sucesso.')
-                        setDriveModalMessageType('success')
-                      } else {
-                        setDriveModalMessage('Falha ao salvar credenciais: ' + (res.message || ''))
-                        setDriveModalMessageType('error')
-                      }
-                    } catch {
-                      setDriveModalMessage('Erro ao salvar credenciais.')
-                      setDriveModalMessageType('error')
-                    } finally {
-                      setDriveModalBusy(false)
-                    }
-                  }}
-                  disabled={driveModalBusy}
-                >
-                  {driveModalBusy ? 'Salvando...' : 'Salvar credenciais'}
-                </button>
-
-                <button
-                  onClick={async () => {
-                    const res = await window.electronAPI.driveOpenCredentials()
-                    if (!res.success) {
-                      setDriveModalMessage('Não foi possível abrir o arquivo de credenciais: ' + (res.message || ''))
-                      setDriveModalMessageType('error')
-                    }
-                  }}
-                >
-                  Abrir arquivo salvo
-                </button>
-
-                <button
-                  onClick={async () => {
-                    const ok = isLikelyOAuthJson(driveCredentials)
-                    if (!ok) {
-                      setDriveModalMessage('Credenciais OAuth ausentes/ inválidas. Cole um JSON de OAuth Client (Desktop).')
-                      setDriveModalMessageType('error')
-                      setDriveHasOAuth(false)
-                      return
-                    }
-                    setDriveModalBusy(true)
-                    setDriveModalMessage('Iniciando autenticação...')
-                    setDriveModalMessageType('info')
-                    try {
-                      // garante salvar antes de autenticar
-                      const saveRes = await window.electronAPI.driveSaveCredentials(driveCredentials)
-                      if (!saveRes.success) {
-                        setDriveModalMessage('Falha ao salvar credenciais: ' + (saveRes.message || ''))
-                        setDriveModalMessageType('error')
-                        return
-                      }
-                      const res = await window.electronAPI.driveAuth()
-                      if (res.success) {
-                        setDriveModalMessage('Autenticado com sucesso.')
-                        setDriveModalMessageType('success')
-                        setDriveHasOAuth(true)
-                      } else {
-                        setDriveModalMessage('Erro: ' + (res.message || ''))
-                        setDriveModalMessageType('error')
-                      }
-                    } catch {
-                      setDriveModalMessage('Erro durante autenticação.')
-                      setDriveModalMessageType('error')
-                    } finally {
-                      setDriveModalBusy(false)
-                    }
-                    setTimeout(() => setDriveModalMessage(null), 4000)
-                  }}
-                  disabled={driveModalBusy}
-                >
-                  {driveModalBusy ? 'Conectando...' : 'Conectar'}
-                </button>
-              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {driveFiles && driveFiles.length === 0 && (
+            <div className="settings-empty-state">
+              <CloudOff size={32} />
+              <span>Nenhum backup encontrado no Drive</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{ marginTop: '24px' }}>
+      {/* About Section */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Info size={18} />
+          <h3>Sobre</h3>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">VoidLauncher</div>
+              <div className="settings-card-description">
+                Versão 0.2.0 • Protótipo em desenvolvimento
+              </div>
+            </div>
+            <div className="settings-version-badge">v0.2.0</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <div className="settings-footer">
         <button
+          className="settings-btn primary lg"
           onClick={saveSettings}
-          style={{
-            padding: '12px 24px',
-            background: '#3b82f6',
-            border: 'none',
-            borderRadius: '6px',
-            color: '#fff',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer'
-          }}
           disabled={saving}
         >
-          {saving ? 'Salvando...' : 'Salvar Configurações'}
+          {saving ? (
+            <><RefreshCw size={16} className="of-spin" /> Salvando...</>
+          ) : (
+            <><Check size={16} /> Salvar Configurações</>
+          )}
         </button>
       </div>
     </div>

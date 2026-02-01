@@ -45,11 +45,6 @@ try:
 except Exception:
     pass
 
-try:
-    ses.start_dht()
-except Exception:
-    pass
-
 handles = {}  # info_hash -> torrent_handle
 
 

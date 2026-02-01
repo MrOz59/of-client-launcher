@@ -21,8 +21,9 @@ import {
 } from './db'
 import path from 'path'
 import fs from 'fs'
+import os from 'os'
 import { Worker } from 'worker_threads'
-import { session, BrowserWindow } from 'electron'
+import { session, BrowserWindow, app } from 'electron'
 
 export interface DownloadOptions {
   gameUrl: string
@@ -42,6 +43,44 @@ type DownloadRow = {
   install_path?: string | null
   info_hash?: string | null
   download_url?: string | null
+  game_url?: string | null
+  title?: string | null
+  type?: string | null
+  status?: string | null
+}
+
+function resolveDefaultGamesPath(): string {
+  const configured = String(getSetting('games_path') || '').trim()
+  if (configured) return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured)
+
+  const home = os.homedir()
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try {
+      const docs = app.getPath('documents')
+      if (docs) return path.join(docs, 'VoidLauncher')
+    } catch {
+      // ignore
+    }
+  }
+
+  if (home) return path.join(home, 'Games', 'VoidLauncher')
+  return path.join(process.cwd(), 'games')
+}
+
+function resolveDefaultDownloadPath(): string {
+  const configured = String(getSetting('download_path') || '').trim()
+  if (configured) return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured)
+
+  try {
+    const downloads = app.getPath('downloads')
+    if (downloads) return downloads
+  } catch {
+    // ignore
+  }
+
+  const home = os.homedir()
+  if (home) return path.join(home, 'Downloads')
+  return path.join(process.cwd(), 'downloads')
 }
 
 // If the game content is nested inside a single subfolder (common in torrents/zips),
@@ -152,6 +191,59 @@ function removeArchives(dir: string) {
   }
 }
 
+function writeLauncherMarker(installPath: string, data: Record<string, any>) {
+  try {
+    if (!installPath) return
+    const markerPath = path.join(installPath, '.of_game.json')
+    const existing = fs.existsSync(markerPath)
+      ? JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
+      : {}
+    const next = {
+      ...existing,
+      ...data,
+      updatedAt: Date.now()
+    }
+    fs.writeFileSync(markerPath, JSON.stringify(next, null, 2))
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Safely clean up temporary files and optionally remove empty directories.
+ * Never throws - all errors are logged and ignored.
+ */
+function safeCleanupTempFiles(dir: string, filesToRemove: string[] = []) {
+  if (!dir || !fs.existsSync(dir)) return
+
+  // Remove specific files
+  for (const fileName of filesToRemove) {
+    const filePath = path.join(dir, fileName)
+    try {
+      if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath)
+        if (stat.isFile()) {
+          fs.unlinkSync(filePath)
+          console.log('[safeCleanupTempFiles] Removed:', filePath)
+        }
+      }
+    } catch (err) {
+      console.warn('[safeCleanupTempFiles] Failed to remove file:', filePath, err)
+    }
+  }
+
+  // Try to remove the directory if it's empty
+  try {
+    const remaining = fs.readdirSync(dir)
+    if (remaining.length === 0) {
+      fs.rmdirSync(dir)
+      console.log('[safeCleanupTempFiles] Removed empty directory:', dir)
+    }
+  } catch (err) {
+    // Directory not empty or other error - that's fine
+  }
+}
+
 function countFilesRecursive(dir: string, max = 5000): number {
   let count = 0
   const stack = [dir]
@@ -215,9 +307,33 @@ function flattenDominantSubdir(basePath: string) {
   }
 }
 
-export function normalizeGameInstallDir(installPath: string) {
+export interface InstallIntegrityResult {
+  valid: boolean
+  warnings: string[]
+  fileCount: number
+  hasExecutable: boolean
+}
+
+/**
+ * Normalize game install directory structure and validate integrity.
+ * Returns integrity check results for logging/debugging purposes.
+ */
+export function normalizeGameInstallDir(installPath: string): InstallIntegrityResult {
+  const result: InstallIntegrityResult = {
+    valid: true,
+    warnings: [],
+    fileCount: 0,
+    hasExecutable: false
+  }
+
   try {
-    if (!installPath || !fs.existsSync(installPath)) return
+    if (!installPath || !fs.existsSync(installPath)) {
+      result.valid = false
+      result.warnings.push('Install path does not exist')
+      return result
+    }
+
+    console.log('[normalizeGameInstallDir] Processing:', installPath)
 
     // Flatten one or two levels of nesting (common in OF releases).
     flattenSingleSubdir(installPath)
@@ -225,15 +341,34 @@ export function normalizeGameInstallDir(installPath: string) {
     flattenSingleSubdir(installPath)
 
     // Remove common junk folders that sometimes come with releases.
-    removeFolderIfExists(path.join(installPath, 'Fix Repair'))
+    const junkFolders = ['Fix Repair', 'Fix_Repair', '__MACOSX', 'Thumbs.db']
+    for (const junk of junkFolders) {
+      removeFolderIfExists(path.join(installPath, junk))
+    }
 
-    // Basic integrity warnings (best-effort; does not fail the install).
+    // Integrity checks
     try {
-      const fileCount = countFilesRecursive(installPath, 200)
-      if (fileCount > 0 && fileCount < 20) {
-        console.warn('[normalizeGameInstallDir] Low file count after extraction; install may be incomplete:', installPath, 'files:', fileCount)
+      result.fileCount = countFilesRecursive(installPath, 5000)
+
+      // Check for very low file count (possibly incomplete extraction)
+      if (result.fileCount === 0) {
+        result.valid = false
+        result.warnings.push('No files found in install directory - extraction may have failed')
+      } else if (result.fileCount < 10) {
+        result.warnings.push(`Low file count (${result.fileCount}) - install may be incomplete`)
       }
 
+      // Check for executable files (Windows games)
+      const hasExe = findFilesRecursive(installPath, /\.exe$/i).length > 0
+      const hasSo = findFilesRecursive(installPath, /\.so$/i).length > 0
+      const hasApp = findFilesRecursive(installPath, /\.app$/i).length > 0
+      result.hasExecutable = hasExe || hasSo || hasApp
+
+      if (!result.hasExecutable) {
+        result.warnings.push('No executable files found (.exe, .so, .app)')
+      }
+
+      // Check for common game engine files (Unreal Engine)
       const vorbisBase = path.join(installPath, 'Engine', 'Binaries', 'ThirdParty', 'Vorbis')
       if (fs.existsSync(vorbisBase)) {
         const candidates = [
@@ -243,26 +378,52 @@ export function normalizeGameInstallDir(installPath: string) {
           path.join(vorbisBase, 'Win64', 'VS2022'),
           path.join(vorbisBase, 'Win64'),
         ]
-        const found = candidates.some(dir => {
+        const foundVorbis = candidates.some(dir => {
           try {
             if (!fs.existsSync(dir)) return false
             const entries = fs.readdirSync(dir)
-            return entries.some(n => /^libvorbis(file)?_64\.dll$/i.test(n) || /^libvorbis(file)?\.dll$/i.test(n))
+            return entries.some(n => /^libvorbis(file)?(_64)?\.dll$/i.test(n))
           } catch {
             return false
           }
         })
-        if (!found) {
-          console.warn('[normalizeGameInstallDir] Unreal Vorbis DLLs not found under Engine/ThirdParty/Vorbis; game may crash (incomplete files).')
-          console.warn('[normalizeGameInstallDir] Expected something like libvorbis_64.dll/libvorbisfile_64.dll in:', vorbisBase)
+        if (!foundVorbis) {
+          result.warnings.push('Unreal Engine Vorbis DLLs missing - game may crash')
         }
       }
-    } catch {
-      // ignore
+
+      // Check for Unity games missing required files
+      const unityDataFolders = fs.readdirSync(installPath).filter(f =>
+        f.endsWith('_Data') && fs.statSync(path.join(installPath, f)).isDirectory()
+      )
+      if (unityDataFolders.length > 0) {
+        const dataFolder = path.join(installPath, unityDataFolders[0])
+        const hasGlobalGameManagers = fs.existsSync(path.join(dataFolder, 'globalgamemanagers')) ||
+                                       fs.existsSync(path.join(dataFolder, 'mainData'))
+        if (!hasGlobalGameManagers) {
+          result.warnings.push('Unity game data files may be incomplete')
+        }
+      }
+
+      // Log warnings
+      if (result.warnings.length > 0) {
+        console.warn('[normalizeGameInstallDir] Integrity warnings for', installPath)
+        result.warnings.forEach(w => console.warn('  -', w))
+      } else {
+        console.log('[normalizeGameInstallDir] Integrity check passed:', result.fileCount, 'files')
+      }
+
+    } catch (integrityErr) {
+      console.warn('[normalizeGameInstallDir] Integrity check error:', integrityErr)
     }
+
   } catch (err) {
-    console.warn('[normalizeGameInstallDir] Failed', installPath, err)
+    console.error('[normalizeGameInstallDir] Failed to process', installPath, err)
+    result.valid = false
+    result.warnings.push(`Processing error: ${err}`)
   }
+
+  return result
 }
 
 /**
@@ -304,14 +465,11 @@ export async function startGameDownload(
   const gameId = providedGameId || extractGameIdFromUrl(gameUrl)
   console.log('[DownloadManager] Game ID:', gameId)
 
-  // Get base launcher path from settings or use current directory
-  const basePath = getSetting('launcher_path') || process.cwd()
-
-// Downloads go to downloads/ folder, games go to games/ folder
-const downloadsPath = path.join(basePath, 'downloads')
-const gamesPath = path.join(basePath, 'games')
-fs.mkdirSync(downloadsPath, { recursive: true })
-fs.mkdirSync(gamesPath, { recursive: true })
+  // Downloads and games are configurable via settings.
+  const downloadsPath = resolveDefaultDownloadPath()
+  const gamesPath = resolveDefaultGamesPath()
+  fs.mkdirSync(downloadsPath, { recursive: true })
+  fs.mkdirSync(gamesPath, { recursive: true })
 
   // Use game ID for folder name if available, otherwise use sanitized title
   const safeName = gameTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()
@@ -323,6 +481,13 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
 // Install path (final - games folder)
   const installPath = path.join(gamesPath, gameFolderName)
+
+  console.log('[DownloadManager] Paths configured:')
+  console.log('[DownloadManager]   gamesPath:', gamesPath)
+  console.log('[DownloadManager]   downloadsPath:', downloadsPath)
+  console.log('[DownloadManager]   downloadDestPath:', downloadDestPath)
+  console.log('[DownloadManager]   installPath:', installPath)
+  console.log('[DownloadManager]   destPathOverride:', destPathOverride)
 
   const ensureGameRecord = () => {
     addOrUpdateGame(gameUrl, gameTitle)
@@ -370,6 +535,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
       // Create install directory for torrent
       fs.mkdirSync(installPath, { recursive: true })
+      writeLauncherMarker(installPath, {
+        url: gameUrl,
+        title: gameTitle,
+        status: 'downloading',
+        showInLibrary: false
+      })
 
       // If it's a .torrent URL, download the file first
       let torrentPath = url
@@ -434,23 +605,18 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       normalizeGameInstallDir(installPath)
 
       // Remove common junk folders/files (but keep archives for extraction step)
-      removeFolderIfExists(path.join(installPath, 'Fix Repair'))
-      removeFolderIfExists(path.join(downloadDestPath, 'Fix Repair'))
+      // Note: normalizeGameInstallDir already removes 'Fix Repair' from installPath
       removeFileIfExists(path.join(installPath, 'temp.torrent'))
-      removeFileIfExists(path.join(downloadDestPath, 'temp.torrent'))
+
+      // Only clean downloadDestPath if it still exists (may have been removed by moveDirContents)
+      if (fs.existsSync(downloadDestPath)) {
+        removeFolderIfExists(path.join(downloadDestPath, 'Fix Repair'))
+        removeFileIfExists(path.join(downloadDestPath, 'temp.torrent'))
+      }
 
       // Clean up temp .torrent file if we downloaded it
       if (url.startsWith('http')) {
-        try {
-          fs.unlinkSync(path.join(downloadDestPath, 'temp.torrent'))
-          // Try to remove the download folder if empty
-          const files = fs.readdirSync(downloadDestPath)
-          if (files.length === 0) {
-            fs.rmdirSync(downloadDestPath)
-          }
-        } catch (e) {
-          // Ignore cleanup errors
-        }
+        safeCleanupTempFiles(downloadDestPath, ['temp.torrent'])
       }
     } else {
       // HTTP download - save to downloads folder
@@ -479,6 +645,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
       // Create install directory
       fs.mkdirSync(installPath, { recursive: true })
+      writeLauncherMarker(installPath, {
+        url: gameUrl,
+        title: gameTitle,
+        status: 'extracting',
+        showInLibrary: false
+      })
 
       try {
         console.log(`[DownloadManager] Extracting ${downloadFilePath} to ${installPath}`)
@@ -517,8 +689,21 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         const version = (gameVersion && gameVersion !== 'unknown')
           ? gameVersion
           : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
-        console.log('[DownloadManager] Marking game installed with version:', version)
+        console.log('[DownloadManager] ========= MARKING GAME INSTALLED =========')
+        console.log('[DownloadManager] gameUrl (to mark):', gameUrl)
+        console.log('[DownloadManager] installPath:', installPath)
+        console.log('[DownloadManager] version:', version)
+        console.log('[DownloadManager] executablePath:', executablePath)
         markGameInstalled(gameUrl, installPath, version, executablePath || undefined)
+        writeLauncherMarker(installPath, {
+          url: gameUrl,
+          title: gameTitle,
+          status: 'installed',
+          showInLibrary: true,
+          installPath,
+          version,
+          executablePath: executablePath || null
+        })
 
         // Mark download as finished
         try { updateDownloadProgress(Number(downloadId), 100) } catch {}
@@ -532,7 +717,14 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         // Clean up download record from database - game is now installed
         try {
           deleteDownload(Number(downloadId))
-          BrowserWindow.getAllWindows().forEach(w => w.webContents.send('download-deleted'))
+          BrowserWindow.getAllWindows().forEach(w => {
+            w.webContents.send('download-deleted')
+            w.webContents.send('download-complete', {
+              magnet: url,
+              infoHash: capturedInfoHash || undefined,
+              destPath: installPath
+            })
+          })
           console.log('[DownloadManager] Cleaned up download record after successful HTTP extraction')
         } catch {}
 
@@ -563,10 +755,45 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       const existingGame = getGame(gameUrl) as { executable_path?: string } | undefined
       const previousExePath = existingGame?.executable_path || null
 
+      // Extraction timeout: 2 hours max (large games can take a while)
+      const EXTRACTION_TIMEOUT_MS = 2 * 60 * 60 * 1000
+
       const updateResult = await new Promise<{ success: boolean; error?: string; executablePath?: string }>((resolve, reject) => {
         const workerPath = path.join(__dirname, 'extractWorker.js')
         const worker = new Worker(workerPath, { workerData: { installPath, gameUrl, previousExePath } })
+
+        let lastProgressTime = Date.now()
+        let isResolved = false
+
+        // Timeout handler - checks for stalled extraction
+        const timeoutCheck = setInterval(() => {
+          const elapsed = Date.now() - lastProgressTime
+          // If no progress for 10 minutes, consider it stalled
+          if (elapsed > 10 * 60 * 1000) {
+            clearInterval(timeoutCheck)
+            if (!isResolved) {
+              isResolved = true
+              console.error('[DownloadManager] Extraction appears stalled, terminating worker')
+              try { worker.terminate() } catch {}
+              reject(new Error('Extraction stalled - no progress for 10 minutes'))
+            }
+          }
+        }, 30000) // Check every 30 seconds
+
+        // Hard timeout
+        const hardTimeout = setTimeout(() => {
+          clearInterval(timeoutCheck)
+          if (!isResolved) {
+            isResolved = true
+            console.error('[DownloadManager] Extraction timeout reached (2 hours)')
+            try { worker.terminate() } catch {}
+            reject(new Error('Extraction timeout - exceeded 2 hours'))
+          }
+        }, EXTRACTION_TIMEOUT_MS)
+
         worker.on('message', (msg: any) => {
+          lastProgressTime = Date.now() // Reset progress timer on any message
+
           if (msg?.type === 'progress') {
             const percent = Number(msg.percent) || 0
             updateDownloadProgress(Number(downloadId), percent)
@@ -574,14 +801,36 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
             const etaSeconds = msg.etaSeconds != null ? Number(msg.etaSeconds) : undefined
             onProgress?.(percent, { stage: 'extract', extractProgress: percent, extractEtaSeconds: etaSeconds })
           } else if (msg?.type === 'done') {
-            resolve(msg.result || { success: true })
+            clearInterval(timeoutCheck)
+            clearTimeout(hardTimeout)
+            if (!isResolved) {
+              isResolved = true
+              resolve(msg.result || { success: true })
+            }
           } else if (msg?.type === 'error') {
-            reject(new Error(msg.error || 'Extraction error'))
+            clearInterval(timeoutCheck)
+            clearTimeout(hardTimeout)
+            if (!isResolved) {
+              isResolved = true
+              reject(new Error(msg.error || 'Extraction error'))
+            }
           }
         })
-        worker.on('error', reject)
+
+        worker.on('error', (err) => {
+          clearInterval(timeoutCheck)
+          clearTimeout(hardTimeout)
+          if (!isResolved) {
+            isResolved = true
+            reject(err)
+          }
+        })
+
         worker.on('exit', (code) => {
-          if (code !== 0) {
+          clearInterval(timeoutCheck)
+          clearTimeout(hardTimeout)
+          if (!isResolved && code !== 0) {
+            isResolved = true
             reject(new Error(`Extraction worker exited with code ${code}`))
           }
         })
@@ -606,8 +855,21 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       const version = (gameVersion && gameVersion !== 'unknown')
         ? gameVersion
         : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
-      console.log('[DownloadManager] Marking torrent game installed with version:', version)
+      console.log('[DownloadManager] Marking torrent game installed:')
+      console.log('[DownloadManager]   gameUrl:', gameUrl)
+      console.log('[DownloadManager]   installPath:', installPath)
+      console.log('[DownloadManager]   version:', version)
+      console.log('[DownloadManager]   executablePath:', executablePath)
       markGameInstalled(gameUrl, installPath, version, executablePath || undefined)
+      writeLauncherMarker(installPath, {
+        url: gameUrl,
+        title: gameTitle,
+        status: 'installed',
+        showInLibrary: true,
+        installPath,
+        version,
+        executablePath: executablePath || null
+      })
 
       // Mark download as finished
       try { updateDownloadProgress(Number(downloadId), 100) } catch {}
@@ -626,7 +888,14 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       // Clean up download record from database - game is now installed
       try {
         deleteDownload(Number(downloadId))
-        BrowserWindow.getAllWindows().forEach(w => w.webContents.send('download-deleted'))
+        BrowserWindow.getAllWindows().forEach(w => {
+          w.webContents.send('download-deleted')
+          w.webContents.send('download-complete', {
+            magnet: url,
+            infoHash: capturedInfoHash || undefined,
+            destPath: installPath
+          })
+        })
         console.log('[DownloadManager] Cleaned up download record after successful torrent extraction')
       } catch {}
     } else {
@@ -647,11 +916,38 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
     }
 
     const message = error?.message || String(error || 'Unknown error')
-    console.error('Download failed:', message)
-    updateDownloadStatus(Number(downloadId), 'error', message)
+    const errorCode = error?.code || 'UNKNOWN'
+
+    // Enhanced error logging
+    console.error('[DownloadManager] Download failed')
+    console.error('  URL:', url)
+    console.error('  Type:', downloadType)
+    console.error('  Error:', message)
+    console.error('  Code:', errorCode)
+    if (error?.stack) {
+      console.error('  Stack:', error.stack.split('\n').slice(0, 5).join('\n'))
+    }
+
+    // Categorize errors for better user feedback
+    let userFriendlyError = message
+    if (message.includes('ENOSPC') || message.includes('no space')) {
+      userFriendlyError = 'Espaço em disco insuficiente. Libere espaço e tente novamente.'
+    } else if (message.includes('EACCES') || message.includes('permission')) {
+      userFriendlyError = 'Permissão negada. Verifique as permissões da pasta de instalação.'
+    } else if (message.includes('ENOENT')) {
+      userFriendlyError = 'Arquivo ou pasta não encontrado. O download pode estar corrompido.'
+    } else if (message.includes('timeout') || message.includes('stalled')) {
+      userFriendlyError = 'Download travado ou timeout. Verifique sua conexão e tente novamente.'
+    } else if (message.includes('LIBTORRENT_UNAVAILABLE')) {
+      userFriendlyError = 'Cliente torrent não disponível. Verifique se as dependências estão instaladas.'
+    } else if (message.includes('network') || message.includes('ECONNREFUSED') || message.includes('ETIMEDOUT')) {
+      userFriendlyError = 'Erro de conexão. Verifique sua internet e tente novamente.'
+    }
+
+    updateDownloadStatus(Number(downloadId), 'error', userFriendlyError)
     return {
       success: false,
-      error: message
+      error: userFriendlyError
     }
   }
 }
@@ -752,9 +1048,43 @@ function findExecutable(gameDir: string): string | null {
 }
 
 export function parseVersionFromName(name: string): string | null {
-  const clean = name.toLowerCase().replace(/[_-]/g, ' ')
-  const match = clean.match(/v?\s?(\d+\.\d+(?:\.\d+)?)/)
-  return match ? match[1] : null
+  if (!name) return null
+  const raw = String(name)
+
+  // Try multiple version patterns in order of specificity
+  const patterns = [
+    // Build format: Build 04122025, Build.04122025, Build_18012025
+    /\b(Build[.\s_]*\d{6,10})\b/i,
+    // Full semantic versioning with optional v prefix: v1.2.3.4, 1.2.3.4567
+    /\bv?(\d+\.\d+\.\d+(?:\.\d+)?)\b/i,
+    // Two-part version with v prefix: v1.2
+    /\bv(\d+\.\d+)\b/i,
+    // Standalone version number after common prefixes
+    /(?:version|ver|v)[.\s_-]*(\d+(?:\.\d+)+)/i,
+    // Date-based versions: 2024.12.04, 2024-12-04
+    /\b(20\d{2}[.\-_]\d{2}[.\-_]\d{2})\b/,
+    // Date-based versions reversed: 04.12.2024
+    /\b(\d{2}[.\-_]\d{2}[.\-_]20\d{2})\b/,
+    // Simple numeric version embedded in filename
+    /[_\-.\s](\d+\.\d+(?:\.\d+)*)[_\-.\s]/,
+    // Version at end of string before extension
+    /[_\-.\s]v?(\d+(?:\.\d+)+)(?:\.[a-z]{2,4})?$/i,
+    // Fallback: any version-like pattern
+    /\b(\d+\.\d+(?:\.\d+)?)\b/
+  ]
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern)
+    if (match && match[1]) {
+      const version = match[1].trim()
+      // Validate it looks like a real version (not just a random number)
+      if (version.length >= 3) {
+        return version
+      }
+    }
+  }
+
+  return null
 }
 
 /**
@@ -779,8 +1109,51 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
     const existing = findDownloadRecord(torrentId)
     if (existing) updateDownloadStatus(Number(existing.id), 'downloading')
     console.log('[DownloadManager] Resumed torrent:', torrentId)
+    return true
   }
-  return resumed
+
+  const existing = findDownloadRecord(torrentId)
+  if (!existing) return false
+
+  const status = String(existing?.status || '').toLowerCase()
+  if (status === 'extracting') return false
+
+  const type = String(existing?.type || '').toLowerCase()
+  if (type !== 'torrent') return false
+
+  const url = String(existing?.download_url || '').trim()
+  if (!url) return false
+
+  const gameUrl = String(existing?.game_url || existing?.download_url || '').trim()
+  const title = String(existing?.title || 'Download')
+
+  let destPathOverride: string | undefined = String(existing?.dest_path || '').trim() || undefined
+
+  console.log('[DownloadManager] Rehydrating paused torrent download:')
+  console.log('[DownloadManager]   torrent url:', url)
+  console.log('[DownloadManager]   gameUrl:', gameUrl)
+  console.log('[DownloadManager]   title:', title)
+  console.log('[DownloadManager]   destPathOverride:', destPathOverride)
+  console.log('[DownloadManager]   existing record:', JSON.stringify(existing, null, 2))
+
+  // Fire-and-forget: start download in background so IPC returns immediately
+  startGameDownload({
+    gameUrl,
+    torrentMagnet: url,
+    gameTitle: title,
+    gameVersion: 'unknown',
+    existingDownloadId: Number(existing.id),
+    destPathOverride,
+    autoExtract: false
+  }).then((result) => {
+    if (!result.success) {
+      console.warn('[DownloadManager] Rehydrated download failed:', result.error)
+    }
+  }).catch((err) => {
+    console.warn('[DownloadManager] Failed to rehydrate paused torrent', err)
+  })
+
+  return true
 }
 
 /**
@@ -849,34 +1222,73 @@ function safelyRemoveDownloadData(destPath?: string | null) {
   }
 }
 
-function moveDirContents(src: string, dest: string) {
-  if (!fs.existsSync(src)) return
+/**
+ * Move directory contents from src to dest with proper error handling.
+ * Throws an error if critical files fail to move.
+ */
+function moveDirContents(src: string, dest: string): void {
+  if (!fs.existsSync(src)) {
+    console.log('[moveDirContents] Source does not exist, skipping:', src)
+    return
+  }
+
   fs.mkdirSync(dest, { recursive: true })
   const entries = fs.readdirSync(src, { withFileTypes: true })
+  const errors: Array<{ path: string; error: string }> = []
+
   for (const entry of entries) {
     const srcPath = path.join(src, entry.name)
     const destPath = path.join(dest, entry.name)
+
     try {
       if (entry.isDirectory()) {
         // If destination exists, merge; else move
         if (fs.existsSync(destPath)) {
           moveDirContents(srcPath, destPath)
-          fs.rmSync(srcPath, { recursive: true, force: true })
+          try { fs.rmSync(srcPath, { recursive: true, force: true }) } catch {}
         } else {
-          fs.renameSync(srcPath, destPath)
+          try {
+            fs.renameSync(srcPath, destPath)
+          } catch (renameErr) {
+            // Fallback to copy+delete for cross-device moves
+            fs.cpSync(srcPath, destPath, { recursive: true, force: true })
+            fs.rmSync(srcPath, { recursive: true, force: true })
+          }
         }
       } else {
         fs.mkdirSync(path.dirname(destPath), { recursive: true })
-        fs.renameSync(srcPath, destPath)
+
+        // Remove destination if it exists (file or directory)
+        if (fs.existsSync(destPath)) {
+          const destStat = fs.statSync(destPath)
+          if (destStat.isDirectory()) {
+            fs.rmSync(destPath, { recursive: true, force: true })
+          } else {
+            fs.unlinkSync(destPath)
+          }
+        }
+
+        try {
+          fs.renameSync(srcPath, destPath)
+        } catch (renameErr) {
+          // Fallback to copy+delete for cross-device moves
+          fs.copyFileSync(srcPath, destPath)
+          fs.unlinkSync(srcPath)
+        }
       }
-    } catch (err) {
-      // Fallback to copy if rename fails (e.g., across devices)
-      try {
-        fs.cpSync(srcPath, destPath, { recursive: true, force: true })
-        fs.rmSync(srcPath, { recursive: true, force: true })
-      } catch (copyErr) {
-        console.warn('[moveDirContents] Failed to move', srcPath, '->', destPath, copyErr)
-      }
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err)
+      console.error('[moveDirContents] Failed to move', srcPath, '->', destPath, errorMsg)
+      errors.push({ path: srcPath, error: errorMsg })
+    }
+  }
+
+  // Log summary of errors but don't throw - partial installs are better than no installs
+  if (errors.length > 0) {
+    console.warn(`[moveDirContents] ${errors.length} file(s) failed to move:`)
+    errors.slice(0, 10).forEach(e => console.warn(`  - ${e.path}: ${e.error}`))
+    if (errors.length > 10) {
+      console.warn(`  ... and ${errors.length - 10} more`)
     }
   }
 }

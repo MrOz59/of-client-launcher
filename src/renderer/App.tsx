@@ -16,10 +16,18 @@ export default function App() {
   const [storeTargetUrl, setStoreTargetUrl] = useState<string | null>(null)
   const [loginOverlayOpen, setLoginOverlayOpen] = useState(false)
   const [storeWebviewResetKey, setStoreWebviewResetKey] = useState(0)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   useEffect(() => {
     // Check if user has cookies (is logged in)
     checkLoginStatus()
+
+    try {
+      const raw = localStorage.getItem('of_sidebar_collapsed')
+      if (raw != null) setSidebarCollapsed(raw === '1')
+    } catch {
+      // ignore
+    }
 
     // Listen for cookie updates
     const off = window.electronAPI.onCookiesSaved((cookies) => {
@@ -68,6 +76,18 @@ export default function App() {
       try { sessionStorage.removeItem('of_store_url') } catch {}
       setStoreWebviewResetKey((k) => k + 1)
     }
+  }
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('of_sidebar_collapsed', next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      return next
+    })
   }
 
   const getTabTitle = (tab: Tab) => {
@@ -125,6 +145,8 @@ export default function App() {
         onLogoutClick={handleLogoutClick}
         hasDownloadActivity={hasDownloadActivity}
         onProfileNavigate={(url) => { setStoreTargetUrl(url); setActiveTab('store') }}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
       />
 
       <div className="main-content">

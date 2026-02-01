@@ -111,44 +111,127 @@ export function extractVersionFromHtml(html: string): string | null {
     'Versão do jogo',   // Portuguese translation
     'Versión del juego', // Spanish translation
     'Version du jeu',   // French translation
+    'Версия',           // Short Russian
+    'Version',          // Short English
   ]
 
-  // Search for elements containing version labels
+  // Get text from body for searching
   const allText = $('body').text()
+
+  // Strategy 1a: Search for version labels with various separators
   for (const label of versionLabels) {
-    // Pattern: "Label: Value" where Value can be Build XXXXX, vX.X.X, X.X.X, etc.
+    // Pattern: "Label: Value" or "Label Value" where Value can be Build XXXXX, vX.X.X, X.X.X, etc.
     const labelPattern = new RegExp(
       label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + // escape special chars
-      '[:\\s]+' + // colon or whitespace
-      '((?:Build\\s*)?[vV]?[0-9][0-9a-zA-Z._-]*)', // version value
+      '[:\\s]*' + // optional colon or whitespace
+      '((?:Build[.\\s_]*)?[vV]?[0-9][0-9a-zA-Z._-]*)', // version value
       'i'
     )
     const match = allText.match(labelPattern)
     if (match && match[1]) {
       const version = match[1].trim()
-      console.log(`[Scraper] Found version via label "${label}":`, version)
-      return version
+      // Validate it looks like a version (has at least one digit and isn't too short)
+      if (version.length >= 3 && /\d/.test(version)) {
+        console.log(`[Scraper] Found version via label "${label}":`, version)
+        return version
+      }
     }
   }
 
-  // Strategy 2: Look for common version patterns in the page
+  // Strategy 1b: Look for version info in specific HTML elements (more targeted)
+  const versionSelectors = [
+    '.game-info .version',
+    '.game-version',
+    '[class*="version"]',
+    '.full-story-content b',
+    '.full-story-content strong',
+    '#dle-content b',
+    '#dle-content strong'
+  ]
+
+  for (const selector of versionSelectors) {
+    let foundVersion: string | null = null
+    $(selector).each((_, el) => {
+      const text = $(el).text().trim()
+      // Check if this element contains version info
+      for (const label of versionLabels) {
+        if (text.toLowerCase().includes(label.toLowerCase())) {
+          const pattern = new RegExp(
+            label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+            '[:\\s]*([^\\s,;]+)',
+            'i'
+          )
+          const m = text.match(pattern)
+          if (m && m[1] && m[1].length >= 3 && /\d/.test(m[1])) {
+            console.log(`[Scraper] Found version in element "${selector}":`, m[1])
+            foundVersion = m[1]
+            return false // break out of .each()
+          }
+        }
+      }
+    })
+    if (foundVersion) return foundVersion
+  }
+
+  // Strategy 2: Look for common version patterns in the page text
   const patterns = [
-    // Build format: Build 04122025, Build.04122025
-    /\b(Build[.\s]*\d{6,10})\b/i,
-    // Semantic versioning: v1.2.3, 1.2.3.4
-    /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i,
-    // Date-based: 2024.12.04, 04.12.2024
-    /\b(\d{2,4}[.-]\d{2}[.-]\d{2,4})\b/,
+    // Build format: Build 04122025, Build.04122025, Build_18012025
+    /\b(Build[.\s_]*\d{6,10})\b/i,
+    // Full semantic versioning: v1.2.3.4, 1.2.3.4567
+    /\bv?(\d+\.\d+\.\d+(?:\.\d+)?)\b/,
+    // Two-part with v prefix: v1.23
+    /\b(v\d+\.\d+)\b/i,
+    // Date-based versions: 2024.12.04, 2024-12-04
+    /\b(20\d{2}[.\-]\d{2}[.\-]\d{2})\b/,
+    // Date-based reversed: 04.12.2024
+    /\b(\d{2}[.\-]\d{2}[.\-]20\d{2})\b/,
   ]
 
   for (const p of patterns) {
     const m = allText.match(p)
     if (m && m[1]) {
-      console.log('[Scraper] Found version via pattern:', m[1])
+      const version = m[1].trim()
+      // Extra validation to avoid false positives
+      if (version.length >= 3) {
+        console.log('[Scraper] Found version via pattern:', version)
+        return version
+      }
+    }
+  }
+
+  // Strategy 3: Look for version in the torrent/download link text or filename
+  const downloadLinks = $('a[href*=".torrent"], a[href*="download"], a[href*="magnet"]')
+  let linkVersion: string | null = null
+  downloadLinks.each((_, el) => {
+    const href = $(el).attr('href') || ''
+    const linkText = $(el).text().trim()
+
+    // Try to extract version from link text or href
+    for (const p of patterns) {
+      const m = (linkText + ' ' + href).match(p)
+      if (m && m[1] && m[1].length >= 3) {
+        console.log('[Scraper] Found version in download link:', m[1])
+        linkVersion = m[1]
+        return false // break out of .each()
+      }
+    }
+  })
+  if (linkVersion) return linkVersion
+
+  // Strategy 4: Check meta tags
+  const metaDescription = $('meta[name="description"]').attr('content') || ''
+  const ogDescription = $('meta[property="og:description"]').attr('content') || ''
+  const metaContent = metaDescription + ' ' + ogDescription
+
+  for (const p of patterns) {
+    const m = metaContent.match(p)
+    if (m && m[1] && m[1].length >= 3) {
+      console.log('[Scraper] Found version in meta tags:', m[1])
       return m[1]
     }
   }
 
+  console.log('[Scraper] No version found in page')
   return null
 }
 

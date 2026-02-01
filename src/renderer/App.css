@@ -48,6 +48,7 @@ body {
   inset: 0;
   z-index: 9999;
   display: block;
+  font-family: "Space Grotesk", "Manrope", "Satoshi", "IBM Plex Sans", sans-serif;
 }
 
 .login-overlay__scrim {
@@ -59,7 +60,10 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
-  background: linear-gradient(180deg, rgba(20, 20, 20, 0.98), rgba(15, 15, 15, 0.98));
+  background:
+    radial-gradient(900px 520px at 12% -10%, rgba(59, 130, 246, 0.18), transparent 55%),
+    radial-gradient(900px 520px at 90% 0%, rgba(16, 185, 129, 0.16), transparent 55%),
+    linear-gradient(180deg, rgba(14, 14, 16, 0.98), rgba(10, 10, 12, 0.98));
   border: none;
   border-radius: 0;
   overflow: hidden;
@@ -67,47 +71,334 @@ body {
   flex-direction: column;
 }
 
+.login-overlay__panel::before {
+  content: "";
+  position: absolute;
+  inset: -30% -10% auto -10%;
+  height: 60%;
+  background:
+    radial-gradient(360px 360px at 20% 30%, rgba(255, 255, 255, 0.08), transparent 60%),
+    radial-gradient(420px 420px at 80% 20%, rgba(255, 255, 255, 0.06), transparent 60%);
+  pointer-events: none;
+}
+
+.login-overlay__panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(transparent 95%, rgba(255, 255, 255, 0.03) 96%),
+    linear-gradient(90deg, transparent 95%, rgba(255, 255, 255, 0.03) 96%);
+  background-size: 32px 32px;
+  opacity: 0.35;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+}
+
 .login-overlay__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 10, 12, 0.72);
+  backdrop-filter: blur(12px);
+  position: relative;
+  z-index: 1;
 }
 
 .login-overlay__title {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text);
+}
+
+.login-overlay__methods {
+  display: none;
+}
+
+.login-overlay__method {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.login-overlay__method:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.login-overlay__method[data-provider="google"] {
+  background: linear-gradient(135deg, rgba(234, 67, 53, 0.22), rgba(66, 133, 244, 0.18));
+  border-color: rgba(234, 67, 53, 0.35);
+}
+
+.login-overlay__method[data-provider="discord"] {
+  background: linear-gradient(135deg, rgba(88, 101, 242, 0.28), rgba(114, 137, 218, 0.18));
+  border-color: rgba(88, 101, 242, 0.45);
+}
+
+.login-overlay__method[data-provider="google"]:hover {
+  box-shadow: 0 12px 26px rgba(234, 67, 53, 0.2);
+}
+
+.login-overlay__method[data-provider="discord"]:hover {
+  box-shadow: 0 12px 26px rgba(88, 101, 242, 0.26);
 }
 
 .login-overlay__close {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease;
 }
 
 .login-overlay__close:hover {
   background: rgba(255, 255, 255, 0.10);
+  transform: translateY(-1px);
 }
 
 .login-overlay__body {
   flex: 1;
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 26px 22px 30px;
+  overflow: auto;
+  z-index: 1;
+}
+
+.login-overlay__webview {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 800px;
+  height: 600px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.login-overlay__form {
+  width: min(860px, 92vw);
+  margin: 0 auto;
+  padding: 18px 20px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background:
+    linear-gradient(135deg, rgba(24, 24, 30, 0.95), rgba(12, 12, 16, 0.98));
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: grid;
+  gap: 10px;
+  animation: loginRise 420ms ease;
+}
+
+.login-overlay__form-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.login-overlay__form-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.login-overlay__input {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 12px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.login-overlay__input::placeholder {
+  color: var(--muted);
+}
+
+.login-overlay__input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.login-overlay__divider {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-overlay__divider::before,
+.login-overlay__divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.login-overlay__social {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.login-overlay__note {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.login-overlay__error {
+  font-size: 11px;
+  color: #f87171;
 }
 
 .login-overlay__footer {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
+  padding: 12px 20px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 10, 12, 0.6);
+  backdrop-filter: blur(10px);
+  z-index: 1;
 }
 
 .login-overlay__hint {
   font-size: 11px;
   color: var(--muted);
+}
+
+@keyframes loginRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 860px) {
+  .login-overlay__form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .login-overlay__social {
+    grid-template-columns: 1fr;
+  }
+}
+
+.login-overlay__webview--visible {
+  position: relative;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  opacity: 1;
+  pointer-events: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.login-overlay__webview-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.login-overlay__back-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.login-overlay__back-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.login-overlay__webview-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.login-overlay__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px;
+  margin-top: 4px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 12px;
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-overlay__spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: loginSpin 0.7s linear infinite;
+}
+
+.login-overlay__loading .login-overlay__spinner {
+  width: 18px;
+  height: 18px;
+  border-color: rgba(147, 197, 253, 0.3);
+  border-top-color: #93c5fd;
+}
+
+@keyframes loginSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.login-overlay__input:disabled,
+.login-overlay__method:disabled,
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Scrollbars (Steam-like subtle) */
@@ -136,11 +427,20 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
+  transition: width 0.2s ease;
+}
+
+.sidebar.collapsed {
+  width: 64px;
 }
 
 .sidebar-header {
   padding: 20px 16px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .sidebar-header h1 {
@@ -148,6 +448,27 @@ body {
   font-weight: 600;
   color: var(--text);
   letter-spacing: 0.2px;
+}
+
+.sidebar-collapse {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-collapse:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sidebar.collapsed .sidebar-header h1 {
+  display: none;
 }
 
 .sidebar-nav {
@@ -167,6 +488,15 @@ body {
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
   user-select: none;
   position: relative;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 12px 10px;
+}
+
+.sidebar.collapsed .nav-item span {
+  display: none;
 }
 
 .nav-item:hover {
@@ -245,6 +575,10 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.sidebar.collapsed .sidebar-footer {
+  padding: 12px 10px;
+}
+
 .user-info {
   display: flex;
   align-items: center;
@@ -253,6 +587,15 @@ body {
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.2s;
+}
+
+.sidebar.collapsed .user-info {
+  justify-content: center;
+  padding: 8px;
+}
+
+.sidebar.collapsed .user-status {
+  display: none;
 }
 
 .user-info:hover {
@@ -293,6 +636,10 @@ body {
   color: var(--text);
   font-weight: 600;
   cursor: pointer;
+}
+
+.sidebar.collapsed .user-logout {
+  display: none;
 }
 
 .user-logout:hover {
@@ -354,11 +701,20 @@ body {
 .game-card-heroic {
   position: relative;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   background: rgba(26, 26, 26, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   cursor: pointer;
+}
+
+.game-card-heroic > div {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.game-card-heroic.menu-open {
+  z-index: 100;
 }
 
 .game-card-heroic:hover {
@@ -517,7 +873,30 @@ body {
   background: rgba(15, 15, 15, 0.98);
   border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.55);
-  z-index: 50;
+  z-index: 1000;
+}
+
+/* Portal-based floating menu */
+.action-menu-panel-portal {
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(15, 15, 15, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  animation: menu-fade-in 0.15s ease-out;
+}
+
+@keyframes menu-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .action-menu-item {
@@ -1170,71 +1549,552 @@ body {
   border-radius: 10px;
 }
 
-/* Settings */
-.settings-section {
+/* Settings Page - Modern Design */
+.settings-page {
+  padding: 0 8px;
+  max-width: 100%;
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.settings-section h3 {
-  font-size: 16px;
+.settings-header-icon {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(168, 85, 247, 0.15));
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a78bfa;
+}
+
+.settings-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #f3f4f6;
+  margin: 0 0 4px;
+}
+
+.settings-header p {
+  font-size: 14px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+.settings-section {
+  margin-bottom: 28px;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #a78bfa;
+}
+
+.settings-section-header h3 {
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #333;
+  color: #e5e7eb;
+  margin: 0;
 }
 
-.settings-item {
+.settings-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.settings-card-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid #2a2a2a;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.settings-item:last-child {
+.settings-card-item.vertical {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.settings-card-item.vertical .settings-card-info {
+  width: 100%;
+}
+
+.settings-card-item:last-child {
   border-bottom: none;
 }
 
-.settings-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.settings-card-info {
+  flex: 1;
+  min-width: 0;
 }
 
-.settings-label-title {
+.settings-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin-bottom: 4px;
+}
+
+.settings-card-title svg {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.settings-card-description {
+  font-size: 13px;
+  color: #9ca3af;
+  line-height: 1.5;
+}
+
+.settings-card-description code {
+  background: rgba(139, 92, 246, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #a78bfa;
+}
+
+.settings-card-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Settings Inputs */
+.settings-input {
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: #e5e7eb;
+  font-size: 14px;
+  min-width: 240px;
+  transition: all 0.2s ease;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.settings-input::placeholder {
+  color: #6b7280;
+}
+
+.settings-input-sm {
+  min-width: 80px;
+  width: 80px;
+  text-align: center;
+}
+
+.settings-input-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.settings-input-group .settings-input {
+  flex: 1;
+}
+
+/* Settings Select */
+.settings-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.settings-select {
+  width: 100%;
+  padding: 12px 40px 12px 14px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #e5e7eb;
+  font-size: 14px;
+  cursor: pointer;
+  appearance: none;
+  transition: all 0.2s ease;
+}
+
+.settings-select:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.settings-select option {
+  background: #1a1a1a;
+  color: #e5e7eb;
+  padding: 12px;
+}
+
+.settings-select option:hover,
+.settings-select option:checked {
+  background: rgba(139, 92, 246, 0.3);
+}
+
+.settings-select-icon {
+  position: absolute;
+  right: 14px;
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Settings Buttons */
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.settings-btn.primary {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: #fff;
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.settings-btn.primary:hover {
+  background: linear-gradient(135deg, #9b6cf6, #8b4aed);
+  transform: translateY(-1px);
+}
+
+.settings-btn.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.settings-btn.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e5e7eb;
+}
+
+.settings-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.settings-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #9ca3af;
+}
+
+.settings-btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e5e7eb;
+}
+
+.settings-btn.ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-btn.sm {
+  padding: 6px 10px;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.settings-btn.lg {
+  padding: 14px 28px;
+  font-size: 15px;
+}
+
+.settings-btn-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Proton Section Special Layout */
+.settings-proton-control {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.settings-proton-control .settings-select-wrapper {
+  max-width: 100%;
+}
+
+.settings-proton-control .settings-select {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.settings-btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.settings-btn-icon:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Settings Toggle */
+.settings-toggle {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+}
+
+.settings-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.settings-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  border-radius: 26px;
+}
+
+.settings-toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #9ca3af;
+  transition: all 0.3s ease;
+  border-radius: 50%;
+}
+
+.settings-toggle input:checked + .settings-toggle-slider {
+  background: rgba(139, 92, 246, 0.3);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.settings-toggle input:checked + .settings-toggle-slider::before {
+  transform: translateX(22px);
+  background: #a78bfa;
+}
+
+/* Settings Paths List */
+.settings-paths-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Settings Path Item */
+.settings-path-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.settings-path-item code {
+  font-size: 12px;
+  color: #9ca3af;
+  word-break: break-all;
+  flex: 1;
+}
+
+.settings-path-hint {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-left: 8px;
+}
+
+/* Settings Status Badge */
+.settings-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 13px;
   font-weight: 500;
 }
 
-.settings-label-description {
+.settings-status-badge.connected {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+.settings-status-badge.disconnected {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
+.settings-status-message {
+  font-size: 13px;
+  color: #9ca3af;
+  padding: 8px 0;
+}
+
+/* Settings Info Note */
+.settings-info-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 8px;
   font-size: 12px;
-  color: #999;
+  color: #a78bfa;
+  line-height: 1.5;
 }
 
-.settings-control input[type="text"],
-.settings-control input[type="number"] {
-  padding: 8px 12px;
-  background: #2a2a2a;
-  border: 1px solid #333;
-  border-radius: 6px;
-  color: #fff;
+.settings-info-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Settings Drive List */
+.settings-drive-list {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.settings-drive-list-header {
+  display: grid;
+  grid-template-columns: 1fr 180px 100px;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-drive-list-item {
+  display: grid;
+  grid-template-columns: 1fr 180px 100px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.settings-drive-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-drive-file-date {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Settings Empty State */
+.settings-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: #6b7280;
+}
+
+.settings-empty-state svg {
+  opacity: 0.5;
+}
+
+.settings-empty-state span {
   font-size: 14px;
-  min-width: 200px;
 }
 
-.settings-control button {
-  padding: 8px 16px;
-  background: #3b82f6;
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 0.2s;
+/* Settings Version Badge */
+.settings-version-badge {
+  padding: 6px 12px;
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #a78bfa;
 }
 
-.settings-control button:hover {
-  background: #2563eb;
+/* Settings Footer */
+.settings-footer {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Empty State */
@@ -1308,35 +2168,107 @@ body {
   margin-top: 4px;
 }
 
+/* Config Modal Header */
+.config-modal-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 8px;
+}
+
+.config-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-modal-icon {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(168, 85, 247, 0.15));
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a78bfa;
+}
+
+.config-modal-title h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #f3f4f6;
+  margin: 0;
+}
+
+.config-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.config-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #9ca3af;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.config-close-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
 .config-tabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   padding: 6px;
-  background: #0f0f0f;
-  border: 1px solid #2a2a2a;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
 }
 
 .config-tab-btn {
   flex: 1;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
-  color: #cbd5e1;
+  color: #9ca3af;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: all 0.2s ease;
+}
+
+.config-tab-btn svg {
+  flex-shrink: 0;
 }
 
 .config-tab-btn:hover {
-  background: #111827;
+  background: rgba(255, 255, 255, 0.05);
+  color: #d1d5db;
 }
 
 .config-tab-btn.active {
-  background: #1f2937;
-  border-color: #334155;
-  color: #fff;
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.3);
+  color: #a78bfa;
+}
+
+.config-tab-btn.active svg {
+  color: #a78bfa;
 }
 
 .config-save-pill {
@@ -1515,4 +2447,1804 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #444;
+}
+
+/* Cloud Saves animations */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* =============================================
+   VPN/LAN Tab Styles
+   ============================================= */
+
+.vpn-section {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.vpn-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.vpn-section-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.vpn-section-header svg {
+  width: 18px;
+  height: 18px;
+  color: #8b5cf6;
+}
+
+.vpn-section.collapsed .vpn-section-content {
+  display: none;
+}
+
+.vpn-section-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.vpn-section-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.vpn-section-toggle svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s;
+}
+
+.vpn-section.collapsed .vpn-section-toggle svg {
+  transform: rotate(-90deg);
+}
+
+/* VPN Status Cards */
+.vpn-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.vpn-status-card {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+
+.vpn-status-card .status-label {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.vpn-status-card .status-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  word-break: break-all;
+}
+
+.vpn-status-card .status-value.connected {
+  color: #4ade80;
+}
+
+.vpn-status-card .status-value.disconnected {
+  color: #f87171;
+}
+
+.vpn-status-card .status-value.pending {
+  color: #fbbf24;
+}
+
+/* VPN Form Inputs */
+.vpn-form-group {
+  margin-bottom: 14px;
+}
+
+.vpn-form-group:last-child {
+  margin-bottom: 0;
+}
+
+.vpn-form-group label {
+  display: block;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 6px;
+}
+
+.vpn-form-group input[type="text"],
+.vpn-form-group input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.vpn-form-group input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+}
+
+.vpn-form-group input::placeholder {
+  color: #4b5563;
+}
+
+.vpn-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.vpn-form-row .vpn-form-group {
+  flex: 1;
+}
+
+/* VPN Checkbox */
+.vpn-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.vpn-checkbox:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.vpn-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+}
+
+.vpn-checkbox span {
+  font-size: 13px;
+  color: #d1d5db;
+}
+
+/* VPN Buttons */
+.vpn-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.vpn-btn-primary {
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  color: #fff;
+}
+
+.vpn-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  transform: translateY(-1px);
+}
+
+.vpn-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d1d5db;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vpn-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.vpn-btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.vpn-btn-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.vpn-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vpn-btn-group {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* VPN Connected Room Info */
+.vpn-room-info {
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.vpn-room-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.vpn-room-info-header h5 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #a78bfa;
+}
+
+.vpn-room-details {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.vpn-room-details span {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+/* VPN Peer List */
+.vpn-peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vpn-peer-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.vpn-peer-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vpn-peer-status.online {
+  background: #4ade80;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+}
+
+.vpn-peer-status.offline {
+  background: #6b7280;
+}
+
+.vpn-peer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vpn-peer-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-peer-ip {
+  font-size: 11px;
+  color: #6b7280;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.vpn-peer-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.vpn-peer-badge.host {
+  background: rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+}
+
+.vpn-peer-badge.you {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+/* VPN Public Rooms List */
+.vpn-public-rooms {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vpn-public-room {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.vpn-public-room:hover {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.vpn-public-room-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vpn-public-room-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.vpn-public-room-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.vpn-public-room-meta svg {
+  width: 12px;
+  height: 12px;
+}
+
+.vpn-public-room-players {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vpn-public-room-game {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-empty-state {
+  text-align: center;
+  padding: 30px 20px;
+  color: #6b7280;
+}
+
+.vpn-empty-state svg {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.vpn-empty-state p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* VPN Loading State */
+.vpn-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.vpn-loading svg {
+  animation: spin 1s linear infinite;
+}
+
+/* VPN Notice/Info Box */
+.vpn-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+
+.vpn-notice svg {
+  width: 18px;
+  height: 18px;
+  color: #60a5fa;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.vpn-notice p {
+  margin: 0;
+  font-size: 12px;
+  color: #93c5fd;
+  line-height: 1.5;
+}
+
+/* =============================================
+   LAN Mode Cards & Actions
+   ============================================= */
+
+.lan-mode-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.lan-mode-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  color: #9ca3af;
+}
+
+.lan-mode-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.lan-mode-card.active {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #fff;
+}
+
+.lan-mode-card.active svg {
+  color: #a78bfa;
+}
+
+.lan-mode-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lan-mode-card-content strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lan-mode-card-content span {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.lan-info-box {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  font-size: 13px;
+  color: #9ca3af;
+  line-height: 1.5;
+}
+
+.lan-info-box p {
+  margin: 0;
+}
+
+/* VPN Status Bar */
+.vpn-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.vpn-status-bar.connected {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+.vpn-status-bar.connected .vpn-status-icon {
+  color: #4ade80;
+}
+
+.vpn-status-bar.ready .vpn-status-icon {
+  color: #fbbf24;
+}
+
+.vpn-status-bar.not-installed .vpn-status-icon {
+  color: #f87171;
+}
+
+.vpn-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vpn-status-text {
+  flex: 1;
+  font-size: 13px;
+  color: #d1d5db;
+}
+
+.vpn-error-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+/* VPN Room Active */
+.vpn-room-active {
+  background: rgba(139, 92, 246, 0.05);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.vpn-room-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.vpn-room-header h4 {
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.vpn-room-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vpn-room-code code {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+  color: #a78bfa;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.vpn-room-ips {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.vpn-ip-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.vpn-ip-label {
+  display: block;
+  font-size: 10px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.vpn-ip-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vpn-ip-value code {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+  color: #d1d5db;
+}
+
+/* VPN Peers Section */
+.vpn-peers-section {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.vpn-peers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.vpn-peers-list {
+  padding: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.vpn-peers-empty {
+  text-align: center;
+  padding: 16px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.vpn-peer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.vpn-peer-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.vpn-peer-item.offline {
+  opacity: 0.5;
+}
+
+.vpn-peer-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 50%;
+  color: #a78bfa;
+}
+
+.vpn-peer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vpn-peer-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpn-peer-ip {
+  display: block;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  color: #6b7280;
+}
+
+.vpn-peer-status {
+  font-size: 10px;
+}
+
+.vpn-peer-status.online {
+  color: #4ade80;
+}
+
+.vpn-peer-status.offline {
+  color: #6b7280;
+}
+
+/* VPN Quick Actions */
+.vpn-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.vpn-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+  color: #9ca3af;
+}
+
+.vpn-action-card:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: #fff;
+}
+
+.vpn-action-card:hover:not(:disabled) svg {
+  color: #a78bfa;
+}
+
+.vpn-action-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vpn-action-card strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vpn-action-card span {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* VPN Create Form */
+.vpn-create-form,
+.vpn-room-browser {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.vpn-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.vpn-form-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.vpn-form-field {
+  margin-bottom: 14px;
+}
+
+.vpn-form-field label {
+  display: block;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 6px;
+}
+
+.vpn-form-field input,
+.vpn-form-field select {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.vpn-form-field input:focus,
+.vpn-form-field select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+}
+
+.vpn-form-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.vpn-public-toggle {
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.vpn-form-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 14px;
+}
+
+/* VPN Room Browser */
+.vpn-rooms-list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.vpn-rooms-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 20px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.vpn-rooms-empty svg {
+  opacity: 0.4;
+}
+
+.vpn-rooms-empty-sub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.vpn-room-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  color: #d1d5db;
+}
+
+.vpn-room-item:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.vpn-room-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vpn-room-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vpn-room-item-info strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.vpn-room-item-host {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.vpn-room-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.vpn-room-item-players {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* VPN Join Section */
+.vpn-join-section {
+  margin-top: 8px;
+}
+
+.vpn-join-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.vpn-join-divider::before,
+.vpn-join-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vpn-join-form {
+  display: flex;
+  gap: 10px;
+}
+
+.vpn-join-form input {
+  flex: 1;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  letter-spacing: 1px;
+}
+
+.vpn-join-form input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.vpn-join-form input::placeholder {
+  font-family: inherit;
+  letter-spacing: normal;
+  color: #4b5563;
+}
+
+/* Spin animation for loading icons */
+.of-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Full width button */
+.full-width {
+  width: 100%;
+}
+
+/* =============================================
+   Config Modal Sections (New Style)
+   ============================================= */
+
+.config-section {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.config-section.danger {
+  background: rgba(239, 68, 68, 0.05);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.config-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.config-section-header.clickable {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.config-section-header.clickable:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.config-section-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  flex: 1;
+}
+
+.config-section-header svg {
+  color: #8b5cf6;
+}
+
+.config-section.danger .config-section-header svg {
+  color: #f87171;
+}
+
+.config-section-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  border-radius: 6px;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.config-section-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.config-section-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config-section-content {
+  padding: 16px;
+}
+
+.config-chevron {
+  color: #6b7280;
+  transition: transform 0.2s;
+}
+
+.config-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Config Form Elements */
+.config-form-group {
+  margin-bottom: 14px;
+}
+
+.config-form-group:last-child {
+  margin-bottom: 0;
+}
+
+.config-form-group label {
+  display: block;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.config-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+.config-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.config-input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+}
+
+.config-input::placeholder {
+  color: #4b5563;
+}
+
+.config-input:read-only {
+  background: rgba(0, 0, 0, 0.2);
+  color: #9ca3af;
+}
+
+.config-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.config-select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.config-input-action {
+  display: flex;
+  gap: 10px;
+}
+
+.config-input-action .config-input {
+  flex: 1;
+}
+
+.config-hint {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+/* Config Buttons */
+.config-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  white-space: nowrap;
+}
+
+.config-btn.primary {
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  color: #fff;
+}
+
+.config-btn.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+}
+
+.config-btn.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d1d5db;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.config-btn.secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.config-btn.ghost {
+  background: transparent;
+  color: #9ca3af;
+}
+
+.config-btn.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.config-btn.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.config-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.config-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config-btn-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Config Path Display */
+.config-path-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.config-path-display span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-path-display svg {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+/* Config Banner Preview */
+.config-banner-preview {
+  width: 100%;
+  max-height: 280px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.config-banner-preview img {
+  max-width: 100%;
+  max-height: 280px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.config-banner-placeholder {
+  width: 100%;
+  height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #4b5563;
+}
+
+.config-banner-placeholder svg {
+  opacity: 0.5;
+}
+
+.config-banner-placeholder span {
+  font-size: 12px;
+}
+
+/* Config Executable Card */
+.config-exe-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.config-exe-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.config-exe-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 10px;
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
+.config-exe-card:has(.config-exe-icon svg[data-lucide="alert-circle"]) .config-exe-icon {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.config-exe-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.config-exe-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.config-exe-path {
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Config Warning */
+.config-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.config-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.config-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #a78bfa;
+}
+
+/* Config Danger Card */
+.config-danger-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.config-danger-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.config-danger-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f87171;
+}
+
+.config-danger-desc {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.config-confirm-delete {
+  text-align: center;
+  padding: 10px 0;
+}
+
+.config-confirm-delete svg {
+  color: #f87171;
+  margin-bottom: 10px;
+}
+
+.config-confirm-delete p {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #d1d5db;
+}
+
+.config-confirm-delete .config-hint {
+  margin-bottom: 14px;
+}
+
+.config-confirm-delete .config-btn-group {
+  justify-content: center;
+}
+
+/* Config Empty State */
+.config-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6b7280;
+}
+
+.config-empty-state svg {
+  margin-bottom: 14px;
+  opacity: 0.4;
+}
+
+.config-empty-state h4 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #9ca3af;
+}
+
+.config-empty-state p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Config File Card */
+.config-file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.config-file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 8px;
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+
+.config-file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.config-file-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.config-file-path {
+  display: block;
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-file-status {
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.config-file-status.exists {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.config-file-status.new {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+/* Config INI Editor */
+.config-ini-empty {
+  text-align: center;
+  padding: 20px;
+  color: #6b7280;
+}
+
+.config-ini-empty p {
+  margin: 0 0 14px 0;
+  font-size: 13px;
+}
+
+.config-ini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.config-ini-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.config-ini-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: rgba(239, 68, 68, 0.1);
+  border: none;
+  border-radius: 4px;
+  color: #f87171;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.config-ini-field:hover .config-ini-remove {
+  opacity: 1;
+}
+
+.config-ini-remove:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.config-ini-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.config-ini-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.config-toggle-btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.config-toggle-btn.active {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: #a78bfa;
+}
+
+.config-toggle-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #9ca3af;
+}
+
+/* Config Tips */
+.config-tips {
+  font-size: 12px;
+  color: #9ca3af;
+  line-height: 1.6;
+}
+
+.config-tips p {
+  margin: 0 0 8px 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.config-tips p:last-child {
+  margin-bottom: 0;
+}
+
+.config-tips strong {
+  color: #a78bfa;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+/* Config Prefix Card */
+.config-prefix-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.config-prefix-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.config-prefix-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.config-prefix-status.ready {
+  color: #4ade80;
+}
+
+.config-prefix-status.none {
+  color: #fbbf24;
+}
+
+.config-prefix-path {
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Config Toggle Grid */
+.config-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.config-toggle-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.config-toggle-item:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.config-toggle-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.config-toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.config-toggle-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.config-toggle-desc {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.3;
 }

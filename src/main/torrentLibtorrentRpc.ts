@@ -1,8 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import readline from 'readline'
 import { app } from 'electron'
+import http from 'http'
 
 // Minimal JSON-RPC-ish line protocol over stdin/stdout.
 // This is intentionally small: start/pause/resume/remove/status.
@@ -25,6 +26,11 @@ class LibtorrentUnavailableError extends Error {
     super(message)
     this.name = 'LibtorrentUnavailableError'
   }
+}
+
+type RpcClient = {
+  start(): Promise<void>
+  call(method: string, params?: any): Promise<any>
 }
 
 type ActiveTorrent = {
@@ -93,10 +99,20 @@ function getStandaloneBinaryPath(): string | null {
     }
   }
 
-  // Dev mode: look in services/torrent-agent/dist/
+  // Dev mode: look in services/torrent-agent/torrent-agent/ (cx_Freeze output)
+  for (const exeName of possibleNames) {
+    const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'torrent-agent', exeName)
+    console.log('[torrent-agent] Checking dev path:', devPath)
+    if (fs.existsSync(devPath)) {
+      console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
+      return devPath
+    }
+  }
+
+  // Legacy dev path (older builds)
   for (const exeName of possibleNames) {
     const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'dist', exeName)
-    console.log('[torrent-agent] Checking dev path:', devPath)
+    console.log('[torrent-agent] Checking legacy dev path:', devPath)
     if (fs.existsSync(devPath)) {
       console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
       return devPath
@@ -290,7 +306,329 @@ class LibtorrentRpcClient {
   }
 }
 
-const rpc = new LibtorrentRpcClient()
+class TransmissionRpcClient {
+  private daemon: ChildProcess | null = null
+  private starting: Promise<void> | null = null
+  private rpcPort: number | null = null
+  private sessionId: string | null = null
+
+  private getRpcUrl(): string {
+    const port = this.rpcPort || 9091
+    return `http://127.0.0.1:${port}/transmission/rpc`
+  }
+
+  private request(body: any): Promise<any> {
+    const payload = JSON.stringify(body)
+    const url = new URL(this.getRpcUrl())
+
+    const doReq = (sessionId: string | null): Promise<{ statusCode?: number; headers: http.IncomingHttpHeaders; text: string }> => {
+      return new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            method: 'POST',
+            hostname: url.hostname,
+            port: Number(url.port),
+            path: url.pathname,
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+              ...(sessionId ? { 'X-Transmission-Session-Id': sessionId } : {})
+            }
+          },
+          (res) => {
+            let data = ''
+            res.setEncoding('utf8')
+            res.on('data', (chunk) => { data += String(chunk || '') })
+            res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, text: data }))
+          }
+        )
+        req.on('error', reject)
+        req.write(payload)
+        req.end()
+      })
+    }
+
+    return doReq(this.sessionId).then(async (res) => {
+      // Transmission uses 409 to indicate missing/invalid session id.
+      if (res.statusCode === 409) {
+        const sid = String(res.headers['x-transmission-session-id'] || '').trim()
+        if (sid) {
+          this.sessionId = sid
+          const retry = await doReq(this.sessionId)
+          if (retry.statusCode && retry.statusCode >= 400) {
+            throw new Error(`transmission rpc error (${retry.statusCode}): ${retry.text || ''}`)
+          }
+          return JSON.parse(retry.text || '{}')
+        }
+      }
+
+      if (res.statusCode && res.statusCode >= 400) {
+        throw new Error(`transmission rpc error (${res.statusCode}): ${res.text || ''}`)
+      }
+
+      return JSON.parse(res.text || '{}')
+    })
+  }
+
+  async start(): Promise<void> {
+    if (this.daemon) return
+    if (this.starting) return this.starting
+
+    this.starting = new Promise<void>((resolve, reject) => {
+      const hasDaemon = spawnSync('transmission-daemon', ['--version'], { encoding: 'utf8' })
+      if (hasDaemon.status !== 0) {
+        reject(new LibtorrentUnavailableError('transmission-daemon not available'))
+        return
+      }
+
+      const userData = app?.getPath ? app.getPath('userData') : process.cwd()
+      const cfgDir = path.join(userData, 'transmission')
+      try { fs.mkdirSync(cfgDir, { recursive: true }) } catch {}
+
+      // Transmission logs an error if settings.json is missing; create a minimal one.
+      try {
+        const settingsPath = path.join(cfgDir, 'settings.json')
+        if (!fs.existsSync(settingsPath)) {
+          fs.writeFileSync(settingsPath, '{}', 'utf8')
+        }
+      } catch {}
+
+      // Try a couple ports to avoid collisions.
+      const basePort = Number(process.env.OF_TRANSMISSION_RPC_PORT || 9091)
+      const portsToTry = [basePort, basePort + 1, basePort + 2]
+
+      let lastErr: Error | null = null
+      let lastStderr = ''
+
+      const tryStart = async (idx: number) => {
+        if (idx >= portsToTry.length) {
+          const msg = lastErr?.message || 'failed to start transmission-daemon'
+          const err = new Error(lastStderr ? `${msg}\n${lastStderr}` : msg)
+          reject(err)
+          return
+        }
+
+        const port = portsToTry[idx]
+        this.rpcPort = port
+        this.sessionId = null
+
+        console.log('[torrent-agent] Starting Transmission daemon (RPC port):', port)
+
+        // Foreground daemon so we keep it attached to the app lifecycle.
+        // Transmission 4.x flags: RPC port is "--port"; auth is "--no-auth".
+        const args = [
+          '--foreground',
+          '--config-dir', cfgDir,
+          '--rpc-bind-address', '127.0.0.1',
+          '--port', String(port),
+          '--no-auth',
+          '--allowed', '127.0.0.1',
+          '--log-level', 'error'
+        ]
+
+        let proc: ChildProcess
+        try {
+          proc = spawn('transmission-daemon', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+        } catch (e) {
+          reject(e as any)
+          return
+        }
+
+        this.daemon = proc
+
+        // Best-effort: log stderr if something is wrong.
+        let stderr = ''
+        proc.stderr?.on('data', (b) => { stderr += String(b || '') })
+
+        // Probe RPC.
+        let probeAttempts = 0
+        const maxProbeAttempts = 30 // ~9s at 300ms
+
+        const probe = async () => {
+          try {
+            const res = await this.request({ method: 'session-get' })
+            if (res?.result && String(res.result).toLowerCase() !== 'success') {
+              throw new Error(`transmission rpc not ready: ${JSON.stringify(res)}`)
+            }
+
+            console.log('[torrent-agent] ✓ Transmission RPC ready at:', this.getRpcUrl())
+            resolve()
+          } catch (err) {
+            // If daemon died quickly or RPC refused, retry with another port.
+            if (proc.exitCode !== null) {
+              const e = new Error(`transmission-daemon exited (${proc.exitCode})${stderr ? `: ${stderr}` : ''}`)
+              lastErr = e
+              lastStderr = stderr
+              this.daemon = null
+              tryStart(idx + 1)
+              return
+            }
+
+            probeAttempts++
+            if (probeAttempts >= maxProbeAttempts) {
+              const e = new Error(`transmission-daemon did not become ready on port ${port}`)
+              lastErr = e
+              lastStderr = stderr
+              try { proc.kill() } catch {}
+              this.daemon = null
+              tryStart(idx + 1)
+              return
+            }
+
+            // Retry probe a few times before failing over to next port.
+            setTimeout(() => probe(), 300)
+          }
+        }
+
+        probe()
+      }
+
+      tryStart(0)
+    }).finally(() => {
+      this.starting = null
+    })
+
+    return this.starting
+  }
+
+  async call(method: string, params?: any): Promise<any> {
+    await this.start()
+
+    const p = params || {}
+
+    if (method === 'ping') {
+      const res = await this.request({ method: 'session-get' })
+      if (String(res?.result || '').toLowerCase() !== 'success') {
+        throw new Error('transmission ping failed')
+      }
+      return { ok: true }
+    }
+
+    if (method === 'add') {
+      const source = String(p.source || '').trim()
+      const savePath = String(p.savePath || '').trim()
+      if (!source) throw new Error('source required')
+      if (!savePath) throw new Error('savePath required')
+
+      const filename = source.toLowerCase().endsWith('.torrent') && fs.existsSync(source)
+        ? source
+        : source
+
+      const res = await this.request({
+        method: 'torrent-add',
+        arguments: {
+          filename,
+          'download-dir': savePath
+        }
+      })
+
+      const added = res?.arguments?.['torrent-added'] || res?.arguments?.['torrent-duplicate']
+      const infoHash = String(added?.hashString || '').trim()
+      if (!infoHash) throw new Error('transmission: missing hashString')
+      return { infoHash }
+    }
+
+    if (method === 'pause') {
+      const torrentId = String(p.torrentId || '').trim()
+      await this.request({ method: 'torrent-stop', arguments: { ids: [torrentId] } })
+      return { ok: true }
+    }
+
+    if (method === 'resume') {
+      const torrentId = String(p.torrentId || '').trim()
+      await this.request({ method: 'torrent-start', arguments: { ids: [torrentId] } })
+      return { ok: true }
+    }
+
+    if (method === 'remove') {
+      const torrentId = String(p.torrentId || '').trim()
+      const deleteFiles = Boolean(p.deleteFiles)
+      await this.request({ method: 'torrent-remove', arguments: { ids: [torrentId], 'delete-local-data': deleteFiles } })
+      return { ok: true }
+    }
+
+    if (method === 'status') {
+      const torrentId = String(p.torrentId || '').trim()
+      const res = await this.request({
+        method: 'torrent-get',
+        arguments: {
+          ids: [torrentId],
+          fields: [
+            'hashString',
+            'percentDone',
+            'rateDownload',
+            'downloadedEver',
+            'sizeWhenDone',
+            'eta',
+            'isFinished',
+            'peersConnected',
+            'seeders',
+            'leechers'
+          ]
+        }
+      })
+      const t = (res?.arguments?.torrents || [])[0]
+      if (!t) throw new Error('torrent not found')
+
+      const percentDone = Number(t.percentDone ?? 0)
+      const totalWanted = Number(t.sizeWhenDone ?? 0)
+      const totalDone = Number(t.downloadedEver ?? 0)
+      const downloadRate = Number(t.rateDownload ?? 0)
+      const eta = Number(t.eta ?? 0)
+      const peers = Number(t.leechers ?? t.peersConnected ?? 0)
+      const seeds = Number(t.seeders ?? 0)
+      const isFinished = Boolean(t.isFinished)
+
+      return {
+        progress: percentDone * 100,
+        totalWanted,
+        totalDone,
+        downloadRate,
+        eta,
+        peers,
+        seeds,
+        isFinished
+      }
+    }
+
+    throw new Error(`unsupported method: ${method}`)
+  }
+}
+
+class FallbackRpcClient implements RpcClient {
+  private primary = new LibtorrentRpcClient()
+  private fallback = new TransmissionRpcClient()
+  private selected: RpcClient | null = null
+
+  async start(): Promise<void> {
+    if (this.selected) return this.selected.start()
+
+    try {
+      await this.primary.start()
+      this.selected = this.primary
+      return
+    } catch (e: any) {
+      const stderr = (e as any)?.stderr
+      console.error('[torrent-agent] libtorrent unavailable; trying Transmission fallback')
+      if (stderr) console.error('[torrent-agent] libtorrent stderr:', String(stderr).slice(0, 1200))
+    }
+
+    const allowFallback = String(process.env.OF_ALLOW_TORRENT_FALLBACK || '').trim() === '1'
+    if (!allowFallback) {
+      throw new LibtorrentUnavailableError('libtorrent sidecar unavailable (fallback disabled)')
+    }
+
+    await this.fallback.start()
+    this.selected = this.fallback
+  }
+
+  async call(method: string, params?: any): Promise<any> {
+    await this.start()
+    return this.selected!.call(method, params)
+  }
+}
+
+const rpc: RpcClient = new FallbackRpcClient()
 
 export function isTorrentActive(torrentId: string): boolean {
   return activeTorrents.has(torrentId)

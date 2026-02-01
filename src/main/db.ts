@@ -347,6 +347,14 @@ export function markGameInstalled(url: string, installPath: string, version: str
   const resolvedUrl = candidates[0] || url
   const normalizedVersion = typeof version === 'string' ? (version.trim() || null) : null
 
+  console.log('[DB] markGameInstalled called:')
+  console.log('[DB]   url:', url)
+  console.log('[DB]   candidates:', candidates)
+  console.log('[DB]   resolvedUrl:', resolvedUrl)
+  console.log('[DB]   installPath:', installPath)
+  console.log('[DB]   version:', normalizedVersion)
+  console.log('[DB]   executablePath:', executablePath)
+
   if (sqliteAvailable) {
     let canonicalUrl = resolvedUrl
     try {

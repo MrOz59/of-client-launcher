@@ -66,8 +66,42 @@ pnpm-debug.log*
 .vite/
 coverage/
 
-# Torrent agent runtime (generated per-platform by build-torrent-agent.js)
+# Torrent agent runtime (generated per-platform by build scripts)
 services/torrent-agent/pydeps/
 services/torrent-agent/python/
 services/torrent-agent/dist/
 services/torrent-agent/build/
+services/torrent-agent/torrent-agent/
+
+# LAN Controller secrets (OAuth credentials)
+services/lan-controller/google-oauth-secrets.mjs
+
+# Vendor binaries (downloaded at build time)
+vendor/ludusavi/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+
+# AI assistants
+.claude/
+
+# Backup files
+*.bak
+*.backup
+*.swp
+*.swo
+*.orig
+*~
+
+# Temporary/debug files
+sys
+json
+sys,json,re

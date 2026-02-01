@@ -143,10 +143,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   vpnStatus: () => ipcRenderer.invoke('vpn-status'),
   vpnInstall: () => ipcRenderer.invoke('vpn-install'),
-  vpnRoomCreate: (payload?: { name?: string }) => ipcRenderer.invoke('vpn-room-create', payload),
-  vpnRoomJoin: (code: string, payload?: { name?: string }) =>
-    ipcRenderer.invoke('vpn-room-join', { code, name: payload?.name }),
+  vpnRoomCreate: (payload?: {
+    name?: string
+    roomName?: string
+    gameName?: string
+    password?: string
+    public?: boolean
+    maxPlayers?: number
+  }) => ipcRenderer.invoke('vpn-room-create', payload),
+  vpnRoomJoin: (code: string, payload?: { name?: string; password?: string }) =>
+    ipcRenderer.invoke('vpn-room-join', { code, name: payload?.name, password: payload?.password }),
   vpnRoomPeers: (code: string) => ipcRenderer.invoke('vpn-room-peers', { code }),
+  vpnRoomList: (payload?: { gameName?: string }) => ipcRenderer.invoke('vpn-room-list', payload),
+  vpnHeartbeat: (peerId: string) => ipcRenderer.invoke('vpn-heartbeat', { peerId }),
+  vpnRoomLeave: (peerId: string) => ipcRenderer.invoke('vpn-room-leave', { peerId }),
   vpnConnect: (config: string) => ipcRenderer.invoke('vpn-connect', { config }),
   vpnDisconnect: () => ipcRenderer.invoke('vpn-disconnect'),
 
@@ -155,6 +165,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Achievements
   getGameAchievements: (gameUrl: string) => ipcRenderer.invoke('achievements-get', gameUrl),
   importAchievementSchema: (gameUrl: string) => ipcRenderer.invoke('achievements-import-schema', gameUrl),
+  saveAchievementSchema: (gameUrl: string, rawJson: string) => ipcRenderer.invoke('achievements-save-schema', gameUrl, rawJson),
   clearAchievementSchema: (gameUrl: string) => ipcRenderer.invoke('achievements-clear-schema', gameUrl),
   forceRefreshAchievementSchema: (gameUrl: string) => ipcRenderer.invoke('achievements-force-refresh', gameUrl),
   onAchievementUnlocked: (cb: (data: any) => void) => {
@@ -219,6 +230,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Drive APIs
   // ==========================
   driveAuth: () => ipcRenderer.invoke('drive-auth'),
+  driveStatus: () => ipcRenderer.invoke('drive-status'),
+  driveDisconnect: () => ipcRenderer.invoke('drive-disconnect'),
   
   // ✅ FIX: Adicionada a função syncGameSaves para compatibilidade com o LibraryTab
   syncGameSaves: (gameUrl: string) => ipcRenderer.invoke('drive-sync-game-saves', gameUrl),
@@ -226,10 +239,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   driveListSaves: () => ipcRenderer.invoke('drive-list-saves') as Promise<{ success: boolean; files?: DriveListItem[]; error?: string }>,
   driveListSavesForGame: (realAppId: string) =>
     ipcRenderer.invoke('drive-list-saves-for-game', realAppId) as Promise<{ success: boolean; files?: DriveListItem[]; error?: string }>,
-  driveGetCredentials: () => ipcRenderer.invoke('drive-get-credentials'),
-  driveOpenCredentials: () => ipcRenderer.invoke('drive-open-credentials'),
   driveUploadSave: (localPath: string, remoteName?: string) => ipcRenderer.invoke('drive-upload-save', localPath, remoteName),
-  driveDownloadSave: (fileId: string, destPath: string) => ipcRenderer.invoke('drive-download-save', fileId, destPath),
-  
-  driveSaveCredentials: (rawJson: string) => ipcRenderer.invoke('drive-save-credentials', rawJson)
+  driveDownloadSave: (fileId: string, destPath: string) => ipcRenderer.invoke('drive-download-save', fileId, destPath)
 })

@@ -13,6 +13,118 @@ interface InstalledGame {
   install_path: string | null
 }
 
+type LauncherGameStatus = {
+  url: string
+  installed: boolean
+  version?: string
+  latestVersion?: string
+  hasUpdate?: boolean
+}
+
+const WEBVIEW_ALLOWED_HOSTS = new Set([
+  'online-fix.me',
+  'accounts.google.com',
+  'accounts.google.com.br',
+  'discord.com'
+])
+const WEBVIEW_ALLOWED_SUFFIXES = ['.online-fix.me', '.discord.com', '.discordapp.com']
+const DEFAULT_WEBVIEW_URL = 'https://online-fix.me'
+
+function isAllowedWebviewHost(host: string) {
+  const h = String(host || '').toLowerCase()
+  if (!h) return false
+  if (WEBVIEW_ALLOWED_HOSTS.has(h)) return true
+  return WEBVIEW_ALLOWED_SUFFIXES.some(suffix => h.endsWith(suffix))
+}
+
+function isAllowedWebviewUrl(raw?: string | null) {
+  const url = String(raw || '').trim()
+  if (!url) return false
+  if (url.startsWith('about:')) return true
+  try {
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) return false
+    return isAllowedWebviewHost(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+function isAllowedTorrentUrl(raw?: string | null) {
+  const url = String(raw || '').trim()
+  if (!url) return false
+  try {
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) return false
+    const host = String(parsed.hostname || '').toLowerCase()
+    if (!(host === 'online-fix.me' || host.endsWith('.online-fix.me'))) return false
+    return parsed.pathname.includes('/torrents/') || parsed.pathname.endsWith('.torrent')
+  } catch {
+    return false
+  }
+}
+
+function compareVersions(v1?: string | null, v2?: string | null): number {
+  if (!v1 || !v2) return 0
+  const normalize = (v: string) => String(v).trim().toLowerCase()
+  const n1 = normalize(v1)
+  const n2 = normalize(v2)
+  if (n1 === n2) return 0
+
+  const parseBuildDate = (v: string): number | null => {
+    const match = v.match(/build[.\s]*(\d{2})(\d{2})(\d{4})/i)
+    if (match) {
+      return parseInt(match[3] + match[2] + match[1], 10)
+    }
+    const match2 = v.match(/build[.\s]*(\d{8})/i)
+    if (match2) {
+      const d = match2[1]
+      return parseInt(d.slice(4, 8) + d.slice(2, 4) + d.slice(0, 2), 10)
+    }
+    return null
+  }
+
+  const build1 = parseBuildDate(n1)
+  const build2 = parseBuildDate(n2)
+  if (build1 !== null && build2 !== null) {
+    if (build1 < build2) return -1
+    if (build1 > build2) return 1
+    return 0
+  }
+
+  const parts1 = n1.replace(/[^0-9.]/g, '').split('.').map(Number).filter(n => !Number.isNaN(n))
+  const parts2 = n2.replace(/[^0-9.]/g, '').split('.').map(Number).filter(n => !Number.isNaN(n))
+
+  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+    const p1 = parts1[i] || 0
+    const p2 = parts2[i] || 0
+    if (p1 < p2) return -1
+    if (p1 > p2) return 1
+  }
+
+  return n1 < n2 ? -1 : (n1 > n2 ? 1 : 0)
+}
+
+function buildLauncherStatuses(gamesList: any[]): LauncherGameStatus[] {
+  return (gamesList || [])
+    .filter((g: any) => g?.install_path)
+    .map((g: any) => {
+      const url = String(g?.url || '').trim()
+      if (!url) return null
+      const installedVersion = g?.installed_version != null ? String(g.installed_version) : ''
+      const latestVersion = g?.latest_version != null ? String(g.latest_version) : ''
+      const hasUpdate = installedVersion && latestVersion ? compareVersions(installedVersion, latestVersion) < 0 : false
+      return {
+        url,
+        installed: true,
+        version: installedVersion || undefined,
+        latestVersion: latestVersion || undefined,
+        hasUpdate
+      }
+    })
+    .filter(Boolean) as LauncherGameStatus[]
+}
+
 // Persist webview URL across tab switches
 const STORE_URL_STORAGE_KEY = 'of_store_url'
 
@@ -105,14 +217,29 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
   // Keywords to identify unsupported download buttons (Russian + translated versions)
   const unsupportedButtonKeywords = [
     // Russian original
-    'hosters', 'drive', 'фикс с сервера', 'сервера',
+    'hosters', 'drive', 'фикс с сервера', 'сервера', 'скачать с сервера',
     'mega.nz', 'yandex disk', 'яндекс', 'лаунчер с mega', 'клиент с yandex',
     // English translations
     'from server', 'fix from', 'launcher from mega', 'client from yandex',
+    'download from online-fix', 'from online-fix servers',
     // Portuguese translations
     'do servidor', 'correção do servidor', 'launcher do mega', 'cliente do yandex',
+    'baixe de servidores', 'baixar de servidores', 'servidores online-fix',
+    // Spanish translations
+    'descargar de servidores', 'servidores de online-fix',
     // Common patterns
     'online-fix hosters', 'online-fix drive'
+  ];
+
+  // URLs/domains that indicate unsupported download methods
+  const unsupportedUrlPatterns = [
+    'hosters.online-fix',
+    'mega.nz',
+    'yandex.disk',
+    'drive.google.com',
+    'mediafire.com',
+    '1fichier.com',
+    'uploadhaven.com'
   ];
 
   // Version comparison helper - supports semantic versions and Build dates
@@ -341,7 +468,9 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
           allLinks.forEach(link => {
             const text = (link.textContent || '').toLowerCase();
             const href = (link.getAttribute('href') || '').toLowerCase();
-            const isUnsupported = unsupportedButtonKeywords.some(keyword => text.includes(keyword.toLowerCase()));
+            const isUnsupportedByText = unsupportedButtonKeywords.some(keyword => text.includes(keyword.toLowerCase()));
+            const isUnsupportedByUrl = unsupportedUrlPatterns.some(pattern => href.includes(pattern.toLowerCase()));
+            const isUnsupported = isUnsupportedByText || isUnsupportedByUrl;
             const isTorrentLink = href.includes('/torrents/') || href.includes('.torrent');
 
             if (isTorrentLink) {
@@ -354,7 +483,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
             }
 
             if (isUnsupported) {
-              console.log('[AdBlock Pro] Removing unsupported button:', link.textContent.trim());
+              console.log('[AdBlock Pro] Removing unsupported button:', link.textContent.trim(), '| href:', href.substring(0, 50));
               link.remove();
               removedCount++;
             }
@@ -757,7 +886,11 @@ const launcherScript = `
   function update() {
     findCards().forEach(c => {
       const st = games.get(c.url);
-      if (!st) return;
+      if (!st || st.installed === false) {
+        const existing = c.el.querySelector('.of-launcher-badge');
+        if (existing) existing.remove();
+        return;
+      }
       let badge = c.el.querySelector('.of-launcher-badge');
       if (!badge) {
         if (getComputedStyle(c.el).position === 'static') c.el.style.position = 'relative';
@@ -765,8 +898,11 @@ const launcherScript = `
         badge.className = 'of-launcher-badge';
         c.el.appendChild(badge);
       }
-      badge.className = 'of-launcher-badge ' + (st.hasUpdate ? 'update-available' : 'installed');
-      badge.textContent = st.hasUpdate ? '↑ ' + st.latestVersion : '✓ v' + st.version;
+      const hasUpdate = !!st.hasUpdate;
+      const versionLabel = st.version || st.installedVersion || '--';
+      const latestLabel = st.latestVersion || 'Atualizar';
+      badge.className = 'of-launcher-badge ' + (hasUpdate ? 'update-available' : 'installed');
+      badge.textContent = hasUpdate ? '↑ ' + latestLabel : '✓ v' + versionLabel;
     });
   }
   window.addEventListener('message', e => {
@@ -799,7 +935,12 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
     const wv = document.createElement('webview') as any
     // Use persisted URL or default
-    wv.src = getPersistedUrl() || 'https://online-fix.me'
+    const persistedUrl = getPersistedUrl()
+    const initialUrl = (persistedUrl && isAllowedWebviewUrl(persistedUrl)) ? persistedUrl : DEFAULT_WEBVIEW_URL
+    if (persistedUrl && !isAllowedWebviewUrl(persistedUrl)) {
+      setPersistedUrl(null)
+    }
+    wv.src = initialUrl
     wv.style.width = '100%'
     wv.style.height = '100%'
     wv.setAttribute('partition', 'persist:online-fix')
@@ -809,10 +950,71 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
     let isReady = false
     let destroyed = false
     const ensureUsable = () => wv.isConnected && !destroyed
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+    const postLauncherGames = (games: LauncherGameStatus[]) => {
+      if (!ensureUsable() || !isReady) return
+      const payload = JSON.stringify(games).replace(/</g, '\\u003c')
+      wv.executeJavaScript(`window.postMessage({ type: 'OF_LAUNCHER_UPDATE_GAMES', games: ${payload} }, '*');`).catch(() => {})
+    }
+
+    const refreshLauncherGames = async () => {
+      if (!ensureUsable() || !isReady) return
+      try {
+        const res = await window.electronAPI.getGames()
+        const gamesList = res?.games || []
+        const launcherGames = buildLauncherStatuses(gamesList)
+        postLauncherGames(launcherGames)
+      } catch {
+        // ignore
+      }
+    }
+
+    const scheduleLauncherRefresh = () => {
+      if (refreshTimer) return
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        refreshLauncherGames().catch(() => {})
+      }, 400)
+    }
+
+    const handleTorrentNav = (url: string) => {
+      if (!ensureUsable() || !isReady) return false
+      if (!isAllowedTorrentUrl(url)) return false
+      console.log('[StoreTab] Navigation detected:', url)
+      console.log('[StoreTab] ✅ Torrent link detected! Starting download...')
+      console.log('[StoreTab] Torrent URL:', url)
+      console.log('[StoreTab] Referer:', wv.getURL())
+
+      window.electronAPI.startTorrentDownload(url, wv.getURL())
+        .then((result: any) => {
+          console.log('[StoreTab] Download started successfully:', result)
+        })
+        .catch((err: any) => {
+          console.error('[StoreTab] Failed to start download:', err)
+        })
+
+      return true
+    }
 
     // Block popunders/popups at the <webview> level
     wv.addEventListener('new-window', (e: any) => {
-      console.log('[StoreTab] Blocked popunder/new-window:', e?.url)
+      const url = String(e?.url || '')
+      if (handleTorrentNav(url)) {
+        e.preventDefault()
+        return
+      }
+      if (isAllowedWebviewUrl(url)) {
+        console.log('[StoreTab] Allowed new-window URL, opening in webview:', url)
+        e.preventDefault()
+        try {
+          wv.loadURL(url)
+        } catch (err) {
+          console.warn('[StoreTab] Failed to load allowed URL', url, err)
+        }
+        return
+      }
+      console.log('[StoreTab] Blocked popunder/new-window:', url)
       e.preventDefault()
     })
     wv.addEventListener('did-create-window', (e: any) => {
@@ -841,6 +1043,12 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
     const navigateToTarget = (url?: string | null) => {
       const dest = url || targetUrlRef.current || targetUrl
       if (!dest || !ensureUsable()) return
+      if (!isAllowedWebviewUrl(dest)) {
+        console.warn('[StoreTab] Blocked navigation to non-allowed URL:', dest)
+        targetUrlRef.current = null
+        if (onTargetConsumed) onTargetConsumed()
+        return
+      }
       targetUrlRef.current = null
       setPersistedUrl(dest)
       try {
@@ -864,6 +1072,10 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
         const urlMatch = msg.match(/\[TORRENT_DOWNLOAD_REQUEST\]\s+(.+)/)
         if (urlMatch && urlMatch[1]) {
           const torrentUrl = urlMatch[1].trim()
+          if (!isAllowedWebviewUrl(wv.getURL()) || !isAllowedTorrentUrl(torrentUrl)) {
+            console.warn('[StoreTab] Blocked torrent request from non-allowed source:', torrentUrl)
+            return
+          }
           console.log('[StoreTab] Captured torrent download request from console:', torrentUrl)
 
           window.electronAPI.startTorrentDownload(torrentUrl, wv.getURL())
@@ -877,6 +1089,14 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       }
     })
 
+    const offGameVersion = window.electronAPI.onGameVersionUpdate?.(() => {
+      scheduleLauncherRefresh()
+    })
+
+    const offDownloadComplete = window.electronAPI.onDownloadComplete?.((data) => {
+      if (data?.destPath) scheduleLauncherRefresh()
+    })
+
     wv.addEventListener('dom-ready', async () => {
       if (!ensureUsable()) return
       isReady = true
@@ -884,6 +1104,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
       // Load installed games for this page
       let currentInstalledGames: InstalledGame[] = []
+      let launcherGames: LauncherGameStatus[] = []
       try {
         const result = await window.electronAPI.getGames()
         const gamesList = result?.games || []
@@ -893,6 +1114,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
           installed_version: g.installed_version,
           install_path: g.install_path
         }))
+        launcherGames = buildLauncherStatuses(gamesList)
         console.log('[StoreTab] Loaded installed games:', currentInstalledGames.length)
       } catch (err) {
         console.warn('[StoreTab] Failed to load games:', err)
@@ -915,14 +1137,11 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
       // Then launcher features
       wv.insertCSS(launcherCSS).catch(() => {})
-      wv.executeJavaScript(launcherScript).catch(() => {})
-
-      // Update game status
-      setTimeout(() => {
-        if (ensureUsable() && isReady) {
-          wv.executeJavaScript(`window.postMessage({ type: 'OF_LAUNCHER_UPDATE_GAMES', games: [] }, '*');`).catch(() => {})
-        }
-      }, 1000)
+      wv.executeJavaScript(launcherScript)
+        .then(() => {
+          postLauncherGames(launcherGames)
+        })
+        .catch(() => {})
 
       // If a target URL was provided, navigate to it after DOM ready
       if (targetUrl) {
@@ -930,40 +1149,15 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       }
     })
 
-    const handleTorrentNav = (url: string) => {
-      if (!ensureUsable() || !isReady) return false
-      console.log('[StoreTab] Navigation detected:', url)
-      const lower = (url || '').toLowerCase()
-      if (lower.includes('/torrents/') || lower.endsWith('.torrent')) {
-        console.log('[StoreTab] ✅ Torrent link detected! Starting download...')
-        console.log('[StoreTab] Torrent URL:', url)
-        console.log('[StoreTab] Referer:', wv.getURL())
-
-        window.electronAPI.startTorrentDownload(url, wv.getURL())
-          .then((result: any) => {
-            console.log('[StoreTab] Download started successfully:', result)
-          })
-          .catch((err: any) => {
-            console.error('[StoreTab] Failed to start download:', err)
-          })
-
-        return true
-      }
-      return false
-    }
-
     wv.addEventListener('will-navigate', (e: any) => {
       if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] will-navigate event:', e.url)
+      if (!isAllowedWebviewUrl(e.url)) {
+        console.warn('[StoreTab] Blocked navigation to non-allowed URL:', e.url)
+        e.preventDefault()
+        return
+      }
       if (handleTorrentNav(e.url)) {
         if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing navigation to torrent link')
-        e.preventDefault()
-      }
-    })
-
-    wv.addEventListener('new-window', (e: any) => {
-      if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] new-window event:', e.url)
-      if (handleTorrentNav(e.url)) {
-        if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing new window for torrent link')
         e.preventDefault()
       }
     })
@@ -972,6 +1166,12 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
     return () => {
       destroyed = true
+      try { offGameVersion?.() } catch {}
+      try { offDownloadComplete?.() } catch {}
+      if (refreshTimer) {
+        clearTimeout(refreshTimer)
+        refreshTimer = null
+      }
       // Save current URL before unmounting
       if (wv && ensureUsable()) {
         try {
@@ -990,6 +1190,12 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
   // React to targetUrl prop changes (navigate existing webview)
   useEffect(() => {
     if (targetUrl && webviewInstance.current) {
+      if (!isAllowedWebviewUrl(targetUrl)) {
+        console.warn('[StoreTab] Blocked navigation to non-allowed URL:', targetUrl)
+        targetUrlRef.current = null
+        if (onTargetConsumed) onTargetConsumed()
+        return
+      }
       try {
         webviewInstance.current.loadURL(targetUrl)
         targetUrlRef.current = null

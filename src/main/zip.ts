@@ -43,14 +43,59 @@ function get7zBinaryPath(): string {
   return binary
 }
 
+/**
+ * Extract archive with password support.
+ * Supports ZIP, RAR, 7z and other formats via 7z binary.
+ * Falls back to node-unrar-js for RAR if 7z fails.
+ */
 export function extractZipWithPassword(
   zipPath: string,
   destDir: string,
   password?: string,
   onProgress?: (percent: number, details?: ExtractProgress) => void
 ): Promise<void> {
+  // Validate inputs
+  if (!zipPath) {
+    return Promise.reject(new Error('Archive path is required'))
+  }
+  if (!destDir) {
+    return Promise.reject(new Error('Destination directory is required'))
+  }
+
+  // Check if archive exists
+  if (!fs.existsSync(zipPath)) {
+    return Promise.reject(new Error(`Archive not found: ${zipPath}`))
+  }
+
+  // Check archive size
+  try {
+    const stats = fs.statSync(zipPath)
+    if (stats.size === 0) {
+      return Promise.reject(new Error('Archive is empty (0 bytes)'))
+    }
+    console.log(`[Extract] Archive size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`)
+  } catch (err) {
+    console.warn('[Extract] Could not get archive stats:', err)
+  }
+
+  // Check available disk space (best effort)
+  try {
+    const destStats = fs.statfsSync ? fs.statfsSync(destDir) : null
+    if (destStats) {
+      const availableBytes = destStats.bavail * destStats.bsize
+      const archiveSize = fs.statSync(zipPath).size
+      // Assume worst case: extracted size is 3x archive size
+      const estimatedNeeded = archiveSize * 3
+      if (availableBytes < estimatedNeeded) {
+        console.warn(`[Extract] Low disk space warning: ${(availableBytes / 1024 / 1024 / 1024).toFixed(2)} GB available, may need ${(estimatedNeeded / 1024 / 1024 / 1024).toFixed(2)} GB`)
+      }
+    }
+  } catch {
+    // statfsSync may not be available on all platforms
+  }
+
   const ext = zipPath.toLowerCase()
-  
+
   // 7z supports RAR natively and is much faster than node-unrar-js (WASM)
   // Try 7z first for all formats, fall back to node-unrar-js only if needed
   if (ext.endsWith('.rar')) {
@@ -169,7 +214,47 @@ function extract7z(
         console.log('[Extract] finished', { archivePath, destDir })
         resolve()
       } else {
-        const msg = `Extraction failed with code ${code}. stdout: ${stdoutBuf.trim()} stderr: ${stderrBuf.trim()}`
+        // Parse 7z exit codes for better error messages
+        let errorDetail = ''
+        switch (code) {
+          case 1:
+            errorDetail = 'Warning (non-fatal errors occurred)'
+            // Code 1 is usually a warning, not a failure - resolve anyway
+            console.warn('[Extract] Completed with warnings:', stderrBuf.trim())
+            emitProgress(100)
+            resolve()
+            return
+          case 2:
+            errorDetail = 'Fatal error'
+            break
+          case 7:
+            errorDetail = 'Command line error'
+            break
+          case 8:
+            errorDetail = 'Not enough memory for operation'
+            break
+          case 255:
+            errorDetail = 'User stopped the process'
+            break
+          default:
+            errorDetail = `Unknown error code ${code}`
+        }
+
+        // Check for specific error patterns in stderr
+        const stderr = stderrBuf.toLowerCase()
+        if (stderr.includes('wrong password') || stderr.includes('incorrect password')) {
+          errorDetail = 'Senha incorreta - o arquivo pode exigir uma senha diferente'
+        } else if (stderr.includes('cannot find archive') || stderr.includes('cannot open')) {
+          errorDetail = 'Arquivo não encontrado ou corrompido'
+        } else if (stderr.includes('no space') || stderr.includes('disk full') || stderr.includes('enospc')) {
+          errorDetail = 'Espaço em disco insuficiente'
+        } else if (stderr.includes('access denied') || stderr.includes('permission')) {
+          errorDetail = 'Permissão negada para extrair arquivos'
+        } else if (stderr.includes('data error') || stderr.includes('crc failed')) {
+          errorDetail = 'Arquivo corrompido (erro de CRC)'
+        }
+
+        const msg = `Extração falhou: ${errorDetail}\nDetalhes: ${stderrBuf.trim() || stdoutBuf.trim()}`
         console.error('[Extract] failure', msg)
         reject(new Error(msg))
       }

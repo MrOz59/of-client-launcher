@@ -175,7 +175,7 @@ function findOnlineFixIni(gameDir: string): string | null {
 function findExecutable(gameDir: string): string | null {
   console.log('[findExecutable] Searching in:', gameDir)
   try {
-    const exeFiles: Array<{ name: string; path: string; depth: number }> = []
+    const exeFiles: Array<{ name: string; path: string; depth: number; size: number }> = []
 
     function scanDir(dir: string, depth: number = 0) {
       if (depth > 4) return
@@ -189,7 +189,12 @@ function findExecutable(gameDir: string): string | null {
               scanDir(fullPath, depth + 1)
             }
           } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.exe')) {
-            exeFiles.push({ name: entry.name, path: fullPath, depth })
+            try {
+              const stat = fs.statSync(fullPath)
+              exeFiles.push({ name: entry.name, path: fullPath, depth, size: stat.size })
+            } catch {
+              exeFiles.push({ name: entry.name, path: fullPath, depth, size: 0 })
+            }
           }
         }
       } catch (err) {
@@ -206,10 +211,12 @@ function findExecutable(gameDir: string): string | null {
 
     console.log('[findExecutable] Found', exeFiles.length, 'exe files')
 
-    const scoreExe = (exe: { name: string; path: string; depth: number }): number => {
+    const scoreExe = (exe: { name: string; path: string; depth: number; size: number }): number => {
       const nameLower = exe.name.toLowerCase()
+      const pathLower = exe.path.toLowerCase()
       let score = 0
 
+      // Negative scores for non-game executables
       if (nameLower.includes('uninstall')) score -= 100
       if (nameLower.includes('uninst')) score -= 100
       if (nameLower.includes('setup')) score -= 50
@@ -224,13 +231,33 @@ function findExecutable(gameDir: string): string | null {
       if (nameLower.includes('helper')) score -= 20
       if (nameLower.includes('update')) score -= 20
       if (nameLower.includes('patch')) score -= 20
+      if (nameLower.includes('ueprereq')) score -= 100  // Unreal Engine prerequisites
 
+      // Positive scores for game-like names
       if (nameLower.includes('game')) score += 30
       if (nameLower.includes('launcher')) score += 20
       if (nameLower.includes('play')) score += 20
       if (nameLower.includes('start')) score += 15
 
-      score += (4 - exe.depth) * 10
+      // Unreal Engine: prefer -Win64-Shipping.exe in Binaries/Win64
+      if (nameLower.includes('-win64-shipping')) score += 100
+      if (pathLower.includes('binaries/win64') || pathLower.includes('binaries\\win64')) score += 80
+
+      // Unity: prefer .exe in *_Data parent folder pattern
+      if (pathLower.includes('_data')) score += 30
+
+      // Size scoring: larger executables are more likely to be the real game
+      // Small stubs (< 1MB) are penalized, large executables (> 10MB) are rewarded
+      const sizeMB = exe.size / (1024 * 1024)
+      if (sizeMB < 0.5) score -= 50      // Very small, likely a stub/launcher
+      else if (sizeMB < 1) score -= 20   // Small, possibly a launcher
+      else if (sizeMB > 50) score += 60  // Large, likely the real game
+      else if (sizeMB > 20) score += 40  // Medium-large
+      else if (sizeMB > 10) score += 20  // Medium
+
+      // Depth scoring (prefer shallower, but not as much as before since UE games have deep exes)
+      score += (4 - exe.depth) * 5
+
       if (exe.name.length > 10) score += 5
 
       return score
@@ -240,7 +267,8 @@ function findExecutable(gameDir: string): string | null {
 
     console.log('[findExecutable] Top candidates:')
     exeFiles.slice(0, 5).forEach((exe, i) => {
-      console.log(`  ${i + 1}. ${exe.name} (score: ${scoreExe(exe)}, depth: ${exe.depth})`)
+      const sizeMB = (exe.size / (1024 * 1024)).toFixed(1)
+      console.log(`  ${i + 1}. ${exe.name} (score: ${scoreExe(exe)}, depth: ${exe.depth}, size: ${sizeMB}MB)`)
     })
 
     const best = exeFiles[0]
@@ -266,8 +294,33 @@ export async function processUpdateExtraction(
   _gameUrl: string,
   onProgress?: (percent: number, details?: { etaSeconds?: number }) => void,
   previousExePath?: string | null
-): Promise<{ success: boolean; error?: string; executablePath?: string }> {
+): Promise<{ success: boolean; error?: string; executablePath?: string; warnings?: string[] }> {
+  const warnings: string[] = []
+
   console.log('[UpdateProcessor] Starting update processing for:', installPath)
+
+  // Validate install path
+  if (!installPath) {
+    return { success: false, error: 'Install path is required' }
+  }
+
+  if (!fs.existsSync(installPath)) {
+    return { success: false, error: `Install path does not exist: ${installPath}` }
+  }
+
+  // Check disk space before extraction (best effort)
+  try {
+    const stats = fs.statfsSync ? fs.statfsSync(installPath) : null
+    if (stats) {
+      const availableGB = (stats.bavail * stats.bsize) / (1024 * 1024 * 1024)
+      console.log(`[UpdateProcessor] Available disk space: ${availableGB.toFixed(2)} GB`)
+      if (availableGB < 1) {
+        warnings.push('Low disk space warning: less than 1 GB available')
+      }
+    }
+  } catch {
+    // statfsSync may not be available on all platforms
+  }
 
   // Find RAR files but exclude those in "Fix Repair" folders (these are optional repair tools, not game content)
   const allRarFiles = findFilesRecursive(installPath, /\.rar$/i)
@@ -390,6 +443,31 @@ export async function processUpdateExtraction(
       }
     } catch (err: any) {
       console.error('[UpdateProcessor] Failed to extract:', rarFile, err)
+      
+      // Clean up corrupted/failed archive files to avoid leaving garbage behind
+      // This helps users re-download cleanly without manual intervention
+      console.log('[UpdateProcessor] Cleaning up failed extraction archives...')
+      for (const partPath of group.all) {
+        try {
+          if (fs.existsSync(partPath)) {
+            fs.unlinkSync(partPath)
+            console.log('[UpdateProcessor] Removed failed archive:', partPath)
+          }
+        } catch (cleanupErr) {
+          console.warn('[UpdateProcessor] Could not remove failed archive:', partPath, cleanupErr)
+        }
+      }
+      
+      // Also clean up Fix Repair folder if present
+      const rarDir = path.dirname(rarFile)
+      const fixRepairPath = path.join(rarDir, 'Fix Repair')
+      if (fs.existsSync(fixRepairPath)) {
+        try {
+          fs.rmSync(fixRepairPath, { recursive: true, force: true })
+          console.log('[UpdateProcessor] Removed Fix Repair folder after failed extraction')
+        } catch {}
+      }
+      
       return { success: false, error: `Failed to extract ${path.basename(rarFile)}: ${err.message}` }
     }
   }
@@ -423,5 +501,24 @@ export async function processUpdateExtraction(
     console.log('[UpdateProcessor] Found new executable path:', executablePath)
   }
 
-  return { success: true, executablePath: executablePath || undefined }
+  // Final validation
+  const fileCount = countFilesRecursive(installPath, 100)
+  if (fileCount === 0) {
+    warnings.push('No files found after extraction - installation may be incomplete')
+  } else if (fileCount < 5) {
+    warnings.push(`Very few files (${fileCount}) found after extraction`)
+  }
+
+  if (!executablePath) {
+    warnings.push('No executable file found in game directory')
+  }
+
+  if (warnings.length > 0) {
+    console.warn('[UpdateProcessor] Completed with warnings:')
+    warnings.forEach(w => console.warn('  -', w))
+  } else {
+    console.log('[UpdateProcessor] Completed successfully')
+  }
+
+  return { success: true, executablePath: executablePath || undefined, warnings: warnings.length > 0 ? warnings : undefined }
 }

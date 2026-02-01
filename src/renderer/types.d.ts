@@ -33,6 +33,9 @@ type ActiveDownload = {
   eta?: string
   size?: string
   downloaded?: string
+  seeds?: number
+  peers?: number
+  error_message?: string
 }
 type ActiveDownloadsResult = { success: boolean; downloads: ActiveDownload[]; error?: string }
 type CompletedDownloadsResult = { success: boolean; downloads: ActiveDownload[]; error?: string }
@@ -104,15 +107,37 @@ declare global {
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>
       vpnStatus: () => Promise<{ success: boolean; controller?: any; installed?: boolean; installError?: string; error?: string }>
       vpnInstall: () => Promise<{ success: boolean; error?: string; url?: string }>
-      vpnRoomCreate: (payload?: { name?: string }) => Promise<{ success: boolean; code?: string; config?: string; vpnIp?: string; error?: string }>
-      vpnRoomJoin: (code: string, payload?: { name?: string }) => Promise<{ success: boolean; config?: string; vpnIp?: string; hostIp?: string; error?: string }>
-      vpnRoomPeers: (code: string) => Promise<{ success: boolean; peers?: any[]; error?: string }>
+      vpnRoomCreate: (payload?: {
+        name?: string
+        roomName?: string
+        gameName?: string
+        password?: string
+        public?: boolean
+        maxPlayers?: number
+      }) => Promise<{ success: boolean; code?: string; config?: string; vpnIp?: string; peerId?: string; roomName?: string; error?: string }>
+      vpnRoomJoin: (code: string, payload?: { name?: string; password?: string }) => Promise<{ success: boolean; config?: string; vpnIp?: string; hostIp?: string; peerId?: string; roomName?: string; needsPassword?: boolean; error?: string }>
+      vpnRoomPeers: (code: string) => Promise<{ success: boolean; peers?: Array<{ id: string; name?: string; ip?: string; role?: string; online?: boolean }>; error?: string }>
+      vpnRoomList: (payload?: { gameName?: string }) => Promise<{ success: boolean; rooms?: Array<{
+        code: string
+        name: string
+        gameName?: string
+        hostName?: string
+        hasPassword: boolean
+        playerCount: number
+        onlineCount: number
+        maxPlayers: number
+        createdAt: number
+        lastActivity: number
+      }>; error?: string }>
+      vpnHeartbeat: (peerId: string) => Promise<{ success: boolean; peers?: Array<{ id: string; name?: string; ip?: string; role?: string; online?: boolean }>; error?: string }>
+      vpnRoomLeave: (peerId: string) => Promise<{ success: boolean; error?: string }>
       vpnConnect: (config: string) => Promise<{ success: boolean; tunnelName?: string; configPath?: string; needsInstall?: boolean; needsAdmin?: boolean; error?: string }>
       vpnDisconnect: () => Promise<{ success: boolean; needsAdmin?: boolean; error?: string }>
 
       // Achievements
       getGameAchievements: (gameUrl: string) => Promise<{ success: boolean; sources?: any[]; achievements?: any[]; error?: string }>
       importAchievementSchema: (gameUrl: string) => Promise<{ success: boolean; count?: number; error?: string }>
+      saveAchievementSchema: (gameUrl: string, rawJson: string) => Promise<{ success: boolean; count?: number; error?: string }>
       clearAchievementSchema: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       forceRefreshAchievementSchema: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       onAchievementUnlocked: (cb: (data: { gameUrl: string; id: string; title: string; description?: string; unlockedAt?: number }) => void) => (() => void)
@@ -146,11 +171,21 @@ declare global {
       cloudSavesGetHistory: (gameUrl: string, limit?: number) => Promise<{ success: boolean; entries?: any[]; error?: string }>
 
       // Drive
-      driveAuth: () => Promise<{ success: boolean; message?: string; error?: string }>
+      driveAuth: () => Promise<{
+        success: boolean
+        message?: string
+        error?: string
+        ludusaviPrepared?: boolean
+        ludusaviPath?: string
+        ludusaviDownloaded?: boolean
+        ludusaviError?: string
+      }>
       driveGetCredentials: () => Promise<{ success: boolean; content?: string; message?: string }>
       driveOpenCredentials: () => Promise<{ success: boolean; message?: string }>
       driveSaveCredentials: (rawJson: string) => Promise<{ success: boolean; message?: string }>
       driveListSaves: () => Promise<{ success: boolean; files?: DriveListItem[]; message?: string; error?: string }>
+      driveListSavesForGame: (realAppId: string) => Promise<{ success: boolean; files?: DriveListItem[]; error?: string }>
+      driveUploadSave: (localPath: string, remoteName?: string) => Promise<{ success: boolean; message?: string; error?: string }>
       driveDownloadSave: (fileId: string, destPath: string) => Promise<{ success: boolean; message?: string; error?: string }>
 
       // Saves sync entrypoint (manual / after-exit)

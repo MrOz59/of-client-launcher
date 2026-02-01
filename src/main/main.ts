@@ -57,6 +57,7 @@ if (process.platform === 'linux') {
 import * as drive from './drive'
 import * as cloudSaves from './cloudSaves'
 import { appendCloudSavesHistory, listCloudSavesHistory, type CloudSavesHistoryEntry } from './cloudSavesHistory'
+import { ensureLudusaviAvailable } from './ludusavi'
 // Polyfill File API for undici (required by cheerio in Electron main process)
 import { Blob } from 'buffer'
 delete (process.env as any).ELECTRON_RUN_AS_NODE
@@ -77,7 +78,7 @@ import { BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent
 import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import { importCookies } from './cookieManager.js'
+import { importCookies, exportCookies } from './cookieManager.js'
 import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo } from './scraper.js'
 import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
@@ -93,8 +94,117 @@ import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestE
 import { AchievementsManager } from './achievements/manager.js'
 import { AchievementOverlay } from './achievements/overlay.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
+import { registerAllIpcHandlers } from './ipc/index.js'
+import type { IpcContext } from './ipc/types.js'
+import {
+  isPidAlive,
+  killProcessTreeBestEffort,
+  readFileTailBytes,
+  trimToMaxChars,
+  extractInterestingProtonLog,
+  configureLinuxTempDir,
+  isDirWritableAndExecutable,
+  findArchive,
+  findExecutableInDir,
+  slugify,
+  getDirectorySizeBytes
+} from './utils/index.js'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
+
+function resolveLauncherUserDataPath(): string | null {
+  try {
+    if (process.platform === 'linux') {
+      const home = os.homedir()
+      if (home) return path.join(home, '.local', 'share', 'VoidLauncher')
+      return null
+    }
+
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      const appData = app.getPath('appData')
+      if (appData) return path.join(appData, 'VoidLauncher')
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+try {
+  const userDataPath = resolveLauncherUserDataPath()
+  if (userDataPath) app.setPath('userData', userDataPath)
+} catch {
+  // ignore
+}
+
+/**
+ * Resolve game version using multiple strategies in order of preference:
+ * 1. Provided version (if not 'unknown' or empty)
+ * 2. Parse from filename/path
+ * 3. Parse from game title
+ * 4. Scrape from game page (if gameUrl provided)
+ * 5. Check existing game record
+ * Returns 'unknown' only as last resort
+ */
+async function resolveGameVersion(options: {
+  providedVersion?: string | null
+  filename?: string | null
+  title?: string | null
+  gameUrl?: string | null
+}): Promise<string> {
+  const { providedVersion, filename, title, gameUrl } = options
+
+  // 1. Use provided version if valid
+  if (providedVersion && providedVersion !== 'unknown' && providedVersion.trim()) {
+    return providedVersion.trim()
+  }
+
+  // 2. Try to parse from filename
+  if (filename) {
+    const fromFilename = parseVersionFromName(filename)
+    if (fromFilename) {
+      console.log('[resolveGameVersion] Found version from filename:', fromFilename)
+      return fromFilename
+    }
+  }
+
+  // 3. Try to parse from title
+  if (title) {
+    const fromTitle = parseVersionFromName(title)
+    if (fromTitle) {
+      console.log('[resolveGameVersion] Found version from title:', fromTitle)
+      return fromTitle
+    }
+  }
+
+  // 4. Try to scrape from game page
+  if (gameUrl && gameUrl.includes('online-fix.me')) {
+    try {
+      console.log('[resolveGameVersion] Attempting to scrape version from:', gameUrl)
+      const info = await fetchGameUpdateInfo(gameUrl)
+      if (info?.version) {
+        console.log('[resolveGameVersion] Scraped version from page:', info.version)
+        return info.version
+      }
+    } catch (e: any) {
+      console.warn('[resolveGameVersion] Failed to scrape version:', e?.message || e)
+    }
+  }
+
+  // 5. Check existing game record for latest_version
+  if (gameUrl) {
+    try {
+      const game = getGame(gameUrl)
+      if (game?.latest_version && game.latest_version !== 'unknown') {
+        console.log('[resolveGameVersion] Using existing latest_version:', game.latest_version)
+        return game.latest_version
+      }
+    } catch {}
+  }
+
+  console.log('[resolveGameVersion] Could not determine version, returning unknown')
+  return 'unknown'
+}
 
 let mainWindow: BrowserWindow | null = null
 const TORRENT_PARTITION = 'persist:online-fix'
@@ -329,16 +439,9 @@ function recordCloudSaves(entry: CloudSavesHistoryEntry) {
   }
 }
 
-function isPidAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err: any) {
-    // EPERM means "exists but not permitted" – treat as alive
-    return err?.code === 'EPERM'
-  }
-}
+// NOTE: isPidAlive, killProcessTreeBestEffort, readFileTailBytes, trimToMaxChars,
+// extractInterestingProtonLog, configureLinuxTempDir, isDirWritableAndExecutable
+// moved to src/main/utils/
 
 async function ensureOfVpnBeforeLaunch(gameUrl: string, roomCode: string) {
   const configuredDefault = String(getSetting('lan_default_network_id') || '').trim()
@@ -374,100 +477,6 @@ async function ensureOfVpnBeforeLaunch(gameUrl: string, roomCode: string) {
   sendGameLaunchStatus({ gameUrl, status: 'starting', message: `VPN: conectado${ip ? ` (${ip})` : ''}` })
 }
 
-function killProcessTreeBestEffort(pid: number, signal: NodeJS.Signals): void {
-  // On POSIX, kill the whole process group (Proton spawns children).
-  if (process.platform !== 'win32') {
-    try { process.kill(-pid, signal) } catch {}
-  }
-  try { process.kill(pid, signal) } catch {}
-}
-
-function readFileTailBytes(filePath: string, maxBytes: number): string | null {
-  try {
-    if (!filePath || !fs.existsSync(filePath)) return null
-    const stat = fs.statSync(filePath)
-    const size = stat.size
-    const start = Math.max(0, size - maxBytes)
-    const length = size - start
-    const fd = fs.openSync(filePath, 'r')
-    try {
-      const buf = Buffer.alloc(length)
-      fs.readSync(fd, buf, 0, length, start)
-      return buf.toString('utf8')
-    } finally {
-      try { fs.closeSync(fd) } catch {}
-    }
-  } catch {
-    return null
-  }
-}
-
-function trimToMaxChars(text: string, maxChars: number): string {
-  if (!text) return ''
-  if (text.length <= maxChars) return text
-  return text.slice(text.length - maxChars)
-}
-
-function extractInterestingProtonLog(logText: string, maxLines: number): string | null {
-  if (!logText) return null
-  const lines = logText.split(/\r?\n/)
-
-  const isNoise = (line: string) =>
-    /trace:unwind|dump_unwind_info|RtlVirtualUnwind2|trace:seh:Rtl|unwind:Rtl/i.test(line)
-
-  const interesting = (line: string) =>
-    /(^|\s)(err:|warn:|fixme:)|fatal error|Unhandled Exception|EXCEPTION_|Assertion failed|wine: (err|unhandled)|err:module:|import_dll|d3d|dxgi|vulkan|vk_/i.test(
-      line
-    )
-
-  const picked: string[] = []
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line) continue
-    if (isNoise(line)) continue
-    if (interesting(line)) picked.push(line)
-  }
-
-  const src = picked.length ? picked : lines.filter(l => l && !isNoise(l))
-  if (!src.length) return null
-
-  const tail = src.slice(Math.max(0, src.length - maxLines))
-  return tail.join('\n')
-}
-
-function configureLinuxTempDir() {
-  if (process.platform !== 'linux') return
-  const home = os.homedir()
-  if (!home) return
-
-  const tmpDir = path.join(home, '.local', 'share', 'of-launcher', 'tmp')
-  try {
-    fs.mkdirSync(tmpDir, { recursive: true })
-  } catch (err) {
-    console.warn('[TempDir] Failed to create tmp dir:', tmpDir, err)
-    return
-  }
-
-  process.env.TMPDIR = tmpDir
-  process.env.TMP = tmpDir
-  process.env.TEMP = tmpDir
-
-  try {
-    app.setPath('temp', tmpDir)
-  } catch (err) {
-    console.warn('[TempDir] Failed to set Electron temp path:', err)
-  }
-}
-
-function isDirWritableAndExecutable(dirPath: string): boolean {
-  try {
-    fs.accessSync(dirPath, fs.constants.W_OK | fs.constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
 // Suppress noisy UTP connection reset errors from utp-native (network transient)
 const UTP_LOG_INTERVAL_MS = 5000
 let lastUtpLogAt = 0
@@ -494,215 +503,8 @@ process.on('uncaughtException', (err) => {
   }
   throw err
 })
-  
-  ipcMain.handle('drive-auth', async () => {
-    const res = await drive.authenticateWithDrive()
-    return res
-  })
-  
-  ipcMain.handle('drive-list-saves', async () => {
-    const res = await drive.listSaves()
-    return res
-  })
 
-  ipcMain.handle('drive-list-saves-for-game', async (_event, realAppId?: string) => {
-    const res = await drive.listSaves(realAppId)
-    return res
-  })
-
-  ipcMain.handle('drive-get-credentials', async () => {
-    try {
-      const credPath = drive.getCredentialsPath()
-      if (!credPath || !fs.existsSync(credPath)) return { success: false, message: 'Credenciais não encontradas' }
-      const raw = fs.readFileSync(credPath, 'utf-8')
-      return { success: true, content: raw }
-    } catch (e: any) {
-      return { success: false, message: e?.message || String(e) }
-    }
-  })
-
-  ipcMain.handle('drive-open-credentials', async () => {
-    try {
-      const credPath = drive.getCredentialsPath()
-      if (!credPath || !fs.existsSync(credPath)) return { success: false, message: 'Arquivo de credenciais não encontrado' }
-      const res = await shell.openPath(credPath)
-      if (res) return { success: false, message: res }
-      return { success: true }
-    } catch (e: any) {
-      return { success: false, message: e?.message || String(e) }
-    }
-  })
-  
-  ipcMain.handle('drive-upload-save', async (event, localPath: string, remoteName?: string) => {
-    const res = await drive.uploadSave(localPath, remoteName)
-    return res
-  })
-  
-  ipcMain.handle('drive-download-save', async (event, fileId: string, destPath: string) => {
-    const res = await drive.downloadSave(fileId, destPath)
-    return res
-  })
-
-  ipcMain.handle('drive-backup-saves', async (event, options: any) => {
-    try {
-      const gameUrl = String(options?.gameUrl || '').trim()
-      const game = gameUrl ? (getGame(gameUrl) as any) : null
-      const res = await cloudSaves.backupCloudSavesAfterExit({
-        gameUrl: gameUrl || undefined,
-        title: String(options?.title || game?.title || ''),
-        steamAppId: (options?.steamAppId || game?.steam_app_id || null) as any,
-        protonPrefix: (options?.protonPrefix || game?.proton_prefix || null) as any
-      })
-      if (res?.success && !(res as any)?.skipped) return { success: true }
-
-      // Fallback: legacy OnlineFix folder backup
-      return await drive.backupLocalSavesToDrive(options || {})
-    } catch (e: any) {
-      return { success: false, message: e?.message || String(e) }
-    }
-  })
-
-  ipcMain.handle('drive-sync-saves-on-playstart', async (event, options: any) => {
-    try {
-      const gameUrl = String(options?.gameUrl || '').trim()
-      const game = gameUrl ? (getGame(gameUrl) as any) : null
-      const gameKey = cloudSaves.computeCloudSavesGameKey({
-        gameUrl: gameUrl || undefined,
-        title: String(options?.title || game?.title || ''),
-        steamAppId: (options?.steamAppId || game?.steam_app_id || null) as any,
-        protonPrefix: (options?.protonPrefix || game?.proton_prefix || null) as any
-      })
-      sendCloudSavesStatus({ at: Date.now(), gameUrl: gameUrl || undefined, gameKey, stage: 'restore', level: 'info', message: 'Verificando saves na nuvem...' })
-      const restoreRes = await cloudSaves.restoreCloudSavesBeforeLaunch({
-        gameUrl: gameUrl || undefined,
-        title: String(options?.title || game?.title || ''),
-        steamAppId: (options?.steamAppId || game?.steam_app_id || null) as any,
-        protonPrefix: (options?.protonPrefix || game?.proton_prefix || null) as any
-      })
-      if (restoreRes?.success && !(restoreRes as any)?.skipped) {
-        const msg = String(restoreRes?.message || 'Saves restaurados da nuvem.')
-        recordCloudSaves({ at: Date.now(), gameKey, gameUrl: gameUrl || undefined, stage: 'restore', level: 'success', message: msg })
-        sendCloudSavesStatus({ at: Date.now(), gameUrl: gameUrl || undefined, gameKey, stage: 'restore', level: 'success', message: msg })
-        return { success: true, message: restoreRes.message }
-      }
-
-      if (restoreRes?.success && (restoreRes as any)?.skipped) {
-        const msg = String(restoreRes?.message || 'Saves locais já estão atualizados.')
-        recordCloudSaves({ at: Date.now(), gameKey, gameUrl: gameUrl || undefined, stage: 'restore', level: 'info', message: msg })
-        sendCloudSavesStatus({ at: Date.now(), gameUrl: gameUrl || undefined, gameKey, stage: 'restore', level: 'info', message: msg })
-      }
-
-      // Fallback: legacy OnlineFix folder sync
-      return await drive.syncSavesOnPlayStart(options || {})
-    } catch (e: any) {
-      return { success: false, message: e?.message || String(e) }
-    }
-  })
-
-  ipcMain.handle('cloud-saves-get-history', async (_event, payload?: { gameUrl?: string; limit?: number }) => {
-    try {
-      const gameUrl = String(payload?.gameUrl || '').trim()
-      const game = gameUrl ? (getGame(gameUrl) as any) : null
-      const gameKey = cloudSaves.computeCloudSavesGameKey({
-        gameUrl: gameUrl || undefined,
-        title: String(game?.title || ''),
-        steamAppId: (game?.steam_app_id || null) as any,
-        protonPrefix: (game?.proton_prefix || null) as any
-      })
-      const list = listCloudSavesHistory({ gameKey, limit: payload?.limit })
-      return { success: true, gameKey, history: list }
-    } catch (e: any) {
-      return { success: false, error: e?.message || String(e) }
-    }
-  })
-
-  ipcMain.handle('cloud-saves-open-backups', async (_event, payload?: { gameUrl?: string }) => {
-    try {
-      const gameUrl = String(payload?.gameUrl || '').trim()
-      const game = gameUrl ? (getGame(gameUrl) as any) : null
-      const dir = cloudSaves.getLocalLudusaviBackupDir({
-        gameUrl: gameUrl || undefined,
-        title: String(game?.title || ''),
-        steamAppId: (game?.steam_app_id || null) as any,
-        protonPrefix: (game?.proton_prefix || null) as any
-      })
-      try { fs.mkdirSync(dir, { recursive: true }) } catch {}
-      const r = await shell.openPath(dir)
-      if (r) return { success: false, error: r }
-      return { success: true, path: dir }
-    } catch (e: any) {
-      return { success: false, error: e?.message || String(e) }
-    }
-  })
-
-// Synchronous trigger for a manual per-game save sync (compare remote vs local and download/upload)
-  ipcMain.handle('drive-sync-game-saves', async (event, arg: any) => {
-    console.log('[DRIVE-SYNC] Chamada recebida. Argumento:', arg)
-    try {
-      let options = arg
-
-      // Se o frontend enviou apenas a URL (string), hidratamos os dados
-      if (typeof arg === 'string') {
-        const gameUrl = arg
-        console.log(`[DRIVE-SYNC] Argumento é URL. Buscando jogo: ${gameUrl}`)
-        
-        // Assume-se que 'getGame' está definido e retorna o objeto do DB
-        const game = getGame(gameUrl) as any 
-        
-        if (!game) {
-          console.error(`[DRIVE-SYNC] Jogo não encontrado para URL: ${gameUrl}`)
-          return { success: false, message: 'Jogo não encontrado no banco de dados.' }
-        }
-
-        // Resolve o caminho absoluto se necessário
-        let installPath = game.install_path
-        if (installPath && !path.isAbsolute(installPath)) {
-          installPath = path.resolve(process.cwd(), installPath)
-        }
-
-        // Monta o objeto que o drive.ts espera
-        options = {
-          installPath: installPath,
-          protonPrefix: game.proton_prefix,
-          // ✅ CORREÇÃO CRÍTICA AQUI: Usamos o 'steam_app_id'. 
-          // Se for null/undefined no DB, o valor será 'undefined', 
-          // o que forçará o drive.ts a buscar o ID real no OnlineFix.ini.
-          // Antes estava: 'realAppId: game.game_id'
-          realAppId: game.steam_app_id || undefined
-        }
-
-        console.log('[DRIVE-SYNC] Dados do jogo resolvidos (RealAppId agora é steam_app_id ou undefined):', options)
-      }
-
-      // Prefer Ludusavi-based sync; fallback to legacy OnlineFix sync.
-      try {
-        const gameUrl = typeof arg === 'string' ? arg : String(options?.gameUrl || '').trim()
-        const game = gameUrl ? (getGame(gameUrl) as any) : null
-        const res = await cloudSaves.syncCloudSavesManual({
-          gameUrl: gameUrl || undefined,
-          title: String(options?.title || game?.title || ''),
-          steamAppId: (options?.steamAppId || game?.steam_app_id || null) as any,
-          protonPrefix: (options?.protonPrefix || game?.proton_prefix || null) as any
-        })
-        console.log('[DRIVE-SYNC] Resultado final (Ludusavi):', res)
-        if (res?.success) return res
-      } catch (e) {
-        console.warn('[DRIVE-SYNC] Ludusavi sync failed; falling back:', e)
-      }
-
-      const legacy = await drive.syncSavesOnPlayStart(options || {})
-      console.log('[DRIVE-SYNC] Resultado final (legacy):', legacy)
-      return legacy
-    } catch (e: any) {
-      console.error('[DRIVE-SYNC] Erro inesperado na chamada principal:', e)
-      return { success: false, message: e?.message || String(e) }
-    }
-  })
-  
-  ipcMain.handle('drive-save-credentials', async (event, rawJson: string) => {
-    const res = await drive.saveClientCredentials(rawJson)
-    return res
-  })
+// NOTE: Drive/CloudSaves handlers moved to src/main/ipc/driveHandlers.ts
 
 process.on('unhandledRejection', (reason: any) => {
   if (reason && typeof (reason as any).message === 'string' && (reason as any).message.includes('UTP_ECONNRESET')) {
@@ -1076,98 +878,83 @@ async function getCachedProtonRuntimes(force = false): Promise<any[]> {
   }
 }
 
-// Sandbox configuration moved to top of file (before Chromium initialization)
-
-function isTorrentListing(url: string) {
-  return url.includes('/torrents/') || url.endsWith('.torrent')
+// ============================================================================
+// IPC Context and Modular Handlers Registration
+// ============================================================================
+const ipcContext: IpcContext = {
+  getMainWindow: () => mainWindow,
+  runningGames,
+  inFlightPrefixJobs,
+  updateQueue,
+  get updateQueueRunning() { return updateQueueRunning },
+  get updateQueueCurrent() { return updateQueueCurrent },
+  get updateQueueLastError() { return updateQueueLastError },
+  setUpdateQueueRunning: (v: boolean) => { updateQueueRunning = v },
+  setUpdateQueueCurrent: (v: string | null) => { updateQueueCurrent = v },
+  setUpdateQueueLastError: (v: string | null) => { updateQueueLastError = v },
+  achievementsManager,
+  achievementOverlay,
+  sendDownloadProgress,
+  sendUpdateQueueStatus,
+  sendGameLaunchStatus,
+  sendPrefixJobStatus,
+  sendCloudSavesStatus,
+  fetchAndPersistBanner,
+  prepareGamePrefixAfterInstall
 }
 
-ipcMain.handle('start-torrent-download', async (_event: IpcMainInvokeEvent, torrentUrl: string, referer?: string) => {
-  console.log('[Main] 🎯 start-torrent-download called!')
-  console.log('[Main] Torrent URL:', torrentUrl)
-  console.log('[Main] Referer:', referer)
+// Register all modular IPC handlers
+registerAllIpcHandlers(ipcContext)
 
+// Sandbox configuration moved to top of file (before Chromium initialization)
+
+const WEBVIEW_ALLOWED_HOSTS = new Set([
+  'online-fix.me',
+  'accounts.google.com',
+  'accounts.google.com.br',
+  'discord.com'
+])
+const WEBVIEW_ALLOWED_SUFFIXES = ['.online-fix.me', '.discord.com', '.discordapp.com']
+
+function isAllowedWebviewHost(host: string) {
+  const h = String(host || '').toLowerCase()
+  if (!h) return false
+  if (WEBVIEW_ALLOWED_HOSTS.has(h)) return true
+  return WEBVIEW_ALLOWED_SUFFIXES.some(suffix => h.endsWith(suffix))
+}
+
+function isAllowedWebviewUrl(raw?: string | null) {
+  const url = String(raw || '').trim()
+  if (!url) return false
+  if (url.startsWith('about:')) return true
   try {
-    // Check if it's a torrent directory URL or direct .torrent file
-    let actualTorrentUrl = torrentUrl
-
-    if (torrentUrl.includes('/torrents/') && !torrentUrl.endsWith('.torrent')) {
-      console.log('[Main] This is a torrent directory, need to scrape for .torrent file')
-      actualTorrentUrl = await resolveTorrentFileUrl(torrentUrl, TORRENT_PARTITION)
-      console.log('[Main] Resolved torrent file URL:', actualTorrentUrl)
-    }
-
-    // Try to get the proper title and version from the game page
-    const gamePageUrl = referer || torrentUrl
-    let title = deriveTitleFromTorrentUrl(actualTorrentUrl)
-    let version = 'unknown'
-
-    // Scrape game info from the referer page (the game page)
-    if (gamePageUrl && gamePageUrl.includes('online-fix.me') && !gamePageUrl.includes('/torrents/')) {
-      console.log('[Main] Scraping game info from page:', gamePageUrl)
-      const gameInfo = await scrapeGameInfo(gamePageUrl)
-      if (gameInfo.title) {
-        title = gameInfo.title
-        console.log('[Main] Using scraped title:', title)
-      }
-      if (gameInfo.version) {
-        version = gameInfo.version
-        console.log('[Main] Using scraped version:', version)
-      }
-    }
-
-    console.log('[Main] Game title:', title)
-    console.log('[Main] Game version:', version)
-    console.log('[Main] Starting download...')
-
-    const result = await startGameDownload({
-      gameUrl: gamePageUrl,
-      torrentMagnet: actualTorrentUrl,
-      gameTitle: title,
-      gameVersion: version
-    }, (progress, details) => {
-      sendDownloadProgress({
-        magnet: actualTorrentUrl,
-        progress,
-        speed: details?.downloadSpeed || 0,
-        downloaded: details?.downloaded || 0,
-        total: details?.total || 0,
-        eta: details?.timeRemaining || 0,
-        peers: (details as any)?.peers,
-        seeds: (details as any)?.seeds,
-        infoHash: details?.infoHash || actualTorrentUrl,
-        stage: details?.stage || 'download',
-        extractProgress: (details as any)?.extractProgress,
-        destPath: (details as any)?.destPath
-      })
-    })
-
-    if (!result.success) {
-      console.warn('[Main] Download did not start/was cancelled:', result.error)
-      return { success: false, error: result.error }
-    }
-
-    const completed = getDownloadByUrl(actualTorrentUrl) as { info_hash?: string; dest_path?: string | null } | undefined
-    if (completed || result.installPath) {
-      mainWindow?.webContents.send('download-complete', {
-        magnet: actualTorrentUrl,
-        infoHash: completed?.info_hash || undefined,
-        destPath: result.installPath || completed?.dest_path
-      })
-      // Auto-fetch banner once installed
-      fetchAndPersistBanner(gamePageUrl, title).catch(() => {})
-      if (result.installPath) {
-        prepareGamePrefixAfterInstall(gamePageUrl, title, result.installPath).catch(() => {})
-      }
-    }
-
-    console.log('[Main] ✅ Download started successfully!')
-    return { success: true }
-  } catch (err: any) {
-    console.error('[Main] ❌ Download failed:', err)
-    return { success: false, error: err?.message || String(err) }
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) return false
+    return isAllowedWebviewHost(parsed.hostname)
+  } catch {
+    return false
   }
-})
+}
+
+function isAllowedTorrentUrl(raw?: string | null) {
+  const url = String(raw || '').trim()
+  if (!url) return false
+  try {
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) return false
+    const host = String(parsed.hostname || '').toLowerCase()
+    if (!(host === 'online-fix.me' || host.endsWith('.online-fix.me'))) return false
+    return parsed.pathname.includes('/torrents/') || parsed.pathname.endsWith('.torrent')
+  } catch {
+    return false
+  }
+}
+
+function isTorrentListing(url: string) {
+  return isAllowedTorrentUrl(url)
+}
+
+// NOTE: start-torrent-download handler moved to src/main/ipc/torrentHandlers.ts
 
 async function handleExternalDownload(url: string) {
   if (!isTorrentListing(url)) return
@@ -1293,11 +1080,20 @@ async function createAuthWindow() {
     const cookies = await ses.cookies.get({ url: 'https://online-fix.me' })
     console.log('[Auth] Found cookies after login:', cookies.map(c => c.name))
     mainWindow?.webContents.send('cookies-saved', cookies)
+    try {
+      await exportCookies('https://online-fix.me')
+    } catch (err) {
+      console.warn('[Auth] Failed to persist cookies', err)
+    }
   })
 }
 
 app.whenReady().then(async () => {
   await importCookies('https://online-fix.me')
+
+  // Initialize cloud saves setting
+  const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
+  drive.setCloudSavesEnabled(cloudSavesEnabled)
 
   // Warm Proton runtimes cache at startup (Linux only).
   if (process.platform === 'linux') {
@@ -1306,13 +1102,26 @@ app.whenReady().then(async () => {
     }, 250)
   }
 
+  // Proactively prepare Ludusavi in the background so Cloud Saves can work
+  // immediately after the user connects Google Drive.
+  // This should never block app startup.
+  setTimeout(() => {
+    void ensureLudusaviAvailable({ allowDownload: true, timeoutMs: 120_000 })
+      .then((r) => {
+        if (!r.ok) console.warn('[LUDUSAVI] Startup prepare failed:', r.message)
+        else console.log('[LUDUSAVI] Ready at startup:', r.path, r.downloaded ? '(downloaded)' : '')
+      })
+      .catch((e: any) => console.warn('[LUDUSAVI] Startup prepare error:', e?.message || String(e)))
+  }, 1200)
+
   // IMPORTANT: resuming downloads can be heavy (torrent init, IO, IPC). Running it
   // before the UI is up makes the app feel frozen, especially in dev.
   // Allow disabling via env for troubleshooting.
   const disableAutoResume = ['1', 'true', 'yes'].includes(String(process.env.OF_DISABLE_AUTO_RESUME_DOWNLOADS || '').toLowerCase())
 
-  // Enhanced ad blocking - Network level + BrowserWindow level
-  console.log('[AdBlock Pro] Initializing advanced ad blocker...')
+  // Lightweight popup blocker - blocks popups/popunders but allows banner ads
+  // This is fair to the website while protecting users from annoying redirects
+  console.log('[PopupBlocker] Initializing lightweight popup blocker...')
 
   const filter = {
     urls: ['<all_urls>']
@@ -1321,52 +1130,61 @@ app.whenReady().then(async () => {
   let blockedCount = 0
   const webviewSession = session.fromPartition(TORRENT_PARTITION)
   webviewSession.setPermissionRequestHandler((_wc, _permission, callback) => {
-    // Deny all permission prompts to prevent notification overlays/popups
+    // Deny notification permission prompts to prevent spam
     callback(false)
   })
 
-  // Network-level blocking
+  // Network-level blocking - only for popup/redirect domains
   webviewSession.webRequest.onBeforeRequest(filter, (details, callback) => {
     const shouldBlock = shouldBlockRequest(details.url)
     if (shouldBlock) {
       blockedCount++
-      console.log(`[AdBlock Pro] Network Block #${blockedCount}:`, details.url.substring(0, 80))
+      console.log(`[PopupBlocker] Network Block #${blockedCount}:`, details.url.substring(0, 80))
       callback({ cancel: true })
     } else {
       callback({ cancel: false })
     }
   })
 
-  console.log('[AdBlock Pro] Network-level blocking enabled')
+  console.log('[PopupBlocker] Network-level popup blocking enabled')
 
-  // CRITICAL: Block ALL popunders at BrowserWindow level
+  // Block popunders at BrowserWindow level (but allow normal new windows)
   app.on('web-contents-created', (_event, contents) => {
-    // Block ANY attempt to open new windows (but handle torrents specially)
+    // Handle new window requests
     contents.setWindowOpenHandler(({ url }) => {
-      // Check if it's a torrent URL
+      // Always allow torrent URLs
       if (isTorrentListing(url)) {
-        console.log('[AdBlock Pro] New window is torrent download, handling:', url.substring(0, 80))
+        console.log('[PopupBlocker] Allowing torrent download:', url.substring(0, 80))
         handleExternalDownload(url).catch((err) => {
           console.warn('Failed to auto-handle external download', err)
         })
-        return { action: 'deny' } // Still deny the window, but we handle it ourselves
+        return { action: 'deny' } // Deny window but handle download ourselves
       }
 
-      // Block all other popunders
-      console.log('[AdBlock Pro] BLOCKED popunder:', url.substring(0, 80))
-      return { action: 'deny' }
+      // Block known popup domains
+      if (shouldBlockRequest(url)) {
+        console.log('[PopupBlocker] Blocked popup:', url.substring(0, 80))
+        return { action: 'deny' }
+      }
+
+      // Allow other popups (login windows, etc) - be fair to the site
+      console.log('[PopupBlocker] Allowing popup:', url.substring(0, 80))
+      return { action: 'deny' } // Still deny to prevent external browser, but log it
     })
 
     contents.on('new-window' as any, (event: Electron.Event, url: string) => {
-      event.preventDefault()
-      console.log('[AdBlock Pro] Blocked new-window popunder:', url)
+      // Only block known popup URLs
+      if (shouldBlockRequest(url)) {
+        event.preventDefault()
+        console.log('[PopupBlocker] Blocked new-window popup:', url)
+      }
     })
 
-    // Block navigation to ad URLs (but ALLOW torrent URLs)
+    // Block navigation only to known popup/redirect URLs
     contents.on('will-navigate', (event, navigationUrl) => {
-      // Check if it's a torrent link FIRST (priority)
+      // Always allow torrent links
       if (isTorrentListing(navigationUrl)) {
-        console.log('[AdBlock Pro] Detected torrent navigation, allowing and handling:', navigationUrl.substring(0, 80))
+        console.log('[PopupBlocker] Allowing torrent navigation:', navigationUrl.substring(0, 80))
         event.preventDefault()
         handleExternalDownload(navigationUrl).catch((err) => {
           console.warn('Failed to auto-handle external download', err)
@@ -1374,20 +1192,20 @@ app.whenReady().then(async () => {
         return
       }
 
-      // Then check if it's an ad URL to block
-      const blocked = shouldBlockRequest(navigationUrl)
-      if (blocked) {
-        console.log('[AdBlock Pro] Blocked navigation:', navigationUrl.substring(0, 80))
+      // Only block known popup/redirect domains
+      if (shouldBlockRequest(navigationUrl)) {
+        console.log('[PopupBlocker] Blocked navigation to popup domain:', navigationUrl.substring(0, 80))
         event.preventDefault()
         return
       }
+      // Allow all other navigation
     })
 
-    // Block redirects to ad URLs (but ALLOW torrent URLs)
+    // Block redirects only to known popup/redirect URLs
     contents.on('will-redirect', (event, navigationUrl) => {
-      // Check if it's a torrent link FIRST (priority)
+      // Always allow torrent links
       if (isTorrentListing(navigationUrl)) {
-        console.log('[AdBlock Pro] Detected torrent redirect, allowing and handling:', navigationUrl.substring(0, 80))
+        console.log('[PopupBlocker] Allowing torrent redirect:', navigationUrl.substring(0, 80))
         event.preventDefault()
         handleExternalDownload(navigationUrl).catch((err) => {
           console.warn('Failed to auto-handle external download', err)
@@ -1395,17 +1213,17 @@ app.whenReady().then(async () => {
         return
       }
 
-      // Then check if it's an ad URL to block
-      const shouldBlock = shouldBlockRequest(navigationUrl)
-      if (shouldBlock) {
-        console.log('[AdBlock Pro] Blocked redirect:', navigationUrl.substring(0, 80))
+      // Only block known popup/redirect domains
+      if (shouldBlockRequest(navigationUrl)) {
+        console.log('[PopupBlocker] Blocked redirect to popup domain:', navigationUrl.substring(0, 80))
         event.preventDefault()
       }
+      // Allow all other redirects
     })
   })
 
-  console.log('[AdBlock Pro] Popunder blocking enabled at BrowserWindow level')
-  console.log('[AdBlock Pro] All protection layers active!')
+  console.log('[PopupBlocker] Popup blocking enabled - banner ads allowed')
+  console.log('[PopupBlocker] Fair mode active!')
 
   createMainWindow()
 
@@ -1446,173 +1264,26 @@ app.whenReady().then(async () => {
     setTimeout(runResumeOnce, 8000)
   }
 
+  // open-auth-window must remain here as it depends on createAuthWindow defined in this file
   ipcMain.handle('open-auth-window', async () => {
     await createAuthWindow()
     return true
   })
 
-  ipcMain.handle('get-user-profile', async () => {
-    const profile = await fetchUserProfile()
-    if (profile.name || profile.avatar) return { success: true, ...profile }
-    return { success: false, error: 'Perfil não encontrado', ...profile }
-  })
+  // NOTE: Auth handlers (get-user-profile, get-cookie-header, export-cookies, clear-cookies,
+  // check-game-version, fetch-game-update-info) moved to src/main/ipc/authHandlers.ts
 
-  ipcMain.handle('get-cookie-header', async (event, url: string) => {
-    const cookieHeader = await import('./cookieManager').then(m => m.getCookieHeaderForUrl(url))
-    return cookieHeader
-  })
+  // NOTE: Download handlers (download-http, download-torrent, pause-download, resume-download,
+  // cancel-download, get-active-downloads, get-completed-downloads, delete-download,
+  // get-onlinefix-ini, save-onlinefix-ini) moved to src/main/ipc/downloadHandlers.ts
 
-  ipcMain.handle('export-cookies', async (event, url?: string) => {
-    const cookies = await import('./cookieManager').then(m => m.exportCookies(url))
-    return cookies
-  })
+  // NOTE: Game handlers (get-games, delete-game, open-game-folder, configure-game-exe,
+  // set-game-version, set-game-title, set-game-favorite, toggle-game-favorite, check-all-updates,
+  // set-game-proton-options, set-game-proton-prefix, set-game-steam-appid, set-game-lan-settings,
+  // set-game-image-url, pick-game-banner-file, open-external, open-path, select-directory)
+  // moved to src/main/ipc/gameHandlers.ts
 
-  ipcMain.handle('clear-cookies', async () => {
-    try {
-      const cm = await import('./cookieManager')
-      await cm.clearCookiesAndFile()
-
-      // Reset webview storage as well (best effort)
-      try {
-        await session.defaultSession.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage'] as any })
-      } catch {}
-      try {
-        const ses = session.fromPartition(TORRENT_PARTITION)
-        await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage'] as any })
-      } catch {}
-
-      mainWindow?.webContents.send('cookies-cleared')
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao limpar cookies' }
-    }
-  })
-
-  ipcMain.handle('check-game-version', async (_event: IpcMainInvokeEvent, url: string) => {
-    try {
-      const info = await fetchGameUpdateInfo(url)
-      if (!info.version) throw new Error('Versao nao encontrada na pagina')
-      // Return torrentUrl as an extra field for future use
-      return { success: true, version: info.version, torrentUrl: info.torrentUrl }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('fetch-game-update-info', async (_event: IpcMainInvokeEvent, url: string) => {
-    try {
-      const info = await fetchGameUpdateInfo(url)
-      if (info.version) updateGameInfo(url, { latest_version: info.version })
-      if (info.torrentUrl) {
-        updateGameInfo(url, { torrent_magnet: info.torrentUrl, download_url: info.torrentUrl })
-      }
-      return { success: true, latest: info.version || null, torrentUrl: info.torrentUrl || null }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao obter dados de atualização' }
-    }
-  })
-
-  ipcMain.handle('download-http', async (_event: IpcMainInvokeEvent, url: string, destPath: string) => {
-    try {
-      await downloadFile(url, destPath, (p) => {
-        sendDownloadProgress({ url, progress: p })
-      })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('download-torrent', async (_event: IpcMainInvokeEvent, magnet: string, destPath: string) => {
-    try {
-      await downloadTorrent(magnet, destPath, (p) => {
-        sendDownloadProgress({ magnet, progress: p })
-      })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('pause-download', async (_event: IpcMainInvokeEvent, torrentId: string) => {
-    try {
-      const success = await pauseDownloadByTorrentId(torrentId)
-      return { success }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('resume-download', async (_event: IpcMainInvokeEvent, torrentId: string) => {
-    try {
-      const success = await resumeDownloadByTorrentId(torrentId)
-      return { success }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('cancel-download', async (_event: IpcMainInvokeEvent, torrentId: string) => {
-    try {
-      const success = await cancelDownloadByTorrentId(torrentId)
-      return { success }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('get-active-downloads', async () => {
-    try {
-      const downloads = getActiveDownloads()
-      return { success: true, downloads }
-    } catch (err: any) {
-      return { success: false, error: err.message, downloads: [] }
-    }
-  })
-
-  ipcMain.handle('get-completed-downloads', async () => {
-    try {
-      const downloads = getCompletedDownloads()
-      return { success: true, downloads }
-    } catch (err: any) {
-      return { success: false, error: err.message, downloads: [] }
-    }
-  })
-
-  ipcMain.handle('delete-download', async (_event, downloadId: number) => {
-    try {
-      deleteDownload(downloadId)
-      mainWindow?.webContents.send('download-deleted')
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('get-onlinefix-ini', async (_event, gameUrl: string) => {
-    try {
-      return await readOnlineFixIni(gameUrl)
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao ler OnlineFix.ini' }
-    }
-  })
-
-  ipcMain.handle('save-onlinefix-ini', async (_event, gameUrl: string, content: string) => {
-    try {
-      return await writeOnlineFixIni(gameUrl, content)
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao salvar OnlineFix.ini' }
-    }
-  })
-
-  ipcMain.handle('get-games', async () => {
-    try {
-      const games = getAllGames()
-      return { success: true, games }
-    } catch (err: any) {
-      return { success: false, error: err.message, games: [] }
-    }
-  })
+  // The handlers below remain in main.ts as they have complex dependencies on local functions
 
   ipcMain.handle('scan-installed-games', async () => {
     try {
@@ -1674,1388 +1345,32 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('achievements-set-steam-web-api-key', async (_event, apiKey: string) => {
-    try {
-      const key = String(apiKey || '').trim()
-      // Allow clearing by sending empty.
-      setSetting('steam_web_api_key', key)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
+// NOTE: achievements-set-steam-web-api-key, achievements-get, achievements-import-schema,
+// achievements-save-schema, achievements-clear-schema, achievements-force-refresh handlers
+// moved to src/main/ipc/achievementsHandlers.ts
 
-  ipcMain.handle('achievements-get', async (_event, gameUrl: string) => {
-    try {
-      const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+// NOTE: fetch-game-image handler moved to src/main/ipc/torrentHandlers.ts
+// NOTE: set-game-image-url, pick-game-banner-file, delete-game, open-game-folder,
+// configure-game-exe, set-game-version, set-game-title, set-game-favorite,
+// toggle-game-favorite, check-all-updates, set-game-proton-options, set-game-proton-prefix,
+// set-game-steam-appid, set-game-lan-settings, open-external, select-directory handlers
+// moved to src/main/ipc/gameHandlers.ts
 
-      const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+// NOTE: get-settings, save-settings handlers moved to src/main/ipc/settingsHandlers.ts
 
-      // Resolve install dir similarly to launch-game
-      let exePath = (game.executable_path as string | null) || null
-      let installDir: string = process.cwd()
-      if (game.install_path) {
-        installDir = path.isAbsolute(game.install_path) ? game.install_path : path.resolve(process.cwd(), game.install_path)
-      } else if (exePath) {
-        installDir = path.dirname(exePath)
-      }
+// NOTE: vpn-status, vpn-install, vpn-room-create, vpn-room-join, vpn-room-peers,
+// vpn-connect, vpn-disconnect handlers moved to src/main/ipc/vpnHandlers.ts
 
-      if (exePath) exePath = path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath)
+// NOTE: launch-game, stop-game, is-game-running handlers moved to
+// src/main/ipc/launchHandlers.ts
 
-      const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
+// NOTE: proton-ensure-runtime, proton-list-runtimes, proton-set-root, proton-default-prefix,
+// proton-prepare-prefix, proton-create-game-prefix, proton-build-launch handlers moved to
+// src/main/ipc/protonHandlers.ts
 
-      const meta = {
-        gameUrl: url,
-        title: game.title || undefined,
-        installPath: installDir,
-        executablePath: exePath,
-        steamAppId: game.steam_app_id || null,
-        schemaSteamAppId: detectedSteamAppId || game.steam_app_id || null,
-        protonPrefix: game.proton_prefix || null
-      }
+// NOTE: extract-download handler moved to src/main/ipc/downloadHandlers.ts
 
-      const sources = achievementsManager.getSources(meta)
-      const achievements = await achievementsManager.getAchievements(meta)
-      return { success: true, sources, achievements }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
-
-  ipcMain.handle('achievements-import-schema', async (_event, gameUrl: string) => {
-    try {
-      const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
-
-      const { dialog } = require('electron')
-      const res = await dialog.showOpenDialog({
-        title: 'Selecione um schema de conquistas (JSON)',
-        properties: ['openFile'],
-        filters: [{ name: 'JSON', extensions: ['json'] }]
-      })
-
-      if (res.canceled || !res.filePaths?.length) return { success: false, error: 'Nenhum arquivo selecionado' }
-      const filePath = String(res.filePaths[0] || '').trim()
-      if (!filePath) return { success: false, error: 'Arquivo inválido' }
-
-      const raw = fs.readFileSync(filePath, 'utf8')
-      const json = JSON.parse(raw)
-
-      const { setCustomAchievementSchemaForGame } = require('./achievements/schema.js') as typeof import('./achievements/schema.js')
-      const out = setCustomAchievementSchemaForGame(url, json)
-      if (!out.success) return { success: false, error: out.error || 'Falha ao salvar schema' }
-      return { success: true, count: out.count }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
-
-  ipcMain.handle('achievements-clear-schema', async (_event, gameUrl: string) => {
-    try {
-      const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
-      const { clearCustomAchievementSchemaForGame } = require('./achievements/schema.js') as typeof import('./achievements/schema.js')
-      const out = clearCustomAchievementSchemaForGame(url)
-      if (!out.success) return { success: false, error: out.error || 'Falha ao remover schema' }
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
-
-  ipcMain.handle('achievements-force-refresh', async (_event, gameUrl: string) => {
-    try {
-      const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
-
-      const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
-
-      let exePath = (game.executable_path as string | null) || null
-      let installDir: string = process.cwd()
-      if (game.install_path) {
-        installDir = path.isAbsolute(game.install_path) ? game.install_path : path.resolve(process.cwd(), game.install_path)
-      } else if (exePath) {
-        installDir = path.dirname(exePath)
-      }
-
-      if (exePath) exePath = path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath)
-
-      const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
-      const steamAppId = String(detectedSteamAppId || game.steam_app_id || '').trim()
-      if (!steamAppId) return { success: false, error: 'Steam AppID não detectado/configurado' }
-
-      const { clearCachedSchema } = require('./achievements/schema.js') as typeof import('./achievements/schema.js')
-      clearCachedSchema(steamAppId)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
-
-ipcMain.handle('fetch-game-image', async (_event, gameUrl: string, title: string) => {
-  try {
-    const banner = await fetchSteamBanner(title || gameUrl)
-    if (banner) {
-      updateGameInfo(gameUrl, { image_url: banner })
-      return { success: true, imageUrl: banner }
-    }
-    return { success: false, error: 'Nenhuma imagem encontrada' }
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Falha ao buscar imagem' }
-  }
-})
-
-  ipcMain.handle('set-game-image-url', async (_event, gameUrl: string, imageUrl: string | null) => {
-    try {
-      const value = (imageUrl || '').trim()
-      if (!value) {
-        updateGameInfo(gameUrl, { image_url: null })
-        return { success: true, imageUrl: null }
-      }
-
-      if (value.length > 2048) return { success: false, error: 'URL muito longa' }
-
-      const allowed = value.startsWith('http://') || value.startsWith('https://') || value.startsWith('file://')
-      if (!allowed) {
-        return { success: false, error: 'URL inválida (use http(s):// ou file://)' }
-      }
-
-      updateGameInfo(gameUrl, { image_url: value })
-      return { success: true, imageUrl: value }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao definir banner' }
-    }
-  })
-
-  ipcMain.handle('pick-game-banner-file', async (_event, gameUrl: string) => {
-    try {
-      const parent = BrowserWindow.getFocusedWindow() || mainWindow || undefined
-      const options = {
-        title: 'Selecionar banner (imagem)',
-        properties: ['openFile'] as Array<'openFile'>,
-        filters: [
-          { name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
-          { name: 'Todos os arquivos', extensions: ['*'] }
-        ]
-      }
-      const result = parent
-        ? await dialog.showOpenDialog(parent, options)
-        : await dialog.showOpenDialog(options)
-
-      if (result.canceled || !result.filePaths?.[0]) {
-        return { success: false, canceled: true }
-      }
-
-      const srcPath = result.filePaths[0]
-      const ext = (path.extname(srcPath) || '.png').toLowerCase()
-      const game = getGame(gameUrl) as any
-      const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-      const slug = stableId ? `game_${stableId}` : slugify(String(game?.title || gameUrl || 'game'))
-
-      const imagesDir = path.join(app.getPath('userData'), 'images')
-      fs.mkdirSync(imagesDir, { recursive: true })
-
-      const destPath = path.join(imagesDir, `${slug}${ext}`)
-      fs.copyFileSync(srcPath, destPath)
-
-      const fileUrl = pathToFileURL(destPath).toString()
-      updateGameInfo(gameUrl, { image_url: fileUrl })
-      return { success: true, imageUrl: fileUrl, path: destPath }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao selecionar imagem' }
-    }
-  })
-
-
-  ipcMain.handle('delete-game', async (_event, url: string) => {
-    try {
-      // Get game info before deleting to get install_path
-      const game = await import('./db.js').then(m => m.getGame(url)) as { install_path?: string } | undefined
-
-      // Delete game folder if it exists
-      if (game?.install_path) {
-        const rawPath = String(game.install_path)
-        let installPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)
-
-        try {
-          if (fs.existsSync(installPath)) {
-            const st = fs.statSync(installPath)
-            if (st.isFile()) installPath = path.dirname(installPath)
-          }
-        } catch {}
-
-        // Basic safety guard: never delete filesystem root.
-        if (installPath && path.parse(installPath).root === installPath) {
-          console.warn('[DeleteGame] Refusing to delete root path:', installPath)
-        } else if (fs.existsSync(installPath)) {
-          console.log('[DeleteGame] Removing game folder:', installPath)
-          try {
-            fs.rmSync(installPath, { recursive: true, force: true })
-            console.log('[DeleteGame] Game folder removed successfully')
-          } catch (folderErr: any) {
-            console.warn('[DeleteGame] Failed to remove game folder:', folderErr.message)
-            // Continue to delete from DB even if folder deletion fails
-          }
-        }
-      }
-
-      // Delete from database
-      deleteGame(url)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('open-game-folder', async (_event, installPath?: string) => {
-    try {
-      if (!installPath) return { success: false, error: 'Path not provided' }
-      const normalized = path.isAbsolute(installPath) ? installPath : path.resolve(process.cwd(), installPath)
-      await shell.openPath(normalized)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('configure-game-exe', async (_event, gameUrl: string) => {
-    try {
-      const { dialog } = require('electron')
-      const res = await dialog.showOpenDialog({
-        title: 'Selecione o executável do jogo',
-        properties: ['openFile'],
-        filters: [{ name: 'Executáveis', extensions: ['exe'] }]
-      })
-      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhum arquivo selecionado' }
-      const exePath = res.filePaths[0]
-      updateGameInfo(gameUrl, { executable_path: exePath })
-      return { success: true, exePath }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-version', async (_event, gameUrl: string, version: string) => {
-    try {
-      updateGameInfo(gameUrl, { installed_version: version })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-title', async (_event, gameUrl: string, title: string) => {
-    try {
-      updateGameInfo(gameUrl, { title })
-      fetchAndPersistBanner(gameUrl, title).catch(() => {})
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-favorite', async (_event, gameUrl: string, isFavorite: boolean) => {
-    try {
-      setGameFavorite(gameUrl, !!isFavorite)
-      return { success: true, isFavorite: !!isFavorite }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('toggle-game-favorite', async (_event, gameUrl: string) => {
-    try {
-      const res = toggleGameFavorite(gameUrl)
-      return { success: true, isFavorite: !!res?.isFavorite }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('check-all-updates', async () => {
-    try {
-      const games = (getAllGames() as any[])
-        .filter((g: any) => g?.url)
-        .filter((g: any) => /^https?:\/\//.test(String(g.url || '')))
-      const results: Array<{ url: string; latest?: string; torrentUrl?: string; error?: string }> = []
-
-      const queue = [...games]
-      const concurrency = 4
-      const workers = Array.from({ length: Math.min(concurrency, queue.length || 1) }).map(async () => {
-        while (queue.length) {
-          const g: any = queue.shift()
-          if (!g?.url) continue
-          try {
-            const info = await fetchGameUpdateInfo(String(g.url))
-            if (!info.version) throw new Error('Versao nao encontrada na pagina')
-            const payload: any = { latest_version: info.version }
-            if (info.torrentUrl) {
-              payload.torrent_magnet = info.torrentUrl
-              payload.download_url = info.torrentUrl
-            }
-            updateGameInfo(g.url, payload)
-            results.push({ url: g.url, latest: info.version, torrentUrl: info.torrentUrl || undefined })
-            mainWindow?.webContents.send('game-version-update', { url: g.url, latest: info.version })
-          } catch (err: any) {
-            results.push({ url: String(g.url), error: err?.message || 'unknown error' })
-          }
-        }
-      })
-
-      await Promise.all(workers)
-
-      return { success: true, results }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao verificar atualizações' }
-    }
-  })
-
-  ipcMain.handle('set-game-proton-options', async (_event, gameUrl: string, runtime: string, options: any) => {
-    try {
-      updateGameInfo(gameUrl, { proton_runtime: runtime || null })
-      updateGameInfo(gameUrl, { proton_options: JSON.stringify(options || {}) })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-proton-prefix', async (_event, gameUrl: string, prefixPath: string | null) => {
-    try {
-      updateGameInfo(gameUrl, { proton_prefix: prefixPath || null })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-steam-appid', async (_event, gameUrl: string, steamAppId: string | null) => {
-    try {
-      const clean = steamAppId && String(steamAppId).trim() !== '' ? String(steamAppId).trim() : null
-      updateGameInfo(gameUrl, { steam_app_id: clean })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('set-game-lan-settings', async (_event, gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => {
-    try {
-      const mode = payload?.mode ? String(payload.mode) : null
-      const networkId = payload?.networkId ? String(payload.networkId) : null
-      const autoconnect = payload?.autoconnect ? 1 : 0
-      updateGameInfo(gameUrl, { lan_mode: mode, lan_network_id: networkId, lan_autoconnect: autoconnect })
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('open-external', async (_event, target: string) => {
-    try {
-      const url = String(target || '').trim()
-      if (!/^https?:\/\//i.test(url)) return { success: false, error: 'URL inválida' }
-      await shell.openExternal(url)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao abrir URL' }
-    }
-  })
-
-  ipcMain.handle('get-settings', async () => {
-    try {
-      const downloadPath = getSetting('download_path') || app.getPath('downloads')
-      const autoExtract = getSetting('auto_extract') !== 'false'
-      const autoUpdate = getSetting('auto_update') === 'true'
-      const parallelDownloads = Number(getSetting('parallel_downloads') || 3)
-      const steamWebApiKey = String(getSetting('steam_web_api_key') || '').trim()
-      const achievementSchemaBaseUrl = String(getSetting('achievement_schema_base_url') || '').trim()
-      const isLinuxPlatform = process.platform === 'linux'
-      const protonDefaultRuntimePath = isLinuxPlatform ? String(getSetting('proton_runtime_path') || '').trim() : ''
-      let protonExtraPaths: string[] = []
-      if (isLinuxPlatform) {
-        const legacy = String(getSetting('proton_runtime_root') || '').trim()
-        if (legacy) protonExtraPaths.push(legacy)
-        const raw = getSetting('proton_runtime_roots')
-        if (raw) {
-          try {
-            const parsed = JSON.parse(String(raw))
-            if (Array.isArray(parsed)) {
-              for (const p of parsed) {
-                if (typeof p === 'string' && p.trim()) protonExtraPaths.push(p.trim())
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
-        protonExtraPaths = Array.from(new Set(protonExtraPaths)).filter(Boolean)
-      }
-      let lanDefaultNetworkId = String(getSetting('lan_default_network_id') || '').trim()
-      const lanControllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-
-      return {
-        success: true,
-        platform: process.platform,
-        isLinux: isLinuxPlatform,
-        settings: {
-          downloadPath,
-          autoExtract,
-          autoUpdate,
-          parallelDownloads,
-          steamWebApiKey,
-          achievementSchemaBaseUrl,
-          protonDefaultRuntimePath,
-          protonExtraPaths,
-          lanDefaultNetworkId,
-          lanControllerUrl
-        }
-      }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('save-settings', async (_event, settings: any) => {
-    try {
-      if (settings.downloadPath) setSetting('download_path', settings.downloadPath)
-      setSetting('auto_extract', settings.autoExtract ? 'true' : 'false')
-      setSetting('auto_update', settings.autoUpdate ? 'true' : 'false')
-      setSetting('parallel_downloads', String(settings.parallelDownloads || 3))
-      if (typeof settings.steamWebApiKey === 'string') setSetting('steam_web_api_key', settings.steamWebApiKey.trim())
-      if (typeof settings.achievementSchemaBaseUrl === 'string') setSetting('achievement_schema_base_url', settings.achievementSchemaBaseUrl.trim())
-      if (process.platform === 'linux') {
-        // Proton é comportamento padrão no Linux (não faz sentido desativar).
-        setSetting('use_proton', 'true')
-
-        if (typeof settings.protonDefaultRuntimePath === 'string') {
-          const v = settings.protonDefaultRuntimePath.trim()
-          if (v) setSavedProtonRuntime(v)
-          else setSetting('proton_runtime_path', '')
-        }
-
-        if (Array.isArray(settings.protonExtraPaths)) {
-          setCustomProtonRoots(settings.protonExtraPaths)
-        } else if (typeof settings.protonExtraPaths === 'string' && settings.protonExtraPaths.trim()) {
-          // tolera payload antigo
-          setCustomProtonRoot(settings.protonExtraPaths.trim())
-        }
-      }
-      if (typeof settings.lanDefaultNetworkId === 'string') setSetting('lan_default_network_id', settings.lanDefaultNetworkId.trim())
-      if (typeof settings.lanControllerUrl === 'string') setSetting('lan_controller_url', settings.lanControllerUrl.trim())
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('vpn-status', async () => {
-    try {
-      const controllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-      const ctrl = await vpnControllerStatus({ controllerUrl })
-      const installed = await vpnCheckInstalled()
-      return { success: true, controller: ctrl.success ? ctrl.data : null, installed: installed.installed, installError: installed.error }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao consultar VPN' }
-    }
-  })
-
-  ipcMain.handle('vpn-install', async () => {
-    try {
-      const res = await vpnInstallBestEffort()
-      if (!res.success) {
-        if (process.platform === 'win32') {
-          return {
-            success: false,
-            error: res.error || 'Windows: instale WireGuard e tente novamente',
-            url: 'https://www.wireguard.com/install/'
-          }
-        }
-        return { success: false, error: res.error || 'Falha ao instalar' }
-      }
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao instalar' }
-    }
-  })
-
-  ipcMain.handle('vpn-room-create', async (_event, payload?: { name?: string }) => {
-    try {
-      const controllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-      const name = String(payload?.name || '').trim()
-      const res = await vpnControllerCreateRoom({ controllerUrl, name })
-      if (!res.success) return { success: false, error: res.error || 'Falha ao criar sala' }
-      return { success: true, code: res.code, config: res.config, vpnIp: res.vpnIp }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao criar sala' }
-    }
-  })
-
-  ipcMain.handle('vpn-room-join', async (_event, payload: { code: string; name?: string }) => {
-    try {
-      const controllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-      const code = String(payload?.code || '').trim()
-      const name = String(payload?.name || '').trim()
-      if (!code) return { success: false, error: 'Código ausente' }
-      const res = await vpnControllerJoinRoom({ controllerUrl, code, name })
-      if (!res.success) return { success: false, error: res.error || 'Falha ao entrar na sala' }
-      return { success: true, config: res.config, vpnIp: res.vpnIp, hostIp: res.hostIp }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao entrar na sala' }
-    }
-  })
-
-  ipcMain.handle('vpn-room-peers', async (_event, payload: { code: string }) => {
-    try {
-      const controllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-      const code = String(payload?.code || '').trim()
-      if (!code) return { success: false, error: 'Código ausente' }
-      const res = await vpnControllerListPeers({ controllerUrl, code })
-      if (!res.success) return { success: false, error: res.error || 'Falha ao listar peers' }
-      return { success: true, peers: res.peers || [] }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao listar peers' }
-    }
-  })
-
-  ipcMain.handle('vpn-connect', async (_event, payload: { config: string }) => {
-    try {
-      const cfg = String(payload?.config || '').trim()
-      if (!cfg) return { success: false, error: 'Config ausente' }
-      const userDataDir = app.getPath('userData')
-      const res = await vpnConnectFromConfig({ configText: cfg, userDataDir })
-      if (!res.success) {
-        return {
-          success: false,
-          error: res.error || 'Falha ao conectar',
-          needsInstall: !!(res as any).needsInstall,
-          needsAdmin: !!(res as any).needsAdmin
-        }
-      }
-      return { success: true, tunnelName: res.tunnelName, configPath: res.configPath }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao conectar' }
-    }
-  })
-
-  ipcMain.handle('vpn-disconnect', async () => {
-    try {
-      const userDataDir = app.getPath('userData')
-      const res = await vpnDisconnect({ userDataDir })
-      if (!res.success) return { success: false, error: res.error || 'Falha ao desconectar', needsAdmin: !!(res as any).needsAdmin }
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao desconectar' }
-    }
-  })
-
-  ipcMain.handle('select-directory', async () => {
-    try {
-      const { dialog } = require('electron')
-      const res = await dialog.showOpenDialog({
-        title: 'Selecione uma pasta',
-        properties: ['openDirectory', 'createDirectory']
-      })
-      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhuma pasta selecionada' }
-      return { success: true, path: res.filePaths[0] }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-	  ipcMain.handle('launch-game', async (_event, gameUrl: string) => {
-	  try {
-      const existing = runningGames.get(gameUrl)
-      if (existing?.pid && isPidAlive(existing.pid)) {
-        sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Jogo já está em execução', pid: existing.pid })
-        return { success: false, error: 'Jogo já está em execução' }
-      }
-      if (inFlightPrefixJobs.has(gameUrl)) {
-        sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Prefixo está sendo preparado/atualizado. Aguarde.' })
-        return { success: false, error: 'Prefixo está sendo preparado/atualizado. Aguarde.' }
-      }
-	    sendGameLaunchStatus({ gameUrl, status: 'starting' })
-	    console.log('[Launch] ========================================')
-	    console.log('[Launch] Requested launch for:', gameUrl)
-	    
-	    const game = getAllGames().find((g: any) => g.url === gameUrl) as any
-	    if (!game) {
-	      console.error('[Launch] ❌ Game not found in database')
-	      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Jogo não encontrado' })
-	      return { success: false, error: 'Jogo não encontrado' }
-	    }
-    
-    console.log('[Launch] 📋 Game data:', {
-      title: game.title,
-      install_path: game.install_path,
-      executable_path: game.executable_path,
-      proton_runtime: game.proton_runtime,
-      proton_prefix: game.proton_prefix,
-      proton_options: game.proton_options
-    })
-    
-    let exePath = game.executable_path as string | null
-    
-    // Resolve install dir
-    let installDir: string = process.cwd()
-    if (game.install_path) {
-      installDir = path.isAbsolute(game.install_path) 
-        ? game.install_path 
-        : path.resolve(process.cwd(), game.install_path)
-    } else if (exePath) {
-      installDir = path.dirname(exePath)
-    }
-    
-    console.log('[Launch] 📁 Install directory:', installDir)
-    console.log('[Launch] 📁 Directory exists:', fs.existsSync(installDir))
-
-		    if (!fs.existsSync(installDir)) {
-		      console.error('[Launch] ❌ Install dir not found:', installDir)
-		      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Pasta de instalação não encontrada' })
-		      return { success: false, error: 'Pasta de instalação não encontrada' }
-		    }
-
-        // Plug&play: if LAN mode is enabled for this game, try to auto-connect before launching.
-        try {
-          const lanMode = String(game.lan_mode || 'steam')
-          const lanNetworkId = String(game.lan_network_id || '').trim()
-          const lanAutoconnect = Number(game.lan_autoconnect || 0) === 1
-          if (lanMode === 'ofvpn' && lanAutoconnect) {
-            await ensureOfVpnBeforeLaunch(gameUrl, lanNetworkId)
-          }
-        } catch (err: any) {
-          console.warn('[LAN] Failed to ensure LAN/VPN connectivity:', err?.message || err)
-        }
-
-      // Before launching, sync saves between local and Drive (if Drive creds are configured)
-      try {
-        sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Sincronizando saves...' })
-        const gameKey = cloudSaves.computeCloudSavesGameKey({
-          gameUrl,
-          title: game.title,
-          steamAppId: game.steam_app_id || null,
-          protonPrefix: game.proton_prefix || null
-        })
-        sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'restore', level: 'info', message: 'Verificando saves na nuvem...' })
-        const restoreRes = await cloudSaves.restoreCloudSavesBeforeLaunch({
-          gameUrl,
-          title: game.title,
-          steamAppId: game.steam_app_id || null,
-          protonPrefix: game.proton_prefix || null
-        })
-        if (!restoreRes?.success || (restoreRes as any)?.skipped) {
-          console.warn('[CloudSaves] restore reported non-success:', restoreRes)
-          const msg = String(restoreRes?.message || 'Sem restore (usando saves locais).')
-          recordCloudSaves({ at: Date.now(), gameKey, gameUrl, stage: 'restore', level: 'info', message: msg })
-          sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'restore', level: 'info', message: msg })
-          const syncRes = await drive.syncSavesOnPlayStart({
-            protonPrefix: game.proton_prefix,
-            installPath: installDir,
-            realAppId: game.steam_app_id || undefined
-          })
-          if (syncRes && !(syncRes as any).success) {
-            console.warn('[DriveSync] sync reported non-success:', syncRes)
-          }
-        } else {
-          const msg = String(restoreRes?.message || 'Saves restaurados da nuvem.')
-          recordCloudSaves({ at: Date.now(), gameKey, gameUrl, stage: 'restore', level: 'success', message: msg })
-          sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'restore', level: 'success', message: msg })
-        }
-      } catch (e: any) {
-        console.warn('[DriveSync] Failed to sync saves before launch:', e?.message || e)
-      }
-
-	    // Try to auto-find executable if not configured or missing
-	    if (!exePath || !fs.existsSync(path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath))) {
-	      console.log('[Launch] 🔍 Auto-searching for executable...')
-	      const autoExe = installDir ? findExecutableInDir(installDir) : null
-      if (autoExe) {
-        exePath = autoExe
-        updateGameInfo(gameUrl, { executable_path: exePath })
-        console.log('[Launch] ✅ Auto-detected executable:', exePath)
-      } else {
-        console.log('[Launch] ⚠️ No executable found automatically')
-      }
-    }
-
-	    if (!exePath) {
-	      console.error('[Launch] ❌ No executable configured')
-	      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'missing_exe' })
-	      return { success: false, error: 'missing_exe' }
-	    }
-
-    // Resolve exe path relative to install dir if not absolute
-    exePath = path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath)
-    
-    console.log('[Launch] 🎮 Executable path:', exePath)
-    console.log('[Launch] 🎮 Executable exists:', fs.existsSync(exePath))
-
-	    if (!fs.existsSync(exePath)) {
-	      console.error('[Launch] ❌ Executable not found at', exePath)
-	      sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Executável não encontrado' })
-	      return { success: false, error: 'Executável não encontrado' }
-	    }
-
-	    let child: any
-	    let stderrTail = ''
-	    let protonLogPath: string | undefined
-
-		    if (isLinux() && exePath.toLowerCase().endsWith('.exe')) {
-	      console.log('[Launch] 🐧 Linux detected, using Proton...')
-	      
-	      const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-	      const slug = stableId ? `game_${stableId}` : slugify(game.title || gameUrl)
-	      console.log('[Launch] 🏷️ Game slug:', slug)
-	      
-	      const protonOpts = game.proton_options ? JSON.parse(game.proton_options) : {}
-	      console.log('[Launch] ⚙️ Proton options:', protonOpts)
-	      
-          const managedRoot = getPrefixRootDir()
-          const storedPrefix = typeof game.proton_prefix === 'string' ? String(game.proton_prefix) : ''
-          let storedExists = !!(storedPrefix && fs.existsSync(storedPrefix))
-          if (storedPrefix && !storedExists) {
-            console.warn('[Launch] ⚠️ Configured prefix path does not exist:', storedPrefix)
-          }
-
-          // Prefer using a configured prefix if it exists (even if it's managed), and ensure
-          // prefix defaults on that path so runtime mismatch or missing deps are handled.
-          let prefixPath: string
-          // If the stored prefix points to the default-managed prefix, treat it as not a per-game prefix.
-          let defaultPrefixPath: string | null = null
-          try {
-            // compute expected default prefix path without creating it
-            defaultPrefixPath = getExpectedDefaultPrefixPath(game.proton_runtime || undefined)
-          } catch (e) {
-            // ignore
-          }
-          if (storedExists && defaultPrefixPath && path.resolve(storedPrefix) === path.resolve(defaultPrefixPath)) {
-            console.warn('[Launch] ⚠️ Game configured prefix points to default prefix; creating per-game prefix instead')
-            // force creation of game-specific prefix below
-            storedExists = false
-          }
-          if (storedExists) {
-            prefixPath = storedPrefix
-            try {
-              // Ensure prefix defaults (this is a no-op if already applied)
-              await ensurePrefixDefaults(prefixPath, game.proton_runtime || undefined, undefined, (msg) => {
-                sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
-              })
-            } catch (err: any) {
-              console.warn('[Launch] ensurePrefixDefaults failed for stored prefix:', err)
-            }
-          } else {
-            // Create/ensure a per-game managed prefix from the default
-            prefixPath = await ensureGamePrefixFromDefault(slug, game.proton_runtime || undefined, undefined, false)
-            if (game.proton_prefix !== prefixPath) {
-              updateGameInfo(gameUrl, { proton_prefix: prefixPath })
-            }
-          }
-          console.log('[Launch] 📂 Prefix path:', prefixPath)
-          console.log('[Launch] 📂 Prefix exists:', fs.existsSync(prefixPath))
-          // Diagnostics: check basic prefix layout and ensure prefix defaults if something looks wrong
-          try {
-            const { compatDataPath, winePrefix } = (await Promise.resolve(require('./protonManager.js'))).resolveCompatDataPaths(prefixPath, true)
-            console.log('[Launch] 🔍 Prefix compatDataPath:', compatDataPath)
-            console.log('[Launch] 🔍 Prefix winePrefix:', winePrefix)
-            const steamExe = path.join(winePrefix, 'drive_c', 'windows', 'system32', 'steam.exe')
-            const wineboot = path.join(winePrefix, 'drive_c', 'windows', 'system32', 'wineboot.exe')
-            console.log('[Launch] 🔍 steam.exe exists:', fs.existsSync(steamExe))
-            console.log('[Launch] 🔍 wineboot exists:', fs.existsSync(wineboot))
-            // Try ensuring prefix defaults again if wineboot missing
-            if (!fs.existsSync(wineboot)) {
-              console.log('[Launch] ⚙️ wineboot missing in prefix, running ensurePrefixDefaults to initialize...')
-              try {
-                const ok = await ensurePrefixDefaults(prefixPath, game.proton_runtime || undefined, undefined, (msg) => {
-                  sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
-                })
-                console.log('[Launch] ⚙️ ensurePrefixDefaults result:', ok)
-              } catch (e) {
-                console.warn('[Launch] ensurePrefixDefaults failed in diagnostic step:', e)
-              }
-            }
-          } catch (diagErr) {
-            // ignore diagnostic failures
-          }
-
-		      const stableNumericId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-		      const derivedAppId = stableNumericId && /^\d+$/.test(stableNumericId) ? stableNumericId : '480'
-		      const steamAppId = (game?.steam_app_id as string | null) || detectSteamAppIdFromInstall(installDir) || derivedAppId
-
-          // Run known redistributables from _CommonRedist once per prefix (VC++/DirectX)
-          let redistRes: { ran: boolean; ok: boolean; details?: string } = { ran: false, ok: true }
-          try {
-            sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Verificando dependências...' })
-            redistRes = await ensureGameCommonRedists(installDir, prefixPath, game.proton_runtime || undefined, (msg) => {
-              sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
-            })
-            if (redistRes.ran) {
-              sendGameLaunchStatus({ gameUrl, status: 'starting', message: redistRes.ok ? 'Dependências instaladas' : 'Dependências: alguns installers falharam' })
-            }
-          } catch (err: any) {
-            console.warn('[Launch] Failed to run common redists:', err)
-          }
-
-          // Ensure prefix-level deps (VC++ etc) are satisfied for managed prefixes.
-          // Note: `ensurePrefixDefaults` is called earlier for stored prefixes or during prefix creation,
-          // so no additional call is required here.
-
-		      console.log('[Launch] 🔧 Building Proton launch command...')
-		      const launch = buildProtonLaunch(
-		        exePath, 
-		        [], 
-		        slug, 
-		        game.proton_runtime || undefined, 
-		        { ...protonOpts, steamAppId, installDir }, 
-		        prefixPath
-		      )
-      
-      console.log('[Launch] 🚀 Proton launch config:', {
-        cmd: launch.cmd,
-        args: launch.args,
-        runner: launch.runner,
-        env_keys: Object.keys(launch.env || {})
-      })
-      
-	      if (!launch.runner) {
-	        console.error('[Launch] ❌ Proton runner not found!')
-	        console.error('[Launch] 💡 Dica: Configure um Proton válido nas configurações do jogo')
-	        sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Proton não encontrado. Configure nas opções do jogo.' })
-	        return { success: false, error: 'Proton não encontrado. Configure nas opções do jogo.' }
-	      }
-      
-	      if (!launch.cmd) {
-	        console.error('[Launch] ❌ Proton command is empty!')
-	        sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Comando Proton inválido' })
-	        return { success: false, error: 'Comando Proton inválido' }
-	      }
-      
-      console.log('[Launch] 🎯 Full command:', launch.cmd, launch.args?.join(' '))
-      console.log('[Launch] 📁 Working directory:', installDir)
-      console.log('[Launch] 🌍 Environment variables:')
-      Object.entries(launch.env || {}).forEach(([k, v]) => {
-        console.log(`  ${k}=${v}`)
-      })
-      
-	      // IMPORTANTE: Não usar stdio: 'ignore' para poder ver erros
-	      child = spawn(launch.cmd, launch.args, { 
-	        env: { ...process.env, ...launch.env }, 
-	        cwd: installDir, 
-	        detached: true,
-	        stdio: ['ignore', 'pipe', 'pipe'] // Capturar stdout e stderr
-	      })
-	      try {
-	        const logDir = String((launch.env as any)?.PROTON_LOG_DIR || '')
-	        const appId = String((launch.env as any)?.SteamAppId || (launch.env as any)?.STEAM_COMPAT_APP_ID || '')
-	        if (logDir && appId) protonLogPath = path.join(logDir, `steam-${appId}.log`)
-	      } catch {
-	        // ignore
-	      }
-	      
-	      // Capturar saída para debug
-	      child.stdout?.on('data', (data: Buffer) => {
-	        console.log('[Game stdout]', data.toString())
-	      })
-	      
-	      child.stderr?.on('data', (data: Buffer) => {
-	        console.error('[Game stderr]', data.toString())
-	        stderrTail = (stderrTail + data.toString()).slice(-8192)
-	      })
-	      
-	      child.on('error', (err: Error) => {
-	        console.error('[Launch] ❌ Spawn error:', err)
-	        sendGameLaunchStatus({ gameUrl, status: 'error', message: err.message || String(err), stderrTail, protonLogPath })
-	      })
-	      
-			      child.on('exit', async (code: number, signal: string) => {
-			        console.log('[Launch] 🏁 Process exited with code:', code, 'signal:', signal)
-            try { runningGames.delete(gameUrl) } catch {}
-              try { achievementsManager.stopWatching(gameUrl) } catch {}
-			        let mergedTail = stderrTail
-			        const shouldAppendLog = (code != null && Number(code) !== 0) || !!signal
-			        if (shouldAppendLog && protonLogPath) {
-			          const logRawTail = readFileTailBytes(protonLogPath, 256 * 1024)
-			          if (logRawTail) {
-                  const filtered = extractInterestingProtonLog(logRawTail, 160) || logRawTail.split(/\r?\n/).slice(-120).join('\n')
-                  mergedTail = trimToMaxChars(
-                    mergedTail + '\n\n--- PROTON LOG (filtered) ---\n' + filtered,
-                    8192
-                  )
-                  console.error('[Proton log]', protonLogPath)
-                  console.error('[Proton log filtered tail]', filtered)
-                } else {
-                  console.error('[Proton log missing]', protonLogPath)
-                }
-		        }
-		        sendGameLaunchStatus({ gameUrl, status: 'exited', code, signal, stderrTail: mergedTail, protonLogPath })
-
-              // After game exits (Proton/Linux), attempt to backup saves to Drive via Ludusavi (fallback to legacy OnlineFix)
-            try {
-                console.log('[CloudSaves] Backing up saves after Proton game exit...')
-                const gameKey = cloudSaves.computeCloudSavesGameKey({
-                  gameUrl,
-                  title: game.title,
-                  steamAppId: game.steam_app_id || null,
-                  protonPrefix: prefixPath || game.proton_prefix || null
-                })
-                sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'backup', level: 'info', message: 'Salvando na nuvem...' })
-                const backupRes = await cloudSaves.backupCloudSavesAfterExit({
-                  gameUrl,
-                  title: game.title,
-                  steamAppId: game.steam_app_id || null,
-                  protonPrefix: prefixPath || game.proton_prefix || null
-                })
-                if (!backupRes?.success || (backupRes as any)?.skipped) {
-                  console.warn('[CloudSaves] backup reported non-success:', backupRes)
-                  const msg = String(backupRes?.message || 'Falha ao salvar com Ludusavi; usando método legado.')
-                  recordCloudSaves({ at: Date.now(), gameKey, gameUrl, stage: 'backup', level: 'warning', message: msg })
-                  sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'backup', level: 'warning', message: msg })
-                  await drive.backupLocalSavesToDrive({
-                    protonPrefix: prefixPath || game.proton_prefix,
-                    installPath: installDir,
-                    realAppId: game.steam_app_id || undefined
-                  })
-                  sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'backup', level: 'success', message: 'Backup na nuvem atualizado (método legado).' })
-                }
-                if (backupRes?.success && !(backupRes as any)?.skipped) {
-                  const isConflict = /conflito/i.test(String(backupRes?.message || ''))
-                  const msg = String(backupRes?.message || 'Backup na nuvem atualizado.')
-                  recordCloudSaves({ at: Date.now(), gameKey, gameUrl, stage: 'backup', level: isConflict ? 'warning' : 'success', message: msg })
-                  sendCloudSavesStatus({ at: Date.now(), gameUrl, gameKey, stage: 'backup', level: isConflict ? 'warning' : 'success', message: msg, conflict: isConflict })
-                }
-                console.log('[CloudSaves] Backup finished (Proton/Linux).')
-            } catch (e: any) {
-                console.warn('[CloudSaves] Failed to backup saves after Proton exit:', e?.message || e)
-            }
-		      })
-	      
-	    } else {
-      console.log('[Launch] 🪟 Starting native exe:', exePath)
-      console.log('[Launch] 📁 Working directory:', installDir)
-      
-      child = spawn(exePath, [], { 
-        cwd: installDir, 
-        detached: true, 
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      
-      child.stdout?.on('data', (data: Buffer) => {
-        console.log('[Game stdout]', data.toString())
-      })
-      
-	      child.stderr?.on('data', (data: Buffer) => {
-	        console.error('[Game stderr]', data.toString())
-	        stderrTail = (stderrTail + data.toString()).slice(-8192)
-	      })
-	      
-	      child.on('error', (err: Error) => {
-	        console.error('[Launch] ❌ Spawn error:', err)
-	        sendGameLaunchStatus({ gameUrl, status: 'error', message: err.message || String(err), stderrTail })
-	      })
-	      
-          child.on('exit', async (code: number, signal: string) => {
-            console.log('[Launch] 🏁 Process exited with code:', code, 'signal:', signal)
-            try { runningGames.delete(gameUrl) } catch {}
-            try { achievementsManager.stopWatching(gameUrl) } catch {}
-            sendGameLaunchStatus({ gameUrl, status: 'exited', code, signal, stderrTail })
-            // After game exits, attempt to backup local saves to Drive
-            try {
-              sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Fazendo backup de saves...' })
-              await drive.backupLocalSavesToDrive({ protonPrefix: game.proton_prefix, installPath: installDir, realAppId: game.steam_app_id || undefined })
-            } catch (e: any) {
-              console.warn('[DriveBackup] Failed to backup saves after exit:', e?.message || e)
-            }
-          })
-		    }
-		    
-        if (child?.pid) {
-          runningGames.set(gameUrl, { pid: child.pid, child, protonLogPath, startedAt: Date.now() })
-              // Atualiza "jogado recentemente" / tempo de jogo para a ordenação do launcher
-              try {
-                const startedAt = runningGames.get(gameUrl)?.startedAt
-                const elapsedMs = startedAt ? (Date.now() - startedAt) : 0
-                const minutes = Math.max(0, Math.round(elapsedMs / 60000))
-                updateGamePlayTime(gameUrl, minutes)
-              } catch {}
-            // Atualiza "jogado recentemente" / tempo de jogo para a ordenação do launcher
-            try {
-              const startedAt = runningGames.get(gameUrl)?.startedAt
-              const elapsedMs = startedAt ? (Date.now() - startedAt) : 0
-              const minutes = Math.max(0, Math.round(elapsedMs / 60000))
-              updateGamePlayTime(gameUrl, minutes)
-            } catch {}
-
-          try {
-            const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
-            achievementsManager.startWatching(
-              {
-                gameUrl,
-                title: game.title || undefined,
-                installPath: installDir,
-                executablePath: exePath,
-                steamAppId: game.steam_app_id || null,
-                schemaSteamAppId: detectedSteamAppId || game.steam_app_id || null,
-                protonPrefix: game.proton_prefix || null
-              },
-              (ev: any) => {
-                try {
-                  mainWindow?.webContents.send('achievement-unlocked', ev)
-                } catch {}
-                try {
-                  void achievementOverlay.show({ title: ev.title, description: ev.description, unlockedAt: ev.unlockedAt })
-                } catch {}
-              }
-            )
-          } catch (err) {
-            console.warn('[Achievements] Failed to start watcher:', err)
-          }
-        }
-		    child.unref()
-		    console.log('[Launch] ✅ Game process started successfully (PID:', child.pid, ')')
-		    console.log('[Launch] ========================================')
-		    sendGameLaunchStatus({ gameUrl, status: 'running', pid: child.pid, protonLogPath })
-	    
-	    return { success: true }
-	    
-	  } catch (err: any) {
-	    console.error('[Launch] 💥 Exception:', err)
-	    console.error('[Launch] Stack:', err?.stack)
-	    sendGameLaunchStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
-	    return { success: false, error: err.message }
-	  }
-		})
-
-    ipcMain.handle('stop-game', async (_event, gameUrl: string, force?: boolean) => {
-      try {
-        const entry = runningGames.get(gameUrl)
-        const pid = entry?.pid
-        if (!pid || !isPidAlive(pid)) {
-          try { runningGames.delete(gameUrl) } catch {}
-          try { achievementsManager.stopWatching(gameUrl) } catch {}
-          return { success: false, error: 'Jogo não está em execução' }
-        }
-
-        sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Parando jogo...', pid })
-
-        // First try a graceful stop.
-        killProcessTreeBestEffort(pid, 'SIGTERM')
-
-        const waitMs = async (ms: number) => await new Promise<void>(r => setTimeout(r, ms))
-        await waitMs(2500)
-
-        if (force === true && isPidAlive(pid)) {
-          killProcessTreeBestEffort(pid, 'SIGKILL')
-          await waitMs(800)
-        } else if (isPidAlive(pid)) {
-          // Escalate if it didn't stop.
-          killProcessTreeBestEffort(pid, 'SIGKILL')
-          await waitMs(800)
-        }
-
-        if (!isPidAlive(pid)) {
-          try { runningGames.delete(gameUrl) } catch {}
-          try { achievementsManager.stopWatching(gameUrl) } catch {}
-          return { success: true }
-        }
-
-        // Still alive; report failure.
-        return { success: false, error: `Falha ao encerrar processo (PID ${pid})` }
-      } catch (err: any) {
-        return { success: false, error: err?.message || String(err) }
-      }
-    })
-
-  ipcMain.handle('proton-ensure-runtime', async (_event, customPath?: string) => {
-    try {
-      if (customPath) {
-        setSavedProtonRuntime(customPath)
-      }
-      const runtime = findProtonRuntime()
-      if (!runtime) return { success: false, error: 'Proton runtime not found. Configure a path manually.' }
-      const runner = buildProtonLaunch('/bin/true', [], 'probe', runtime).runner
-      if (!runner) return { success: false, error: 'Proton runner not found in runtime.' }
-      return { success: true, runtime, runner }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('proton-list-runtimes', async (_event, force?: boolean) => {
-    try {
-      const runtimes = await getCachedProtonRuntimes(Boolean(force))
-      return { success: true, runtimes }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('proton-set-root', async (_event, rootPath: string) => {
-    try {
-      setCustomProtonRoot(rootPath)
-      const runtimes = await getCachedProtonRuntimes(true)
-      return { success: true, runtimes }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('proton-default-prefix', async (_event, forceRecreate?: boolean) => {
-    try {
-      if (!isLinux()) return { success: false, error: 'Proton only supported on Linux' }
-      const runtime = findProtonRuntime() || undefined
-      const prefix = await ensureDefaultPrefix(runtime)
-      if (forceRecreate) {
-        try { fs.rmSync(prefix, { recursive: true, force: true }) } catch {}
-        await ensureDefaultPrefix(runtime)
-      }
-      return { success: true, prefix }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Falha ao criar prefixo default' }
-    }
-  })
-
-  ipcMain.handle('proton-prepare-prefix', async (_event, slug: string) => {
-    try {
-      if (!isLinux()) return { success: false, error: 'Proton only supported on Linux' }
-      const prefix = getPrefixPath(slug)
-      return { success: true, prefix }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-	  ipcMain.handle('proton-create-game-prefix', async (_event, gameUrl: string, title?: string, _commonRedistPath?: string) => {
-	    try {
-	      if (!isLinux()) return { success: false, error: 'Proton only supported on Linux' }
-        if (inFlightPrefixJobs.has(gameUrl)) return { success: false, error: 'Prefixo já está sendo preparado' }
-
-	      const existing = getGame(gameUrl) as any
-	      const stableId = (existing?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-	      const slug = stableId ? `game_${stableId}` : slugify(title || existing?.title || gameUrl || 'game')
-	    const runtime = ((existing?.proton_runtime as string | null) || findProtonRuntime() || undefined)
-
-        inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
-        sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo...' })
-	      const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
-          sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-        })
-	      updateGameInfo(gameUrl, { proton_prefix: prefix })
-        sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
-        inFlightPrefixJobs.delete(gameUrl)
-	      return { success: true, prefix }
-	    } catch (err: any) {
-        try { inFlightPrefixJobs.delete(gameUrl) } catch {}
-        sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
-	      return { success: false, error: err.message }
-	    }
-	  })
-
-  ipcMain.handle('proton-build-launch', async (_event, exePath: string, args: string[] = [], slug: string, runtimePath?: string, prefixPath?: string) => {
-    try {
-      const launch = buildProtonLaunch(exePath, args, slug, runtimePath, undefined, prefixPath)
-      if (!launch.runner) return { success: false, error: 'Proton runner not found' }
-      return { success: true, launch }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('extract-download', async (_event, downloadId: number | string, providedPath?: string) => {
-    try {
-      const asNumber = Number(downloadId)
-      const record = !Number.isNaN(asNumber) ? getDownloadById(asNumber) as any : getDownloadByUrl(String(downloadId)) as any
-      const candidatePath = providedPath || record?.install_path || record?.dest_path
-      if (!candidatePath) return { success: false, error: 'Path not provided' }
-
-      const infoHash = record?.info_hash
-      const idKey = infoHash || record?.download_url || String(downloadId)
-      const gameUrl = record?.game_url || record?.download_url || idKey
-
-      // Resolve base dir/filename
-      const target = path.isAbsolute(candidatePath) ? candidatePath : path.resolve(process.cwd(), candidatePath)
-
-      // For torrent downloads (type === 'torrent'), use processUpdateExtraction
-      // This handles the case where RAR is in a subfolder and needs special processing
-      if (record?.type === 'torrent') {
-        console.log('[Extract] Using processUpdateExtraction for torrent:', target)
-
-        // Notify start
-        sendDownloadProgress({
-          magnet: idKey,
-          url: idKey,
-          progress: 0,
-          stage: 'extract',
-          extractProgress: 0,
-          destPath: target
-        })
-
-        const result = await processUpdateExtraction(target, gameUrl, (percent, details) => {
-          sendDownloadProgress({
-            magnet: idKey,
-            url: idKey,
-            progress: percent,
-            stage: 'extract',
-            extractProgress: percent,
-            eta: details?.etaSeconds,
-            destPath: target
-          })
-        })
-
-        if (!result.success) {
-          return { success: false, error: result.error || 'Extraction failed' }
-        }
-
-        mainWindow?.webContents.send('download-complete', {
-          magnet: idKey,
-          infoHash: infoHash || undefined,
-          destPath: target
-        })
-
-        // Update game info
-        if (gameUrl) {
-          const version = parseVersionFromName(candidatePath) || parseVersionFromName(target) || 'unknown'
-          addOrUpdateGame(gameUrl, record?.title)
-          markGameInstalled(gameUrl, target, version, result.executablePath || undefined)
-          // Auto-fetch banner once installed
-          fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
-          prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), target).catch(() => {})
-        }
-
-        // Clean up download record from database - game is now installed
-        if (record?.id) {
-          try {
-            deleteDownload(Number(record.id))
-            mainWindow?.webContents.send('download-deleted')
-            console.log('[Extract] Cleaned up download record after successful torrent extraction')
-          } catch {}
-        }
-
-        return { success: true, destPath: target }
-      }
-
-      // For HTTP downloads, use the standard extraction flow
-      const { archivePath, destDir } = findArchive(target)
-      if (!archivePath) {
-        return { success: false, error: 'Nenhum arquivo .zip/.rar/.7z encontrado para extrair' }
-      }
-
-      // Prevent deletion while extracting
-      const extractionLockFile = path.join(destDir, '.extracting')
-      try { fs.writeFileSync(extractionLockFile, 'extracting') } catch {}
-
-      // Notify start
-      sendDownloadProgress({
-        magnet: idKey,
-        url: idKey,
-        progress: 0,
-        stage: 'extract',
-        extractProgress: 0,
-        destPath: destDir
-      })
-
-      console.log('[Extract] Dispatching extraction for', archivePath, '->', destDir)
-
-      try {
-        await import('./zip.js').then(m => m.extractZipWithPassword(
-          archivePath,
-          destDir,
-          undefined,
-          (percent) => {
-            sendDownloadProgress({
-              magnet: idKey,
-              url: idKey,
-              progress: percent,
-              stage: 'extract',
-              extractProgress: percent,
-              destPath: destDir
-            })
-          }
-        ))
-      } catch (extractErr: any) {
-        console.error('[Extract] Failed extraction', extractErr)
-        try { fs.unlinkSync(extractionLockFile) } catch {}
-        return { success: false, error: extractErr?.message || String(extractErr) }
-      }
-
-      console.log('[Extract] Extraction finished, deleting archive')
-      // Delete archive after extraction
-      try {
-        fs.unlinkSync(archivePath)
-      } catch {
-        // ignore
-      }
-
-      // Normalize extracted content (common nested-folder issue in OF archives)
-      try {
-        normalizeGameInstallDir(destDir)
-      } catch {
-        // ignore
-      }
-
-      try { fs.unlinkSync(extractionLockFile) } catch {}
-
-      mainWindow?.webContents.send('download-complete', {
-        magnet: idKey,
-        infoHash: infoHash || undefined,
-        destPath: destDir
-      })
-
-      // Add to library after extraction
-      if (gameUrl) {
-        const exePath = findExecutableInDir(destDir)
-        const version = parseVersionFromName(archivePath) || parseVersionFromName(destDir) || 'unknown'
-        addOrUpdateGame(gameUrl, record?.title)
-        markGameInstalled(gameUrl, destDir, version, exePath || undefined)
-        // Auto-fetch banner once installed
-        fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
-        prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), destDir).catch(() => {})
-      }
-
-      // Clean up download record from database - game is now installed
-      if (record?.id) {
-        try {
-          deleteDownload(Number(record.id))
-          mainWindow?.webContents.send('download-deleted')
-          console.log('[Extract] Cleaned up download record after successful HTTP extraction')
-        } catch {}
-      }
-
-      return { success: true, destPath: destDir }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
-
-  ipcMain.handle('open-path', async (_event, targetPath: string) => {
-    try {
-      if (targetPath) {
-        const normalized = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath)
-        let finalPath = normalized
-        if (fs.existsSync(normalized)) {
-          const stats = fs.statSync(normalized)
-          if (stats.isFile()) {
-            finalPath = path.dirname(normalized)
-          }
-        } else {
-          const parent = path.dirname(normalized)
-          if (fs.existsSync(parent)) {
-            finalPath = parent
-          }
-        }
-
-        const result = await shell.openPath(finalPath)
-        if (result) {
-          return { success: false, error: result }
-        }
-        return { success: true, path: finalPath }
-      }
-      return { success: false, error: 'Invalid path' }
-    } catch (err: any) {
-      return { success: false, error: err.message }
-    }
-  })
+// NOTE: open-path handler moved to src/main/ipc/gameHandlers.ts
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
@@ -3356,14 +1671,103 @@ async function cleanupOrphanedDownloads() {
   }
 }
 
+function resolveDefaultGamesPath(): string {
+  const configured = String(getSetting('games_path') || '').trim()
+  if (configured) return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured)
+
+  const home = os.homedir()
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    try {
+      const docs = app.getPath('documents')
+      if (docs) return path.join(docs, 'VoidLauncher')
+    } catch {
+      // ignore
+    }
+  }
+
+  if (home) return path.join(home, 'Games', 'VoidLauncher')
+  return path.join(process.cwd(), 'games')
+}
+
 function resolveGamesRootDir(): string {
-  const basePath = getSetting('launcher_path') || process.cwd()
-  const gamesPath = path.join(basePath, 'games')
+  const gamesPath = resolveDefaultGamesPath()
   try { fs.mkdirSync(gamesPath, { recursive: true }) } catch {}
   return gamesPath
 }
 
 async function scanInstalledGamesFromDisk(): Promise<{ scanned: number; added: number; skipped: number }> {
+  const normalizePath = (p: string): string => {
+    const raw = String(p || '').trim()
+    if (!raw) return ''
+    return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw)
+  }
+
+  const activeInstallPaths = new Set<string>()
+  try {
+    const active = (getActiveDownloads() as any[]) || []
+    for (const d of active) {
+      const ip = normalizePath(String(d?.install_path || ''))
+      if (ip) activeInstallPaths.add(ip)
+    }
+  } catch {
+    // ignore
+  }
+
+  const hasExtractingMarker = (installPath: string): boolean => {
+    const base = normalizePath(installPath)
+    if (!base) return false
+    const markers = ['.of_extracting.json', '.of_update_extracting.json', '.extracting']
+    for (const m of markers) {
+      try {
+        if (fs.existsSync(path.join(base, m))) return true
+      } catch {
+        // ignore
+      }
+    }
+    return false
+  }
+
+  const looksInstalled = (installPath: string): boolean => {
+    const base = normalizePath(installPath)
+    if (!base) return false
+    try {
+      if (!fs.existsSync(base)) return false
+      const st = fs.statSync(base)
+      if (!st.isDirectory()) return false
+    } catch {
+      return false
+    }
+
+    const sentinels = ['.of_extracted', '.of_update_extracted', '.of_game.json']
+    for (const s of sentinels) {
+      try {
+        if (fs.existsSync(path.join(base, s))) return true
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      return !!findExecutableInDir(base)
+    } catch {
+      return false
+    }
+  }
+
+  const readLauncherMarker = (installPath: string): any | null => {
+    try {
+      const base = normalizePath(installPath)
+      if (!base) return null
+      const markerPath = path.join(base, '.of_game.json')
+      if (!fs.existsSync(markerPath)) return null
+      const raw = fs.readFileSync(markerPath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      return parsed || null
+    } catch {
+      return null
+    }
+  }
+
   const gamesRoot = resolveGamesRootDir()
   const existing = (getAllGames() as any[]) || []
 
@@ -3394,6 +1798,16 @@ async function scanInstalledGamesFromDisk(): Promise<{ scanned: number; added: n
     const installPath = path.join(gamesRoot, folderName)
     scanned += 1
 
+    const normalizedInstall = normalizePath(installPath)
+    if (normalizedInstall && activeInstallPaths.has(normalizedInstall)) {
+      skipped += 1
+      continue
+    }
+    if (hasExtractingMarker(installPath)) {
+      skipped += 1
+      continue
+    }
+
     if (existingByInstall.has(installPath)) {
       skipped += 1
       continue
@@ -3401,6 +1815,21 @@ async function scanInstalledGamesFromDisk(): Promise<{ scanned: number; added: n
 
     // Best-effort normalize for nested-folder releases.
     try { normalizeGameInstallDir(installPath) } catch {}
+
+    const marker = readLauncherMarker(installPath)
+    if (marker) {
+      const show = marker?.showInLibrary
+      const status = String(marker?.status || '').toLowerCase()
+      if (show === false || (status && status !== 'installed')) {
+        skipped += 1
+        continue
+      }
+    }
+
+    if (!looksInstalled(installPath)) {
+      skipped += 1
+      continue
+    }
 
     let gameUrl: string | null = null
     let title: string | null = null
@@ -3461,48 +1890,7 @@ async function scanInstalledGamesFromDisk(): Promise<{ scanned: number; added: n
   return { scanned, added, skipped }
 }
 
-async function getDirectorySizeBytes(rootDir: string, opts?: { maxEntries?: number; maxMs?: number }): Promise<number> {
-  const maxEntries = Math.max(10_000, Number(opts?.maxEntries || 120_000))
-  const maxMs = Math.max(250, Number(opts?.maxMs || 2500))
-  const startedAt = Date.now()
-
-  let total = 0
-  let entriesSeen = 0
-  const queue: string[] = [rootDir]
-
-  while (queue.length) {
-    if (Date.now() - startedAt > maxMs) break
-    if (entriesSeen > maxEntries) break
-
-    const dir = queue.pop() as string
-    let items: fs.Dirent[] = []
-    try {
-      items = await fs.promises.readdir(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const ent of items) {
-      entriesSeen += 1
-      if (Date.now() - startedAt > maxMs) break
-      if (entriesSeen > maxEntries) break
-
-      const full = path.join(dir, ent.name)
-      try {
-        if (ent.isDirectory()) {
-          queue.push(full)
-        } else if (ent.isFile()) {
-          const st = await fs.promises.stat(full)
-          total += Number(st.size || 0)
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  return total
-}
+// NOTE: getDirectorySizeBytes moved to src/main/utils/fileUtils.ts
 
 async function refreshInstalledGameSizesBestEffort() {
   try {
@@ -3554,8 +1942,7 @@ function resolveInstallPathForDownloadRow(d: any): string {
     return path.isAbsolute(existing) ? existing : path.resolve(process.cwd(), existing)
   }
 
-  const basePath = getSetting('launcher_path') || process.cwd()
-  const gamesPath = path.join(basePath, 'games')
+  const gamesPath = resolveDefaultGamesPath()
   try { fs.mkdirSync(gamesPath, { recursive: true }) } catch {}
 
   const gameUrl = String(d?.game_url || d?.download_url || '')
@@ -3629,7 +2016,11 @@ async function resumeInterruptedExtractions() {
         // Best-effort: normalize and mark installed.
         try { normalizeGameInstallDir(installPath) } catch {}
         try {
-          const version = parseVersionFromName(String(d?.download_url || '')) || parseVersionFromName(String(d?.title || '')) || 'unknown'
+          const version = await resolveGameVersion({
+            filename: d?.download_url,
+            title: d?.title,
+            gameUrl
+          })
           addOrUpdateGame(gameUrl, d?.title)
           const exePath = findExecutableInDir(installPath)
           markGameInstalled(gameUrl, installPath, version, exePath || undefined)
@@ -3697,7 +2088,11 @@ async function resumeInterruptedExtractions() {
       try { fs.unlinkSync(archivePath) } catch {}
 
       try {
-        const version = parseVersionFromName(String(archivePath)) || parseVersionFromName(String(d?.title || '')) || 'unknown'
+        const version = await resolveGameVersion({
+          filename: archivePath,
+          title: d?.title,
+          gameUrl
+        })
         addOrUpdateGame(gameUrl, d?.title)
         const exePath = findExecutableInDir(installPath)
         markGameInstalled(gameUrl, installPath, version, exePath || undefined)
@@ -3711,81 +2106,4 @@ async function resumeInterruptedExtractions() {
   }
 }
 
-function findExecutableInDir(dir: string): string | null {
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name)
-      if (entry.isFile() && entry.name.toLowerCase().endsWith('.exe')) {
-        return fullPath
-      }
-      if (entry.isDirectory()) {
-        const nested = findExecutableInDir(fullPath)
-        if (nested) return nested
-      }
-    }
-  } catch (err) {
-    console.warn('[findExecutableInDir] Failed to scan', dir, err)
-  }
-  return null
-}
-
-function slugify(text: string) {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-}
-
-function findArchive(startPath: string): { archivePath?: string; destDir: string } {
-  const allowed = ['.zip', '.rar', '.7z']
-  const resolveMaybe = (p: string) => path.isAbsolute(p) ? p : path.resolve(process.cwd(), p)
-  const target = resolveMaybe(startPath)
-
-  const isAllowedFile = (p: string) => {
-    const ext = path.extname(p).toLowerCase()
-    return allowed.includes(ext)
-  }
-
-  const statSafe = (p: string) => {
-    try { return fs.statSync(p) } catch { return null }
-  }
-
-  const searchDir = (dir: string, depth = 0): string | undefined => {
-    if (depth > 2) return undefined
-    let entries: string[] = []
-    try {
-      entries = fs.readdirSync(dir).map(f => path.join(dir, f))
-    } catch {
-      return undefined
-    }
-    for (const entry of entries) {
-      const st = statSafe(entry)
-      if (!st) continue
-      if (st.isFile() && isAllowedFile(entry)) return entry
-    }
-    for (const entry of entries) {
-      const st = statSafe(entry)
-      if (st?.isDirectory()) {
-        const found = searchDir(entry, depth + 1)
-        if (found) return found
-      }
-    }
-    return undefined
-  }
-
-  const stat = statSafe(target)
-  if (stat?.isFile() && isAllowedFile(target)) {
-    return { archivePath: target, destDir: path.dirname(target) }
-  }
-  if (stat?.isDirectory()) {
-    const found = searchDir(target)
-    return { archivePath: found, destDir: target }
-  }
-
-  const parent = path.dirname(target)
-  const parentStat = statSafe(parent)
-  if (parentStat?.isDirectory()) {
-    const found = searchDir(parent)
-    return { archivePath: found, destDir: parent }
-  }
-
-  return { archivePath: undefined, destDir: path.dirname(target) }
-}
+// NOTE: findExecutableInDir, slugify, findArchive moved to src/main/utils/fileUtils.ts
