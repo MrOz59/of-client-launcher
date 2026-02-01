@@ -140,4 +140,45 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       return { success: false, error: err.message }
     }
   })
+
+  // Test notification handler (dev/debug)
+  ipcMain.handle('test-notification', async (_event, type: string) => {
+    try {
+      const {
+        notifyAchievementUnlocked,
+        notifyDownloadComplete,
+        notifyDownloadError,
+        notifyUpdateAvailable,
+        notifyGameReady,
+        notifyCloudSync,
+        notifyInfo
+      } = require('../notificationOverlay.js')
+
+      switch (type) {
+        case 'achievement':
+          notifyAchievementUnlocked('Primeira Conquista!', 'Você testou o sistema de notificações')
+          break
+        case 'download-complete':
+          notifyDownloadComplete('Cyberpunk 2077')
+          break
+        case 'download-error':
+          notifyDownloadError('GTA VI', 'Conexão perdida durante o download')
+          break
+        case 'update-available':
+          notifyUpdateAvailable('Elden Ring', 'v1.12.3')
+          break
+        case 'game-ready':
+          notifyGameReady('Baldur\'s Gate 3')
+          break
+        case 'cloud-sync':
+          notifyCloudSync('The Witcher 3', 'backup')
+          break
+        default:
+          notifyInfo('Notificação de Teste', 'Esta é uma notificação de teste')
+      }
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
 }

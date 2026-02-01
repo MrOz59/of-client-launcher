@@ -251,6 +251,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // ==========================
+  // Test/Debug APIs
+  // ==========================
+  testNotification: (type: string) => ipcRenderer.invoke('test-notification', type),
+
+  // ==========================
   // Drive APIs
   // ==========================
   driveAuth: () => ipcRenderer.invoke('drive-auth'),

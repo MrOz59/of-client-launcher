@@ -199,6 +199,9 @@ declare global {
       onNavigateToTab: (cb: (tab: string) => void) => (() => void)
       onNavigateToGame: (cb: (gameUrl: string) => void) => (() => void)
 
+      // Test/Debug
+      testNotification: (type: string) => Promise<{ success: boolean; error?: string }>
+
       // Drive
       driveAuth: () => Promise<{
         success: boolean

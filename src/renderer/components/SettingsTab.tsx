@@ -353,6 +353,56 @@ export default function SettingsTab() {
               </label>
             </div>
           </div>
+
+          {/* Notification Test Section (DEV) */}
+          <div className="settings-card-item vertical">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                🧪 Testar Notificações (Dev)
+              </div>
+              <div className="settings-card-description">
+                Clique nos botões abaixo para testar os diferentes tipos de notificação overlay
+              </div>
+            </div>
+            <div className="settings-card-control" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('achievement')}
+              >
+                🏆 Conquista
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('download-complete')}
+              >
+                ✅ Download OK
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('download-error')}
+              >
+                ❌ Download Erro
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('update-available')}
+              >
+                🔄 Atualização
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('game-ready')}
+              >
+                🎮 Jogo Pronto
+              </button>
+              <button
+                className="settings-btn secondary"
+                onClick={() => window.electronAPI.testNotification?.('cloud-sync')}
+              >
+                ☁️ Cloud Sync
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
