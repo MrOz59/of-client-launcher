@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react'
-import { Download, Pause, Play, X } from 'lucide-react'
+import { Download, Pause, Play, X, ArrowUp, ArrowUpCircle } from 'lucide-react'
 
 interface DownloadItem {
   id: string
@@ -8,7 +8,7 @@ interface DownloadItem {
   type: 'http' | 'torrent'
   url: string
   progress: number
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'extracting' | 'prefixing'
+  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'extracting' | 'prefixing' | 'queued'
   errorMessage?: string
   speed?: number
   eta?: number
@@ -25,6 +25,16 @@ interface DownloadItem {
   stage?: 'download' | 'extract'
   extractProgress?: number
   extractEta?: number
+  queueId?: string // For queue management
+}
+
+interface DownloadQueueStatus {
+  maxParallel: number
+  activeCount: number
+  queuedCount: number
+  active: Array<{ id: string; gameUrl: string; title: string; priority: number; addedAt: number }>
+  queued: Array<{ id: string; gameUrl: string; title: string; priority: number; addedAt: number }>
+  updatedAt: number
 }
 
 interface DownloadsTabProps {
@@ -35,6 +45,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [hasActive, setHasActive] = useState(false)
   const [historyTick, setHistoryTick] = useState(0)
+  const [queueStatus, setQueueStatus] = useState<DownloadQueueStatus | null>(null)
   const throttleTimerRef = useRef<NodeJS.Timeout | null>(null)
   const pendingUpdatesRef = useRef<Map<string, any>>(new Map())
   const prefixDoneRemovalTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
@@ -52,7 +63,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   const rateHistoryRef = useRef<Map<string, RateSample[]>>(new Map())
 
   const isInProgressStatus = (s: DownloadItem['status']) =>
-    s === 'pending' || s === 'downloading' || s === 'paused' || s === 'extracting' || s === 'prefixing'
+    s === 'pending' || s === 'downloading' || s === 'paused' || s === 'extracting' || s === 'prefixing' || s === 'queued'
 
   const pushRateSample = (key: string, data: any) => {
     if (!key) return
@@ -409,7 +420,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             d.status === 'downloading' ||
             d.status === 'paused' ||
             d.status === 'extracting' ||
-            d.status === 'prefixing'
+            d.status === 'prefixing' ||
+            d.status === 'queued'
           )
           setHasActive(active)
           setHistoryTick(t => t + 1)
@@ -474,10 +486,43 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     }
   }
 
+  // Prioritize a queued download (move to front of queue)
+  const handlePrioritize = async (item: DownloadItem) => {
+    const queueId = item.queueId || item.gameUrl || item.url
+    try {
+      await window.electronAPI.prioritizeDownload?.(queueId)
+    } catch (err) {
+      console.error('Failed to prioritize download:', err)
+    }
+  }
+
+  // Swap active download with queued one (pause current, start queued)
+  const handleSwapActive = async (item: DownloadItem) => {
+    const queueId = item.queueId || item.gameUrl || item.url
+    try {
+      await window.electronAPI.swapActiveDownload?.(queueId)
+    } catch (err) {
+      console.error('Failed to swap active download:', err)
+    }
+  }
+
+  // Remove from queue
+  const handleRemoveFromQueue = async (item: DownloadItem) => {
+    const queueId = item.queueId || item.gameUrl || item.url
+    try {
+      await window.electronAPI.removeFromDownloadQueue?.(queueId)
+      // Optimistically remove from local state
+      const key = downloadKey(item)
+      setDownloads(prev => prev.filter(d => downloadKey(d) !== key))
+    } catch (err) {
+      console.error('Failed to remove from queue:', err)
+    }
+  }
+
   // Check if a download should be kept in the list
   const shouldKeepDownload = (d: DownloadItem): boolean => {
     // Keep if in progress
-    if (d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing') {
+    if (d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing' || d.status === 'queued') {
       return true
     }
     // Keep if completed but has a zip file to extract (HTTP downloads)
@@ -563,7 +608,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
       const next = dedupeDownloads([...deduped, ...preserveVirtual])
       setDownloads(next)
-      setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
+      setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing' || d.status === 'queued'))
     }
     loadDownloads()
 
@@ -693,7 +738,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
           d.status === 'downloading' ||
           d.status === 'paused' ||
           d.status === 'extracting' ||
-          d.status === 'prefixing'
+          d.status === 'prefixing' ||
+          d.status === 'queued'
         )
         setHasActive(active)
         return filtered
@@ -780,7 +826,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         )
         const next = dedupeDownloads([...deduped, ...preserveVirtual])
         setDownloads(next)
-        setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
+        setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing' || d.status === 'queued'))
       }).catch(() => {})
     })
 
@@ -869,12 +915,25 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       setHasActive(true)
     })
 
+    // Listen for download queue status updates
+    const queueSub = window.electronAPI.onDownloadQueueStatus?.((data) => {
+      setQueueStatus(data)
+    })
+
+    // Initial fetch of queue status
+    window.electronAPI.getDownloadQueueStatus?.().then(res => {
+      if (res.success && res.status) {
+        setQueueStatus(res.status)
+      }
+    }).catch(() => {})
+
     return () => {
       // Cleanup subscriptions
       if (typeof sub === 'function') sub()
       if (typeof completeSub === 'function') completeSub()
       if (typeof deleteSub === 'function') deleteSub()
       if (typeof prefixSub === 'function') prefixSub()
+      if (typeof queueSub === 'function') queueSub()
 
       clearInterval(poll)
 
@@ -916,6 +975,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         return '#10b981'
       case 'error':
         return '#ef4444'
+      case 'queued':
+        return '#6366f1'
       default:
         return '#6b7280'
     }
@@ -937,6 +998,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         return 'Concluído'
       case 'error':
         return 'Erro'
+      case 'queued':
+        return 'Na fila'
       default:
         return status
     }
@@ -954,6 +1017,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         return 3
       case 'pending':
         return 4
+      case 'queued':
+        return 4.5
       case 'error':
         return 5
       case 'completed':
@@ -1040,6 +1105,26 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
           </div>
 
           <div className="download-actions">
+            {/* Queue management buttons - only for queued items */}
+            {variant === 'queue' && (item.status === 'pending' || item.status === 'queued' || item.status === 'paused') && (
+              <>
+                <button
+                  onClick={() => handleSwapActive(item)}
+                  className="btn accent btn-icon"
+                  title="Baixar agora (pausar download atual)"
+                >
+                  <ArrowUpCircle size={16} />
+                </button>
+                <button
+                  onClick={() => handlePrioritize(item)}
+                  className="btn primary btn-icon"
+                  title="Mover para frente da fila"
+                >
+                  <ArrowUp size={16} />
+                </button>
+              </>
+            )}
+
             {isTorrent && item.status === 'downloading' && (
               <button onClick={() => handlePause(item)} className="btn warning btn-icon" title="Pausar">
                 <Pause size={16} />
@@ -1052,6 +1137,17 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             )}
             {showCancel && (
               <button onClick={() => handleCancel(item)} className="btn danger btn-icon" title="Cancelar">
+                <X size={16} />
+              </button>
+            )}
+
+            {/* Remove from queue button for pending/queued items */}
+            {variant === 'queue' && (item.status === 'pending' || item.status === 'queued') && (
+              <button
+                onClick={() => handleRemoveFromQueue(item)}
+                className="btn danger btn-icon"
+                title="Remover da fila"
+              >
                 <X size={16} />
               </button>
             )}
@@ -1262,6 +1358,11 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             <div className="downloads-section-title">Fila</div>
             <div className="downloads-section-meta">
               <span className="downloads-pill">{queue.length} item(s)</span>
+              {queueStatus && (
+                <span className="downloads-pill" title="Downloads ativos / Máximo paralelos">
+                  {queueStatus.activeCount}/{queueStatus.maxParallel} ativos
+                </span>
+              )}
             </div>
           </div>
           <div className="downloads-list">

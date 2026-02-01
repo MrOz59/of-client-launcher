@@ -1,4 +1,4 @@
-import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorrent, type TorrentProgress, isTorrentActive } from './downloader'
+import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorrent, type TorrentProgress, isTorrentActive, getActiveTorrentIds } from './downloader'
 import { extractZipWithPassword } from './zip'
 import { processUpdateExtraction, findFilesRecursive } from './extractionUtils'
 import { findAndReadOnlineFixIni } from './utils/onlinefixIni'
@@ -17,13 +17,278 @@ import {
   deleteDownload,
   extractGameIdFromUrl,
   updateGameInfo,
-  addOrUpdateGame
+  addOrUpdateGame,
+  getActiveDownloads
 } from './db'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { Worker } from 'worker_threads'
 import { session, BrowserWindow, app } from 'electron'
+
+// ============================================================================
+// DOWNLOAD QUEUE SYSTEM
+// ============================================================================
+
+interface QueuedDownload {
+  id: string
+  options: DownloadOptions
+  onProgress?: (progress: number, details?: ProgressDetails) => void
+  resolve: (result: { success: boolean; error?: string; installPath?: string }) => void
+  reject: (error: Error) => void
+  addedAt: number
+  priority: number // Lower = higher priority
+}
+
+// Download queue state
+const downloadQueue: QueuedDownload[] = []
+const activeDownloads = new Map<string, QueuedDownload>()
+let queueProcessing = false
+
+// Generate unique queue ID
+function generateQueueId(): string {
+  return `q_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+// Get max parallel downloads from settings
+function getMaxParallelDownloads(): number {
+  const setting = getSetting('parallel_downloads')
+  const n = Number(setting)
+  return Number.isFinite(n) && n > 0 ? n : 3
+}
+
+// Broadcast queue status to all windows
+function broadcastQueueStatus() {
+  const status = getDownloadQueueStatus()
+  BrowserWindow.getAllWindows().forEach(w => {
+    try {
+      w.webContents.send('download-queue-status', status)
+    } catch {
+      // ignore
+    }
+  })
+}
+
+// Get current queue status
+export function getDownloadQueueStatus() {
+  return {
+    maxParallel: getMaxParallelDownloads(),
+    activeCount: activeDownloads.size,
+    queuedCount: downloadQueue.length,
+    active: Array.from(activeDownloads.entries()).map(([id, d]) => ({
+      id,
+      gameUrl: d.options.gameUrl,
+      title: d.options.gameTitle,
+      priority: d.priority,
+      addedAt: d.addedAt
+    })),
+    queued: downloadQueue.map(d => ({
+      id: d.id,
+      gameUrl: d.options.gameUrl,
+      title: d.options.gameTitle,
+      priority: d.priority,
+      addedAt: d.addedAt
+    })),
+    updatedAt: Date.now()
+  }
+}
+
+// Process the download queue
+async function processQueue() {
+  if (queueProcessing) return
+  queueProcessing = true
+
+  try {
+    const maxParallel = getMaxParallelDownloads()
+
+    while (activeDownloads.size < maxParallel && downloadQueue.length > 0) {
+      // Sort queue by priority (lower first), then by addedAt (older first)
+      downloadQueue.sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority
+        return a.addedAt - b.addedAt
+      })
+
+      const next = downloadQueue.shift()
+      if (!next) break
+
+      // Check if already downloading this game
+      const gameUrl = next.options.gameUrl
+      const isAlreadyActive = Array.from(activeDownloads.values()).some(d => d.options.gameUrl === gameUrl)
+      if (isAlreadyActive) {
+        console.log('[DownloadQueue] Game already downloading, skipping:', gameUrl)
+        next.resolve({ success: false, error: 'Este jogo já está sendo baixado' })
+        continue
+      }
+
+      // Move to active
+      activeDownloads.set(next.id, next)
+      broadcastQueueStatus()
+
+      // Start download in background (don't await here)
+      executeDownload(next).catch(err => {
+        console.error('[DownloadQueue] Unexpected error in executeDownload:', err)
+      })
+    }
+  } finally {
+    queueProcessing = false
+  }
+
+  broadcastQueueStatus()
+}
+
+// Execute a single download
+async function executeDownload(queued: QueuedDownload) {
+  try {
+    console.log('[DownloadQueue] Starting download:', queued.options.gameTitle)
+    const result = await startGameDownloadInternal(queued.options, queued.onProgress)
+    queued.resolve(result)
+  } catch (err: any) {
+    console.error('[DownloadQueue] Download failed:', err)
+    queued.reject(err)
+  } finally {
+    activeDownloads.delete(queued.id)
+    broadcastQueueStatus()
+    // Process next in queue
+    setTimeout(() => processQueue(), 100)
+  }
+}
+
+// Add download to queue (public API)
+export function queueGameDownload(
+  options: DownloadOptions,
+  onProgress?: (progress: number, details?: ProgressDetails) => void
+): Promise<{ success: boolean; error?: string; installPath?: string }> {
+  return new Promise((resolve, reject) => {
+    const id = generateQueueId()
+    const queued: QueuedDownload = {
+      id,
+      options,
+      onProgress,
+      resolve,
+      reject,
+      addedAt: Date.now(),
+      priority: 100 // Default priority
+    }
+
+    // Check if this game is already in queue or active
+    const gameUrl = options.gameUrl
+    const inQueue = downloadQueue.some(d => d.options.gameUrl === gameUrl)
+    const inActive = Array.from(activeDownloads.values()).some(d => d.options.gameUrl === gameUrl)
+
+    if (inQueue || inActive) {
+      resolve({ success: false, error: 'Este jogo já está na fila ou sendo baixado' })
+      return
+    }
+
+    downloadQueue.push(queued)
+    console.log('[DownloadQueue] Added to queue:', options.gameTitle, 'Queue size:', downloadQueue.length)
+    broadcastQueueStatus()
+    processQueue()
+  })
+}
+
+// Prioritize a download (move to front of queue or swap with active)
+export function prioritizeDownload(queueId: string): { success: boolean; error?: string } {
+  // If it's in the queue, move to front
+  const queueIndex = downloadQueue.findIndex(d => d.id === queueId)
+  if (queueIndex >= 0) {
+    const item = downloadQueue.splice(queueIndex, 1)[0]
+    item.priority = 0 // Highest priority
+    downloadQueue.unshift(item)
+    broadcastQueueStatus()
+    processQueue()
+    return { success: true }
+  }
+
+  // If it's not in queue, check if it's a game URL
+  const inQueueByGame = downloadQueue.find(d => d.options.gameUrl === queueId)
+  if (inQueueByGame) {
+    const idx = downloadQueue.indexOf(inQueueByGame)
+    downloadQueue.splice(idx, 1)
+    inQueueByGame.priority = 0
+    downloadQueue.unshift(inQueueByGame)
+    broadcastQueueStatus()
+    processQueue()
+    return { success: true }
+  }
+
+  return { success: false, error: 'Download não encontrado na fila' }
+}
+
+// Remove download from queue
+export function removeFromQueue(queueId: string): { success: boolean; error?: string } {
+  const queueIndex = downloadQueue.findIndex(d => d.id === queueId || d.options.gameUrl === queueId)
+  if (queueIndex >= 0) {
+    const removed = downloadQueue.splice(queueIndex, 1)[0]
+    removed.resolve({ success: false, error: 'Removido da fila' })
+    broadcastQueueStatus()
+    return { success: true }
+  }
+
+  return { success: false, error: 'Download não encontrado na fila' }
+}
+
+// Pause active download and move queued one to active
+export function swapActiveDownload(queueIdToActivate: string): { success: boolean; error?: string } {
+  // Find in queue
+  const queueIndex = downloadQueue.findIndex(d => d.id === queueIdToActivate || d.options.gameUrl === queueIdToActivate)
+  if (queueIndex < 0) {
+    return { success: false, error: 'Download não encontrado na fila' }
+  }
+
+  // Find an active torrent download to pause (can only pause torrents)
+  let activeToPause: QueuedDownload | null = null
+  for (const [, d] of activeDownloads) {
+    if (d.options.torrentMagnet) {
+      activeToPause = d
+      break
+    }
+  }
+
+  if (!activeToPause) {
+    // No torrent to pause, just prioritize
+    return prioritizeDownload(queueIdToActivate)
+  }
+
+  // Pause the active torrent
+  const torrentId = activeToPause.options.torrentMagnet || activeToPause.options.downloadUrl || ''
+  if (torrentId && isTorrentActive(torrentId)) {
+    pauseTorrent(torrentId)
+    console.log('[DownloadQueue] Paused active torrent to swap:', activeToPause.options.gameTitle)
+  }
+
+  // Prioritize the queued download
+  const item = downloadQueue.splice(queueIndex, 1)[0]
+  item.priority = -1 // Higher than highest
+  downloadQueue.unshift(item)
+
+  broadcastQueueStatus()
+  processQueue()
+
+  return { success: true }
+}
+
+// Get count of truly active (downloading) items
+export function getActiveDownloadCount(): number {
+  // Count from DB: downloads with status 'downloading'
+  try {
+    const active = getActiveDownloads() as any[]
+    return active.filter(d => d.status === 'downloading').length
+  } catch {
+    return activeDownloads.size
+  }
+}
+
+// Check if a game is in queue or active
+export function isGameInDownloadQueue(gameUrl: string): boolean {
+  const inQueue = downloadQueue.some(d => d.options.gameUrl === gameUrl)
+  const inActive = Array.from(activeDownloads.values()).some(d => d.options.gameUrl === gameUrl)
+  return inQueue || inActive
+}
+
+// ============================================================================
+// END DOWNLOAD QUEUE SYSTEM
+// ============================================================================
 
 export interface DownloadOptions {
   gameUrl: string
@@ -428,6 +693,7 @@ export function normalizeGameInstallDir(installPath: string): InstallIntegrityRe
 
 /**
  * Start a download (HTTP or torrent) with automatic extraction
+ * This is the PUBLIC API that uses the download queue system
  */
 interface ProgressDetails extends Partial<TorrentProgress> {
   stage?: 'download' | 'extract'
@@ -436,6 +702,18 @@ interface ProgressDetails extends Partial<TorrentProgress> {
 }
 
 export async function startGameDownload(
+  options: DownloadOptions,
+  onProgress?: (progress: number, details?: ProgressDetails) => void
+): Promise<{ success: boolean; error?: string; installPath?: string }> {
+  // Use the queue system
+  return queueGameDownload(options, onProgress)
+}
+
+/**
+ * Internal function that actually executes the download
+ * Called by the queue system - not exported directly
+ */
+async function startGameDownloadInternal(
   options: DownloadOptions,
   onProgress?: (progress: number, details?: ProgressDetails) => void
 ): Promise<{ success: boolean; error?: string; installPath?: string }> {

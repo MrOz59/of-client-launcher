@@ -21,7 +21,11 @@ import {
   readOnlineFixIni,
   writeOnlineFixIni,
   processUpdateExtraction,
-  normalizeGameInstallDir
+  normalizeGameInstallDir,
+  getDownloadQueueStatus,
+  prioritizeDownload,
+  removeFromQueue,
+  swapActiveDownload
 } from '../downloadManager'
 import { extractZipWithPassword } from '../zip'
 import { findArchive, findExecutableInDir } from '../utils'
@@ -348,6 +352,46 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       }
 
       return { success: true, destPath: destDir }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ============================================================================
+  // DOWNLOAD QUEUE HANDLERS
+  // ============================================================================
+
+  ipcMain.handle('get-download-queue-status', async () => {
+    try {
+      const status = getDownloadQueueStatus()
+      return { success: true, status }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('prioritize-download', async (_event: IpcMainInvokeEvent, queueId: string) => {
+    try {
+      const result = prioritizeDownload(queueId)
+      return result
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('remove-from-queue', async (_event: IpcMainInvokeEvent, queueId: string) => {
+    try {
+      const result = removeFromQueue(queueId)
+      return result
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('swap-active-download', async (_event: IpcMainInvokeEvent, queueId: string) => {
+    try {
+      const result = swapActiveDownload(queueId)
+      return result
     } catch (err: any) {
       return { success: false, error: err.message }
     }

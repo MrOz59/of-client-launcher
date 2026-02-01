@@ -78,6 +78,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCompletedDownloads: () => ipcRenderer.invoke('get-completed-downloads'),
   deleteDownload: (downloadId: number) => ipcRenderer.invoke('delete-download', downloadId),
 
+  // Download Queue APIs
+  getDownloadQueueStatus: () => ipcRenderer.invoke('get-download-queue-status'),
+  prioritizeDownload: (queueId: string) => ipcRenderer.invoke('prioritize-download', queueId),
+  removeFromDownloadQueue: (queueId: string) => ipcRenderer.invoke('remove-from-queue', queueId),
+  swapActiveDownload: (queueId: string) => ipcRenderer.invoke('swap-active-download', queueId),
+  onDownloadQueueStatus: (cb: (data: any) => void) => {
+    const handler = (_event: IpcRendererEvent, data: any) => cb(data)
+    ipcRenderer.on('download-queue-status', handler)
+    return () => ipcRenderer.removeListener('download-queue-status', handler)
+  },
+
   getOnlineFixIni: (gameUrl: string) => ipcRenderer.invoke('get-onlinefix-ini', gameUrl),
   saveOnlineFixIni: (gameUrl: string, content: string) => ipcRenderer.invoke('save-onlinefix-ini', gameUrl, content),
 

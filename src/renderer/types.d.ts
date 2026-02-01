@@ -59,6 +59,23 @@ type CloudSavesStatusPayload = {
   conflict?: boolean
 }
 
+type DownloadQueueItem = {
+  id: string
+  gameUrl: string
+  title: string
+  priority: number
+  addedAt: number
+}
+
+type DownloadQueueStatus = {
+  maxParallel: number
+  activeCount: number
+  queuedCount: number
+  active: DownloadQueueItem[]
+  queued: DownloadQueueItem[]
+  updatedAt: number
+}
+
 export {}
 
 declare global {
@@ -79,6 +96,14 @@ declare global {
       cancelDownload: (torrentId: string) => Promise<DownloadResult>
       onDownloadProgress: (cb: (data: DownloadProgressPayload) => void) => (() => void)
       onDownloadComplete: (cb: (data: { magnet?: string; infoHash?: string; destPath?: string }) => void) => (() => void)
+      
+      // Download Queue APIs
+      getDownloadQueueStatus: () => Promise<{ success: boolean; status?: DownloadQueueStatus; error?: string }>
+      prioritizeDownload: (queueId: string) => Promise<{ success: boolean; error?: string }>
+      removeFromDownloadQueue: (queueId: string) => Promise<{ success: boolean; error?: string }>
+      swapActiveDownload: (queueId: string) => Promise<{ success: boolean; error?: string }>
+      onDownloadQueueStatus: (cb: (data: DownloadQueueStatus) => void) => (() => void)
+
       openPath: (target: string) => Promise<DownloadResult>
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>

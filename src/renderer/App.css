@@ -1234,6 +1234,13 @@ body {
   flex-wrap: wrap;
 }
 
+.downloads-section-subtext {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  padding: 0 4px;
+  margin-top: -6px;
+}
+
 .downloads-pill {
   display: inline-flex;
   align-items: center;
