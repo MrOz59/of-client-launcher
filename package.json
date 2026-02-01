@@ -77,6 +77,10 @@
     ],
     "extraResources": [
       {
+        "from": "icon.png",
+        "to": "icon.png"
+      },
+      {
         "from": "services/torrent-agent/torrent-agent",
         "to": "torrent-agent",
         "filter": [
@@ -122,7 +126,9 @@
         "pacman"
       ],
       "category": "Game",
-      "maintainer": "Chaos Factory Team <contato@mroz.dev.br>"
+      "maintainer": "Chaos Factory Team <contato@mroz.dev.br>",
+      "icon": "icon.png",
+      "executableName": "voidlauncher"
     },
     "win": {
       "target": [

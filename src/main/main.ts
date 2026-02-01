@@ -74,7 +74,7 @@ if (typeof global.File === 'undefined') {
   }
 }
 
-import { BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, session, shell, nativeImage, type IpcMainInvokeEvent } from 'electron'
 import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
@@ -1019,9 +1019,24 @@ async function createMainWindow() {
     ? path.join(__dirname, '../../dist-preload/preload.js')
     : path.join(__dirname, 'preload.js')
 
+  // Resolve icon path for window (needed for Wayland alt-tab icon)
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '../../icon.png')
+  
+  let windowIcon: Electron.NativeImage | undefined
+  try {
+    if (fs.existsSync(iconPath)) {
+      windowIcon = nativeImage.createFromPath(iconPath)
+    }
+  } catch (e) {
+    console.warn('[Main] Failed to load window icon:', e)
+  }
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    icon: windowIcon,
     webPreferences: {
       preload: preloadPath,
       nodeIntegration: false,
