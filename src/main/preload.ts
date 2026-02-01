@@ -227,6 +227,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('cloud-saves-status', handler)
   },
 
+  // Navigation events from tray menu
+  onNavigateToTab: (cb: (tab: string) => void) => {
+    const handler = (_event: IpcRendererEvent, tab: string) => cb(tab)
+    ipcRenderer.on('navigate-to-tab', handler)
+    return () => ipcRenderer.removeListener('navigate-to-tab', handler)
+  },
+
+  onNavigateToGame: (cb: (gameUrl: string) => void) => {
+    const handler = (_event: IpcRendererEvent, gameUrl: string) => cb(gameUrl)
+    ipcRenderer.on('navigate-to-game', handler)
+    return () => ipcRenderer.removeListener('navigate-to-game', handler)
+  },
+
   cloudSavesOpenBackups: (gameUrl: string) => ipcRenderer.invoke('cloud-saves-open-backups', { gameUrl }),
   cloudSavesGetHistory: (gameUrl: string, limit?: number) =>
     ipcRenderer.invoke('cloud-saves-get-history', { gameUrl, limit }),

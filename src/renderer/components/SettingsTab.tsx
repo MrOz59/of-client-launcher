@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff } from 'lucide-react'
+import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Bell, Minimize2 } from 'lucide-react'
 
 interface Settings {
   downloadPath: string
@@ -16,6 +16,8 @@ interface Settings {
   lanDefaultNetworkId?: string
   lanControllerUrl?: string
   cloudSavesEnabled: boolean
+  notificationsEnabled: boolean
+  minimizeToTray: boolean
 }
 
 type DriveFile = { id: string; name: string; modifiedTime?: string }
@@ -46,6 +48,8 @@ export default function SettingsTab() {
     lanDefaultNetworkId: '',
     lanControllerUrl: 'https://vpn.mroz.dev.br',
     cloudSavesEnabled: true,
+    notificationsEnabled: true,
+    minimizeToTray: false,
   })
 
   const [runtimes, setRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
@@ -295,6 +299,60 @@ export default function SettingsTab() {
         <div>
           <h1>Configurações</h1>
           <p>Personalize o VoidLauncher de acordo com suas preferências</p>
+        </div>
+      </div>
+
+      {/* General Section */}
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Settings2 size={18} />
+          <h3>Geral</h3>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Bell size={16} />
+                Notificações
+              </div>
+              <div className="settings-card-description">
+                Exibir notificações quando downloads completarem ou falharem
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.notificationsEnabled !== false}
+                  onChange={(e) => setSettings({ ...settings, notificationsEnabled: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Minimize2 size={16} />
+                Minimizar para bandeja
+              </div>
+              <div className="settings-card-description">
+                Ao fechar a janela, manter o launcher rodando na bandeja do sistema
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.minimizeToTray === true}
+                  onChange={(e) => setSettings({ ...settings, minimizeToTray: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 

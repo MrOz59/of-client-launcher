@@ -45,9 +45,23 @@ export default function App() {
       setStoreWebviewResetKey((k) => k + 1)
     })
 
+    // Listen for navigation events from tray menu
+    const offNavigateTab = window.electronAPI.onNavigateToTab?.((tab: string) => {
+      if (tab === 'store' || tab === 'library' || tab === 'downloads' || tab === 'settings') {
+        setActiveTab(tab as Tab)
+      }
+    })
+
+    const offNavigateGame = window.electronAPI.onNavigateToGame?.((gameUrl: string) => {
+      setActiveTab('library')
+      // Could also scroll to the game or show it somehow
+    })
+
     return () => {
       try { off?.() } catch {}
       try { offCleared?.() } catch {}
+      try { offNavigateTab?.() } catch {}
+      try { offNavigateGame?.() } catch {}
     }
   }, [])
 

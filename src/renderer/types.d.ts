@@ -195,6 +195,10 @@ declare global {
       cloudSavesOpenBackups: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       cloudSavesGetHistory: (gameUrl: string, limit?: number) => Promise<{ success: boolean; entries?: any[]; error?: string }>
 
+      // Navigation events from tray menu
+      onNavigateToTab: (cb: (tab: string) => void) => (() => void)
+      onNavigateToGame: (cb: (gameUrl: string) => void) => (() => void)
+
       // Drive
       driveAuth: () => Promise<{
         success: boolean

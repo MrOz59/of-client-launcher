@@ -66,6 +66,8 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       let lanDefaultNetworkId = String(getSetting('lan_default_network_id') || '').trim()
       const lanControllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
       const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
+      const notificationsEnabled = getSetting('notifications_enabled') !== 'false'
+      const minimizeToTray = getSetting('minimize_to_tray') === 'true'
 
       return {
         success: true,
@@ -85,7 +87,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           protonExtraPaths,
           lanDefaultNetworkId,
           lanControllerUrl,
-          cloudSavesEnabled
+          cloudSavesEnabled,
+          notificationsEnabled,
+          minimizeToTray
         }
       }
     } catch (err: any) {
@@ -124,6 +128,12 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       if (typeof settings.cloudSavesEnabled === 'boolean') {
         setSetting('cloud_saves_enabled', settings.cloudSavesEnabled ? 'true' : 'false')
         drive.setCloudSavesEnabled(settings.cloudSavesEnabled)
+      }
+      if (typeof settings.notificationsEnabled === 'boolean') {
+        setSetting('notifications_enabled', settings.notificationsEnabled ? 'true' : 'false')
+      }
+      if (typeof settings.minimizeToTray === 'boolean') {
+        setSetting('minimize_to_tray', settings.minimizeToTray ? 'true' : 'false')
       }
       return { success: true }
     } catch (err: any) {

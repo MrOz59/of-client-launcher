@@ -74,7 +74,7 @@ if (typeof global.File === 'undefined') {
   }
 }
 
-import { BrowserWindow, dialog, ipcMain, session, shell, nativeImage, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, session, shell, nativeImage, Tray, Menu, Notification, type IpcMainInvokeEvent } from 'electron'
 import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
@@ -207,6 +207,7 @@ async function resolveGameVersion(options: {
 }
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
 const TORRENT_PARTITION = 'persist:online-fix'
 
 // Prevent renderer/main stalls caused by very frequent progress events (torrents can emit a lot).
@@ -224,6 +225,147 @@ function sendDownloadProgress(payload: any) {
   } catch {
     // ignore
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Desktop Notifications
+// ─────────────────────────────────────────────────────────────────────────────
+function showNotification(title: string, body: string, onClick?: () => void) {
+  // Check if notifications are enabled in settings
+  const notificationsEnabled = getSetting('notifications_enabled') !== 'false'
+  if (!notificationsEnabled) return
+
+  if (!Notification.isSupported()) {
+    console.log('[Notification] Not supported on this platform')
+    return
+  }
+
+  try {
+    const notification = new Notification({
+      title,
+      body,
+      icon: app.isPackaged
+        ? path.join(process.resourcesPath, 'icon.png')
+        : path.join(__dirname, '../../icon.png'),
+      silent: false
+    })
+
+    if (onClick) {
+      notification.on('click', onClick)
+    }
+
+    notification.show()
+  } catch (e) {
+    console.warn('[Notification] Failed to show:', e)
+  }
+}
+
+// Exported for use in other modules
+export function notifyDownloadComplete(gameTitle: string, gameUrl?: string) {
+  showNotification(
+    'Download Concluído',
+    `${gameTitle} está pronto para jogar!`,
+    () => {
+      mainWindow?.show()
+      mainWindow?.focus()
+      if (gameUrl) {
+        mainWindow?.webContents.send('navigate-to-game', gameUrl)
+      }
+    }
+  )
+}
+
+export function notifyDownloadError(gameTitle: string, error?: string) {
+  showNotification(
+    'Erro no Download',
+    error ? `${gameTitle}: ${error}` : `Falha ao baixar ${gameTitle}`,
+    () => {
+      mainWindow?.show()
+      mainWindow?.focus()
+    }
+  )
+}
+
+export function notifyGameUpdate(gameTitle: string, newVersion: string, gameUrl?: string) {
+  showNotification(
+    'Atualização Disponível',
+    `${gameTitle} tem uma nova versão: ${newVersion}`,
+    () => {
+      mainWindow?.show()
+      mainWindow?.focus()
+      if (gameUrl) {
+        mainWindow?.webContents.send('navigate-to-game', gameUrl)
+      }
+    }
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System Tray
+// ─────────────────────────────────────────────────────────────────────────────
+function createTray() {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '../../icon.png')
+
+  let trayIcon: Electron.NativeImage
+  try {
+    trayIcon = nativeImage.createFromPath(iconPath)
+    // Resize for tray (typically 16x16 or 22x22 on Linux)
+    trayIcon = trayIcon.resize({ width: 22, height: 22 })
+  } catch (e) {
+    console.warn('[Tray] Failed to load icon:', e)
+    return
+  }
+
+  tray = new Tray(trayIcon)
+  tray.setToolTip('VoidLauncher')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Abrir VoidLauncher',
+      click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+      }
+    },
+    {
+      label: 'Downloads',
+      click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+        mainWindow?.webContents.send('navigate-to-tab', 'downloads')
+      }
+    },
+    {
+      label: 'Biblioteca',
+      click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+        mainWindow?.webContents.send('navigate-to-tab', 'library')
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Sair',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  tray.on('click', () => {
+    if (mainWindow?.isVisible()) {
+      mainWindow.hide()
+    } else {
+      mainWindow?.show()
+      mainWindow?.focus()
+    }
+  })
+
+  console.log('[Tray] Created successfully')
 }
 
 type UpdateQueueStatusPayload = {
@@ -1066,6 +1208,15 @@ async function createMainWindow() {
     mainWindow.loadFile(htmlPath)
   }
 
+  // Handle minimize to tray
+  mainWindow.on('close', (event) => {
+    const minimizeToTray = getSetting('minimize_to_tray') === 'true'
+    if (minimizeToTray && !app.isQuitting) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -1103,8 +1254,25 @@ async function createAuthWindow() {
   })
 }
 
+// Flag to track if app is actually quitting (vs minimizing to tray)
+declare global {
+  namespace Electron {
+    interface App {
+      isQuitting?: boolean
+    }
+  }
+}
+app.isQuitting = false
+
+app.on('before-quit', () => {
+  app.isQuitting = true
+})
+
 app.whenReady().then(async () => {
   await importCookies('https://online-fix.me')
+
+  // Create system tray
+  createTray()
 
   // Initialize cloud saves setting
   const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
@@ -1393,6 +1561,12 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', function () {
+  // Don't quit if minimize to tray is enabled
+  const minimizeToTray = getSetting('minimize_to_tray') === 'true'
+  if (minimizeToTray && tray) {
+    // App stays running in tray
+    return
+  }
   if (process.platform !== 'darwin') app.quit()
 })
 
