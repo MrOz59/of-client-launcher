@@ -171,10 +171,22 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel python python-pip libarchive libxcrypt-compat
+          pacman -S --noconfirm --needed nodejs npm git base-devel pyenv libarchive libxcrypt-compat zlib xz tk
+      - name: Setup Python 3.12 via pyenv
+        run: |
+          export PYENV_ROOT="/root/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv install 3.12
+          pyenv global 3.12
+          echo "PYENV_ROOT=/root/.pyenv" >> $GITHUB_ENV
+          echo "/root/.pyenv/shims:/root/.pyenv/bin" >> $GITHUB_PATH
       - run: npm ci
       - name: Install Python dependencies
-        run: pip install --break-system-packages -r requirements.txt cx_Freeze
+        run: |
+          export PYENV_ROOT="/root/.pyenv"
+          export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
+          pip install -r requirements.txt cx_Freeze
         working-directory: services/torrent-agent
       - name: Build bundled torrent-agent binary
         run: npm run bundle:torrent-agent
