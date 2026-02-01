@@ -563,7 +563,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
       const next = dedupeDownloads([...deduped, ...preserveVirtual])
       setDownloads(next)
-      setHasActive(next.some(d => d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
+      setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
     }
     loadDownloads()
 
@@ -689,6 +689,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         // Filter out completed torrents (they don't need extraction)
         const filtered = updated.filter(shouldKeepDownload)
         const active = filtered.some(d =>
+          d.status === 'pending' ||
           d.status === 'downloading' ||
           d.status === 'paused' ||
           d.status === 'extracting' ||
@@ -779,7 +780,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         )
         const next = dedupeDownloads([...deduped, ...preserveVirtual])
         setDownloads(next)
-        setHasActive(next.some(d => d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
+        setHasActive(next.some(d => d.status === 'pending' || d.status === 'downloading' || d.status === 'paused' || d.status === 'extracting' || d.status === 'prefixing'))
       }).catch(() => {})
     })
 
