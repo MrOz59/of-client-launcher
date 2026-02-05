@@ -135,7 +135,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm libarchive-tools
+          sudo apt-get install -y rpm libarchive-tools meson ninja-build
       - run: npm ci
       - name: Install Python dependencies
         run: pip install -r requirements.txt
@@ -171,7 +171,7 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel pyenv libarchive libxcrypt-compat zlib xz tk
+          pacman -S --noconfirm --needed nodejs npm git base-devel pyenv libarchive libxcrypt-compat zlib xz tk meson ninja
       - name: Setup Python 3.12 via pyenv
         run: |
           export PYENV_ROOT="/root/.pyenv"
@@ -259,4 +259,3 @@ jobs:
             --notes "Automated build for ${GITHUB_SHA}" \
             --target "${GITHUB_SHA}" \
             "${files[@]}"
-

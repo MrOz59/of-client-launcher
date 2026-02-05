@@ -20,7 +20,7 @@
     "fetch:ludusavi": "node scripts/fetch-ludusavi.js",
     "fetch:legendary": "node scripts/fetch-legendary.js",
     "build:app": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
-    "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:game-overlay && npm run build:app",
+    "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:app",
     "dist:linux": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
     "dist:appimage": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
     "dist:rpm": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
