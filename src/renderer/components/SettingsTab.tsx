@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Bell, Minimize2 } from 'lucide-react'
+import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2 } from 'lucide-react'
 
 interface Settings {
   downloadPath: string
@@ -16,7 +16,6 @@ interface Settings {
   lanDefaultNetworkId?: string
   lanControllerUrl?: string
   cloudSavesEnabled: boolean
-  notificationsEnabled: boolean
   minimizeToTray: boolean
 }
 
@@ -48,7 +47,6 @@ export default function SettingsTab() {
     lanDefaultNetworkId: '',
     lanControllerUrl: 'https://vpn.mroz.dev.br',
     cloudSavesEnabled: true,
-    notificationsEnabled: true,
     minimizeToTray: false,
   })
 
@@ -313,28 +311,6 @@ export default function SettingsTab() {
           <div className="settings-card-item">
             <div className="settings-card-info">
               <div className="settings-card-title">
-                <Bell size={16} />
-                Notificações
-              </div>
-              <div className="settings-card-description">
-                Exibir notificações quando downloads completarem ou falharem
-              </div>
-            </div>
-            <div className="settings-card-control">
-              <label className="settings-toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.notificationsEnabled !== false}
-                  onChange={(e) => setSettings({ ...settings, notificationsEnabled: e.target.checked })}
-                />
-                <span className="settings-toggle-slider"></span>
-              </label>
-            </div>
-          </div>
-
-          <div className="settings-card-item">
-            <div className="settings-card-info">
-              <div className="settings-card-title">
                 <Minimize2 size={16} />
                 Minimizar para bandeja
               </div>
@@ -354,97 +330,6 @@ export default function SettingsTab() {
             </div>
           </div>
 
-          {/* Notification Test Section (DEV) */}
-          <div className="settings-card-item vertical">
-            <div className="settings-card-info">
-              <div className="settings-card-title">
-                🧪 Testar Notificações (Dev)
-              </div>
-              <div className="settings-card-description">
-                Clique nos botões abaixo para testar os diferentes tipos de notificação overlay
-              </div>
-            </div>
-            <div className="settings-card-control" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('achievement')}
-              >
-                🏆 Conquista
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('download-complete')}
-              >
-                ✅ Download OK
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('download-error')}
-              >
-                ❌ Download Erro
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('download-progress')}
-              >
-                ⬇️ Progresso
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('update-available')}
-              >
-                🔄 Atualização
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('game-ready')}
-              >
-                🎮 Jogo Pronto
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('cloud-sync')}
-              >
-                ☁️ Cloud Sync
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('success')}
-              >
-                ✓ Sucesso
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('warning')}
-              >
-                ⚠️ Aviso
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('error')}
-              >
-                ✕ Erro
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('with-actions')}
-              >
-                🔘 Com Ações
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('progress-demo')}
-              >
-                📊 Progress Demo
-              </button>
-              <button
-                className="settings-btn secondary"
-                onClick={() => window.electronAPI.testNotification?.('confirm')}
-              >
-                ❓ Confirmação
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 

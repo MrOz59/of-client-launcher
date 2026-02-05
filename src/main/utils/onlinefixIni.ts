@@ -3,6 +3,14 @@ import path from 'path'
 
 export type OnlineFixKV = { key: string; value: string }
 
+function sanitizeIniValue(raw: string): string {
+  let v = String(raw ?? '').trim()
+  if (v.includes(';')) v = v.split(';')[0].trim()
+  if (v.includes('#')) v = v.split('#')[0].trim()
+  v = v.replace(/^["']+|["']+$/g, '').trim()
+  return v
+}
+
 export function parseIniKeyValues(text: string): OnlineFixKV[] {
   const out: OnlineFixKV[] = []
   const lines = String(text || '').split(/\r?\n/)
@@ -23,22 +31,14 @@ export function parseIniKeyValues(text: string): OnlineFixKV[] {
 
 export function extractNumericAppId(raw: string): string | null {
   if (!raw) return null
-  let v = String(raw).trim()
-
-  // remove comentário inline ; ou #
-  if (v.includes(';')) v = v.split(';')[0].trim()
-  if (v.includes('#')) v = v.split('#')[0].trim()
-
-  // remove aspas
-  v = v.replace(/^["']+|["']+$/g, '').trim()
-
+  const v = sanitizeIniValue(raw)
   const m = v.match(/\d+/)
   return m ? m[0] : null
 }
 
 export function extractRealAppIdFromIniText(text: string): string | null {
   const fields = parseIniKeyValues(text)
-  const wantedKeys = ['RealAppId', 'RealAppID', 'SteamAppId', 'SteamAppID', 'AppId', 'AppID']
+  const wantedKeys = ['RealAppId', 'RealAppID']
 
   const lowerMap = new Map<string, string>()
   for (const f of fields) {
@@ -51,6 +51,89 @@ export function extractRealAppIdFromIniText(text: string): string | null {
     if (id) return id
   }
   return null
+}
+
+export function extractAppIdFromIniText(text: string): string | null {
+  const fields = parseIniKeyValues(text)
+  const wantedKeys = ['AppId', 'AppID', 'SteamAppId', 'SteamAppID']
+
+  const lowerMap = new Map<string, string>()
+  for (const f of fields) {
+    lowerMap.set(String(f.key || '').toLowerCase().trim(), String(f.value ?? ''))
+  }
+
+  for (const k of wantedKeys) {
+    const raw = lowerMap.get(k.toLowerCase().trim())
+    const id = extractNumericAppId(raw || '')
+    if (id) return id
+  }
+  return null
+}
+
+export function extractFakeAppIdFromIniText(text: string): string | null {
+  const fields = parseIniKeyValues(text)
+  const wantedKeys = ['FakeAppId', 'FakeAppID']
+
+  const lowerMap = new Map<string, string>()
+  for (const f of fields) {
+    lowerMap.set(String(f.key || '').toLowerCase().trim(), String(f.value ?? ''))
+  }
+
+  for (const k of wantedKeys) {
+    const raw = lowerMap.get(k.toLowerCase().trim())
+    const id = extractNumericAppId(raw || '')
+    if (id) return id
+  }
+  return null
+}
+
+// Prefer RealAppId (saves/achievements), fallback to AppId/SteamAppId.
+export function extractSteamAppIdFromIniText(text: string): string | null {
+  return extractRealAppIdFromIniText(text) || extractAppIdFromIniText(text)
+}
+
+// Prefer AppId/SteamAppId for overlay; fallback to RealAppId.
+export function extractSteamOverlayAppIdFromIniText(text: string): string | null {
+  return extractAppIdFromIniText(text) || extractFakeAppIdFromIniText(text) || extractRealAppIdFromIniText(text)
+}
+
+export function extractEpicProductIdFromIniText(text: string): string | null {
+  const fields = parseIniKeyValues(text)
+  const wantedKeys = ['RealProductId', 'RealProductID', 'ProductId', 'ProductID', 'EpicProductId', 'EpicProductID']
+
+  const lowerMap = new Map<string, string>()
+  for (const f of fields) {
+    lowerMap.set(String(f.key || '').toLowerCase().trim(), String(f.value ?? ''))
+  }
+
+  for (const k of wantedKeys) {
+    const raw = lowerMap.get(k.toLowerCase().trim())
+    const v = sanitizeIniValue(raw || '')
+    if (v) return v
+  }
+  return null
+}
+
+export function extractOnlineFixOverlayIds(text: string): {
+  steamAppId?: string
+  steamAppIdSource?: 'appId' | 'fakeAppId' | 'realAppId'
+  realAppId?: string
+  fakeAppId?: string
+  epicProductId?: string
+} {
+  const appId = extractAppIdFromIniText(text)
+  const realAppId = extractRealAppIdFromIniText(text)
+  const fakeAppId = extractFakeAppIdFromIniText(text)
+  const steamAppId = appId || fakeAppId || realAppId
+  const steamAppIdSource = appId ? 'appId' : (fakeAppId ? 'fakeAppId' : (realAppId ? 'realAppId' : undefined))
+  const epicProductId = extractEpicProductIdFromIniText(text)
+  return {
+    steamAppId: steamAppId || undefined,
+    steamAppIdSource,
+    realAppId: realAppId || undefined,
+    fakeAppId: fakeAppId || undefined,
+    epicProductId: epicProductId || undefined
+  }
 }
 
 export async function readFileIfExists(filePath: string): Promise<string | null> {

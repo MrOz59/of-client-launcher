@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidLauncher Notification</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      pointer-events: none;
+    }
+
+    .notification {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(23, 26, 33, 0.95);
+      border-left: 4px solid var(--accent-color, #66c0f4);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      pointer-events: none;
+      
+      /* Steam-like blur effect */
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      
+      /* Animations */
+      animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      
+      /* Subtle shadow */
+      box-shadow: 
+        0 6px 26px rgba(0, 0, 0, 0.45),
+        0 0 0 1px rgba(255, 255, 255, 0.06);
+    }
+
+    .notification.fade-out {
+      animation: fadeOut 0.3s ease-in forwards;
+    }
+
+    .notification[data-mode="desktop"] {
+      background: linear-gradient(135deg, rgba(26, 30, 38, 0.98), rgba(20, 24, 31, 0.96));
+      border-left-width: 5px;
+      padding: 16px 20px;
+      width: var(--notif-width, 420px);
+      height: var(--notif-height, 96px);
+      top: auto;
+      left: auto;
+      right: auto;
+      bottom: auto;
+    }
+
+    /* Icon container */
+    .icon-container {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: var(--accent-color-bg, rgba(102, 192, 244, 0.15));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .notification[data-mode="desktop"] .icon-container {
+      width: 56px;
+      height: 56px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .icon {
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .icon-image {
+      width: 36px;
+      height: 36px;
+      border-radius: 4px;
+      object-fit: cover;
+    }
+
+    /* Content */
+    .content {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .title {
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.3;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .description {
+      color: #8b929a;
+      font-size: 12px;
+      line-height: 1.4;
+          .notification[data-mode="desktop"] .title {
+            font-size: 15px;
+          }
+
+          .notification[data-mode="desktop"] .description {
+            font-size: 12.5px;
+            color: rgba(203, 210, 220, 0.85);
+          }
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Progress bar for timed notifications */
+    .progress-bar {
+      position: absolute;
+      bottom: 0;
+      left: 4px;
+      right: 0;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 0 0 8px 0;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent-color, #66c0f4);
+      width: 100%;
+      animation: progressShrink var(--duration, 5000ms) linear forwards;
+      transform-origin: left;
+    }
+
+    /* Type-specific styles */
+    .notification[data-type="achievement_unlocked"] {
+      --accent-color: #c7a628;
+      --accent-color-bg: rgba(199, 166, 40, 0.2);
+    }
+
+    .notification[data-type="download_complete"] {
+      --accent-color: #5ba32b;
+      --accent-color-bg: rgba(91, 163, 43, 0.2);
+    }
+
+    .notification[data-type="download_error"] {
+      --accent-color: #c94a4a;
+      --accent-color-bg: rgba(201, 74, 74, 0.2);
+    }
+
+    .notification[data-type="friend_online"] {
+      --accent-color: #4b88c7;
+      --accent-color-bg: rgba(75, 136, 199, 0.2);
+    }
+
+    .notification[data-type="info"] {
+      --accent-color: #66c0f4;
+      --accent-color-bg: rgba(102, 192, 244, 0.15);
+    }
+
+    /* Animations */
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes fadeOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(30%);
+        opacity: 0;
+      }
+    }
+
+    @keyframes progressShrink {
+      from {
+        transform: scaleX(1);
+      }
+      to {
+        transform: scaleX(0);
+      }
+    }
+
+    /* Hover effect (for testing, disabled during game) */
+    .notification.interactive:hover {
+      background: rgba(30, 34, 42, 0.98);
+    }
+  </style>
+</head>
+<body>
+  <div class="notification" id="notification" data-type="info">
+    <div class="icon-container">
+      <span class="icon" id="icon">ℹ️</span>
+    </div>
+    <div class="content">
+      <div class="title" id="title">Notification</div>
+      <div class="description" id="description"></div>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress"></div>
+    </div>
+  </div>
+
+  <script>
+    // Parse URL parameters
+    const params = new URLSearchParams(window.location.search);
+    
+    const type = params.get('type') || 'info';
+    const title = params.get('title') || 'Notification';
+    const description = params.get('description') || '';
+    const icon = params.get('icon') || '';
+    const duration = parseInt(params.get('duration') || '5000', 10);
+    const mode = params.get('mode') || 'game';
+    const anchor = params.get('anchor') || 'top-right';
+    const offsetX = parseInt(params.get('offsetX') || '20', 10);
+    const offsetY = parseInt(params.get('offsetY') || '20', 10);
+    const width = parseInt(params.get('width') || '420', 10);
+    const height = parseInt(params.get('height') || '96', 10);
+
+    // Icon mapping
+    const iconMap = {
+      'achievement_unlocked': '🏆',
+      'download_complete': '✅',
+      'download_error': '❌',
+      'friend_online': '👤',
+      'info': 'ℹ️'
+    };
+
+    // Set content
+    const notification = document.getElementById('notification');
+    const iconEl = document.getElementById('icon');
+    const titleEl = document.getElementById('title');
+    const descEl = document.getElementById('description');
+    const progressEl = document.getElementById('progress');
+
+    notification.dataset.type = type;
+    notification.dataset.mode = mode;
+    if (mode === 'desktop') {
+      notification.style.setProperty('--notif-width', `${width}px`);
+      notification.style.setProperty('--notif-height', `${height}px`);
+
+      const applyAnchor = (a, x, y) => {
+        notification.style.top = '';
+        notification.style.bottom = '';
+        notification.style.left = '';
+        notification.style.right = '';
+
+        if (a.includes('top')) notification.style.top = `${y}px`;
+        if (a.includes('bottom')) notification.style.bottom = `${y}px`;
+        if (a.includes('left')) notification.style.left = `${x}px`;
+        if (a.includes('right')) notification.style.right = `${x}px`;
+      };
+
+      applyAnchor(anchor, offsetX, offsetY);
+
+      window.__setAnchorOffset = (a, x, y) => {
+        applyAnchor(a, x, y);
+      };
+    }
+    titleEl.textContent = title;
+    descEl.textContent = description;
+    
+    // Handle icon - either emoji or image
+    if (icon && (icon.startsWith('data:') || icon.startsWith('http'))) {
+      iconEl.innerHTML = `<img src="${icon}" class="icon-image" alt="">`;
+    } else {
+      iconEl.textContent = iconMap[type] || iconMap['info'];
+    }
+
+    // Set progress bar duration
+    progressEl.style.setProperty('--duration', `${duration}ms`);
+
+    // Trigger fade-out animation before window closes
+    setTimeout(() => {
+      notification.classList.add('fade-out');
+    }, duration - 300);
+  </script>
+</body>
+</html>

@@ -16,14 +16,16 @@
     "torrent:deps": "node scripts/install-torrent-agent-deps.js",
     "bundle:torrent-agent": "node scripts/build-torrent-agent.js",
     "bundle:torrent-agent-runtime": "node scripts/build-torrent-agent-runtime.js",
+    "build:game-overlay": "node scripts/build-game-overlay.js",
     "fetch:ludusavi": "node scripts/fetch-ludusavi.js",
+    "fetch:legendary": "node scripts/fetch-legendary.js",
     "build:app": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
-    "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:app",
-    "dist:linux": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
-    "dist:appimage": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
-    "dist:rpm": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
-    "dist:pacman": "npm run fetch:ludusavi && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
-    "dist:win": "npm run fetch:ludusavi && npm run build && electron-builder --win --publish never",
+    "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:game-overlay && npm run build:app",
+    "dist:linux": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
+    "dist:appimage": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
+    "dist:rpm": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
+    "dist:pacman": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
+    "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build && electron-builder --win --publish never",
     "start": "electron .",
     "test:scraper": "node scripts/test-scraper-dist.js"
   },
@@ -108,6 +110,13 @@
       {
         "from": "vendor/ludusavi",
         "to": "ludusavi",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/legendary",
+        "to": "legendary",
         "filter": [
           "**/*"
         ]

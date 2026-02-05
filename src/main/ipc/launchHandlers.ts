@@ -1,8 +1,9 @@
 /**
  * IPC Handlers for Game Launch/Stop
  */
-import { ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { spawn } from 'child_process'
 import {
@@ -27,6 +28,9 @@ import * as cloudSaves from '../cloudSaves'
 import { appendCloudSavesHistory, type CloudSavesHistoryEntry } from '../cloudSavesHistory'
 import { detectSteamAppIdFromInstall } from './achievementsHandlers'
 import type { IpcContext, IpcHandlerRegistrar, RunningGameProc } from './types'
+import { getOverlayIPC, removeOverlayIPC } from '../overlayIPC'
+import { createOverlayServer, removeOverlayServer, getOverlayServer } from '../overlayIPCServer'
+import { notifyAchievementUnlocked, setCurrentGamePid, NOTIFICATIONS_ENABLED } from '../desktopNotifications'
 import {
   slugify,
   isPidAlive,
@@ -34,8 +38,11 @@ import {
   readFileTailBytes,
   trimToMaxChars,
   extractInterestingProtonLog,
-  findExecutableInDir
+  findExecutableInDir,
+  waitMs
 } from '../utils'
+import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
+import { ensureLegendaryAvailable } from '../legendary'
 
 // ============================================================================
 // Local Helpers
@@ -47,6 +54,322 @@ function recordCloudSaves(entry: CloudSavesHistoryEntry) {
   } catch {
     // ignore
   }
+}
+
+function resolveWinePrefixPath(prefixPath: string): string {
+  if (!prefixPath) return prefixPath
+  const pfx = path.join(prefixPath, 'pfx')
+  if (fs.existsSync(path.join(pfx, 'drive_c'))) return pfx
+  if (fs.existsSync(path.join(prefixPath, 'drive_c'))) return prefixPath
+  return prefixPath
+}
+
+function findEosOverlayInstallPath(): string | null {
+  const home = os.homedir()
+  let userTools: string | null = null
+  try {
+    userTools = path.join(app.getPath('userData'), 'tools', 'eos_overlay')
+  } catch {
+    // ignore
+  }
+  const candidates = [
+    ...(userTools ? [userTools] : []),
+    path.join(home, '.config', 'heroic', 'tools', 'eos_overlay'),
+    path.join(home, '.config', 'legendary', 'overlay'),
+    path.join(home, '.config', 'legendary', 'eos_overlay'),
+    path.join(home, '.var', 'app', 'com.heroicgameslauncher.hgl', 'config', 'heroic', 'tools', 'eos_overlay')
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+  return null
+}
+
+function readProcText(pid: string, file: string): string | null {
+  try {
+    return fs.readFileSync(path.join('/proc', pid, file), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+function readProcCmdlineArgs(pid: string): string[] {
+  const raw = readProcText(pid, 'cmdline')
+  if (!raw) return []
+  return raw.split('\0').filter(Boolean)
+}
+
+const IGNORED_WINE_EXE_NAMES = new Set([
+  'services.exe',
+  'winedevice.exe',
+  'plugplay.exe',
+  'rpcss.exe',
+  'explorer.exe',
+  'svchost.exe',
+  'conhost.exe',
+  'crashhandler.exe',
+  'eosoverlayrenderer-win64-shipping.exe',
+  'eosoverlayrenderer-win32-shipping.exe'
+])
+
+function listLinuxHandoffPids(options: {
+  installDir: string
+  exePath?: string | null
+  prefixPath?: string | null
+  excludePids?: number[]
+}): number[] {
+  if (process.platform !== 'linux') return []
+
+  const installLower = String(options.installDir || '').toLowerCase()
+  const exeBase = options.exePath ? path.basename(options.exePath).toLowerCase() : ''
+  const exclude = new Set<number>((options.excludePids || []).filter((p) => Number.isFinite(p)) as number[])
+  const prefixCandidates: string[] = []
+  if (options.prefixPath) {
+    prefixCandidates.push(String(options.prefixPath).toLowerCase())
+    prefixCandidates.push(resolveWinePrefixPath(options.prefixPath).toLowerCase())
+  }
+
+  let entries: string[] = []
+  try {
+    entries = fs.readdirSync('/proc')
+  } catch {
+    return []
+  }
+
+  const scored: Array<{ pid: number; score: number }> = []
+
+  for (const ent of entries) {
+    if (!/^\d+$/.test(ent)) continue
+    const pid = Number(ent)
+    if (!pid || exclude.has(pid)) continue
+
+    const args = readProcCmdlineArgs(ent)
+    if (!args.length) continue
+    const cmdLower = args.join(' ').toLowerCase()
+
+    const exeArg = [...args].reverse().find((a) => a.toLowerCase().endsWith('.exe'))
+    if (!exeArg) continue
+    const exeName = path.basename(exeArg).toLowerCase()
+    if (IGNORED_WINE_EXE_NAMES.has(exeName)) continue
+
+    const matchesInstall = !!installLower && cmdLower.includes(installLower)
+    const matchesExe = !!exeBase && cmdLower.includes(exeBase)
+
+    let matchesPrefix = false
+    if (prefixCandidates.length) {
+      const envRaw = readProcText(ent, 'environ')
+      if (envRaw) {
+        const envLower = envRaw.toLowerCase()
+        matchesPrefix = prefixCandidates.some((p) =>
+          envLower.includes(`wineprefix=${p}`) || envLower.includes(`steam_compat_data_path=${p}`)
+        )
+      }
+    }
+
+    if (!matchesPrefix && !matchesInstall && !matchesExe) continue
+
+    let score = 0
+    if (matchesPrefix) score += 5
+    if (matchesInstall) score += 3
+    if (matchesExe) score += 2
+    if (cmdLower.includes('wine') || cmdLower.includes('proton')) score += 1
+    if (exeBase && exeName === exeBase) score += 2
+
+    scored.push({ pid, score })
+  }
+
+  scored.sort((a, b) => (b.score - a.score) || (b.pid - a.pid))
+  return scored.map((s) => s.pid)
+}
+
+async function waitForHandoffPid(options: {
+  installDir: string
+  exePath?: string | null
+  prefixPath?: string | null
+  excludePids?: number[]
+  timeoutMs?: number
+  intervalMs?: number
+}): Promise<number | null> {
+  const timeoutMs = options.timeoutMs ?? 15000
+  const intervalMs = options.intervalMs ?? 1000
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const pids = listLinuxHandoffPids(options)
+    if (pids.length) return pids[0]
+    await waitMs(intervalMs)
+  }
+  return null
+}
+
+async function waitForNoHandoffPids(options: {
+  installDir: string
+  exePath?: string | null
+  prefixPath?: string | null
+  excludePids?: number[]
+  intervalMs?: number
+  emptyStreak?: number
+}): Promise<void> {
+  const intervalMs = options.intervalMs ?? 1500
+  const emptyStreakTarget = options.emptyStreak ?? 3
+  let emptyStreak = 0
+  while (true) {
+    const pids = listLinuxHandoffPids(options)
+    if (pids.length === 0) {
+      emptyStreak += 1
+      if (emptyStreak >= emptyStreakTarget) break
+    } else {
+      emptyStreak = 0
+    }
+    await waitMs(intervalMs)
+  }
+}
+
+async function waitForPidExit(pid: number, intervalMs = 1500): Promise<void> {
+  while (isPidAlive(pid)) {
+    await waitMs(intervalMs)
+  }
+}
+
+function isEosOverlayPathValid(p: string | null): boolean {
+  if (!p) return false
+  try {
+    const win64 = path.join(p, 'EOSOverlayRenderer-Win64-Shipping.exe')
+    const win32 = path.join(p, 'EOSOverlayRenderer-Win32-Shipping.exe')
+    const dll64 = path.join(p, 'EOSOVH-Win64-Shipping.dll')
+    const dll32 = path.join(p, 'EOSOVH-Win32-Shipping.dll')
+    return fs.existsSync(win64) || fs.existsSync(win32) || fs.existsSync(dll64) || fs.existsSync(dll32)
+  } catch {
+    return false
+  }
+}
+
+async function promptInstallEosOverlay(owner: Electron.BrowserWindow | null): Promise<'install' | 'skip'> {
+  const options = {
+    type: 'question' as const,
+    buttons: ['Instalar agora (Recomendado)', 'Continuar sem'] as string[],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'EOS Overlay não instalado',
+    message: 'O EOS Overlay não está instalado.',
+    detail: 'Recomendado: sem ele pode não ser possível convidar outros jogadores. Deseja instalar agora?'
+  }
+  const res = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options)
+  return res.response === 0 ? 'install' : 'skip'
+}
+
+async function enableEosOverlayForPrefix(
+  prefixPath: string,
+  owner: Electron.BrowserWindow | null,
+  onStatus?: (msg: string) => void
+): Promise<boolean> {
+  if (!prefixPath) return false
+  const winePrefix = resolveWinePrefixPath(prefixPath)
+  if (!winePrefix || !fs.existsSync(winePrefix)) {
+    console.warn('[Launch] EOS overlay: prefix inválido:', winePrefix || prefixPath)
+    return false
+  }
+
+  const ensured = await ensureLegendaryAvailable({ allowDownload: true, timeoutMs: 120_000 })
+  const legendaryPath = ensured.path
+  if (!ensured.ok || !legendaryPath) {
+    console.warn('[Launch] EOS overlay: legendary indisponível:', ensured.message || 'unknown')
+    return false
+  }
+
+  let overlayPath = findEosOverlayInstallPath()
+  if (!isEosOverlayPathValid(overlayPath)) overlayPath = null
+  if (!overlayPath) {
+    const decision = await promptInstallEosOverlay(owner)
+    if (decision === 'skip') {
+      console.warn('[Launch] EOS overlay: usuário optou por não instalar')
+      return false
+    }
+
+    let installPath = ''
+    try {
+      installPath = path.join(app.getPath('userData'), 'tools', 'eos_overlay')
+    } catch {}
+
+    onStatus?.('Instalando EOS Overlay (recomendado)...')
+    console.log('[Launch] EOS overlay: installing via legendary...')
+    await new Promise<void>((resolve) => {
+      const args = installPath
+        ? ['eos-overlay', 'install', '--path', installPath]
+        : ['eos-overlay', 'install']
+      const proc = spawn(legendaryPath, args, { stdio: 'ignore' })
+      const t = setTimeout(() => {
+        try { proc.kill() } catch {}
+        console.warn('[Launch] EOS overlay: install timeout')
+        resolve()
+      }, 15 * 60 * 1000)
+
+      proc.on('error', (err: Error) => {
+        clearTimeout(t)
+        console.warn('[Launch] EOS overlay: install falhou:', err?.message || err)
+        resolve()
+      })
+      proc.on('exit', (code: number | null) => {
+        clearTimeout(t)
+        if (typeof code === 'number' && code !== 0) {
+          console.warn('[Launch] EOS overlay: install retornou código', code)
+        }
+        resolve()
+      })
+    })
+
+    overlayPath = findEosOverlayInstallPath()
+    if (!isEosOverlayPathValid(overlayPath)) overlayPath = null
+    if (!overlayPath) {
+      const warnOptions = {
+        type: 'warning',
+        title: 'Falha ao instalar EOS Overlay',
+        message: 'Não foi possível instalar o EOS Overlay.',
+        detail: 'O jogo será iniciado sem o overlay. Você pode tentar instalar novamente nas configurações.'
+      } as const
+      if (owner) {
+        await dialog.showMessageBox(owner, warnOptions)
+      } else {
+        await dialog.showMessageBox(warnOptions)
+      }
+      return false
+    }
+  }
+
+  let enableOk = false
+  await new Promise<void>((resolve) => {
+    const args = ['eos-overlay', 'enable', '--prefix', winePrefix]
+    if (overlayPath) args.push('--path', overlayPath)
+    console.log('[Launch] EOS overlay: enabling with args:', args.join(' '))
+    const proc = spawn(legendaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stderr = ''
+    let stdout = ''
+    proc.stdout?.on('data', (b: Buffer) => { stdout += b.toString('utf-8') })
+    proc.stderr?.on('data', (b: Buffer) => { stderr += b.toString('utf-8') })
+    const t = setTimeout(() => {
+      try { proc.kill() } catch {}
+      console.warn('[Launch] EOS overlay: enable timeout')
+      resolve()
+    }, 15000)
+
+    proc.on('error', (err: Error) => {
+      clearTimeout(t)
+      console.warn('[Launch] EOS overlay: enable falhou:', err?.message || err)
+      resolve()
+    })
+    proc.on('exit', (code: number | null) => {
+      clearTimeout(t)
+      enableOk = typeof code === 'number' ? code === 0 : false
+      if (!enableOk) {
+        console.warn('[Launch] EOS overlay: enable retornou código', code)
+        const out = (stdout + '\n' + stderr).trim()
+        if (out) console.warn('[Launch] EOS overlay: enable output:', out.slice(0, 1200))
+      }
+      resolve()
+    })
+  })
+  return enableOk
 }
 
 // ============================================================================
@@ -195,6 +518,9 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       let child: any
       let stderrTail = ''
       let protonLogPath: string | undefined
+      
+      // Generate unique session ID for overlay IPC (used by both Proton and native)
+      const overlaySessionId = `game_${extractGameIdFromUrl(gameUrl)}_${Date.now()}`
 
       if (isLinux() && exePath.toLowerCase().endsWith('.exe')) {
         // Linux + Windows exe = use Proton
@@ -241,9 +567,43 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.log('[Launch] 📂 Prefix path:', prefixPath)
         console.log('[Launch] 📂 Prefix exists:', fs.existsSync(prefixPath))
 
-        const stableNumericId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-        const derivedAppId = stableNumericId && /^\d+$/.test(stableNumericId) ? stableNumericId : '480'
-        const steamAppId = (game?.steam_app_id as string | null) || detectSteamAppIdFromInstall(installDir) || derivedAppId
+        // Detect OnlineFix overlay IDs (Steam vs Epic)
+        let iniSteamAppId: string | null = null
+        let epicProductId: string | null = null
+        try {
+          const found = await findAndReadOnlineFixIni(installDir)
+          if (found?.content) {
+            const ids = extractOnlineFixOverlayIds(found.content)
+            iniSteamAppId = ids.steamAppId || null
+            epicProductId = ids.epicProductId || null
+            if (iniSteamAppId) {
+              console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', iniSteamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
+            }
+            if (ids.fakeAppId) {
+              console.log('[Launch] ✅ OnlineFix.ini Fake AppID:', ids.fakeAppId)
+            }
+            if (ids.realAppId) {
+              console.log('[Launch] ✅ OnlineFix.ini Real AppID:', ids.realAppId)
+            }
+            if (epicProductId) console.log('[Launch] ✅ OnlineFix.ini Epic Product ID:', epicProductId)
+          }
+        } catch (err: any) {
+          console.warn('[Launch] Failed to read OnlineFix.ini for overlay IDs:', err?.message || err)
+        }
+
+        const normalizeSteamId = (v?: string | null): string | null => {
+          const s = String(v || '').trim()
+          if (!s || !/^\d+$/.test(s) || s === '0') return null
+          return s
+        }
+        const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
+        const steamAppId =
+          normalizeSteamId(game?.steam_app_id as string | null) ||
+          normalizeSteamId(iniSteamAppId) ||
+          normalizeSteamId(detectedSteamAppId)
+        const isEpic = Boolean(epicProductId)
+        const enableSteamOverlay = !isEpic && Boolean(steamAppId)
+        const enableEosOverlay = isEpic
 
         // Run known redistributables
         try {
@@ -258,13 +618,21 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
           console.warn('[Launch] Failed to run common redists:', err)
         }
 
+        let eosOverlayEnabled = false
+        if (enableEosOverlay) {
+          console.log('[Launch] 🟣 Enabling EOS overlay for prefix...')
+          eosOverlayEnabled = await enableEosOverlayForPrefix(prefixPath, getMainWindow(), (msg) => {
+            sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
+          })
+        }
+
         console.log('[Launch] 🔧 Building Proton launch command...')
         const launch = buildProtonLaunch(
           exePath,
           [],
           slug,
           game.proton_runtime || undefined,
-          { ...protonOpts, steamAppId, installDir },
+          { ...protonOpts, steamAppId: steamAppId || undefined, installDir, enableSteamOverlay, enableEosOverlay: eosOverlayEnabled },
           prefixPath
         )
 
@@ -290,8 +658,41 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.log('[Launch] 🎯 Full command:', launch.cmd, launch.args?.join(' '))
         console.log('[Launch] 📁 Working directory:', installDir)
 
-        child = spawn(launch.cmd, launch.args, {
-          env: { ...process.env, ...launch.env },
+        // Build environment for game launch
+        const gameEnv: NodeJS.ProcessEnv = { 
+          ...process.env, 
+          ...launch.env,
+          // Session ID for notification routing
+          VOIDLAUNCHER_SESSION: overlaySessionId,
+        }
+        console.log('[Launch] 🔑 Session:', overlaySessionId)
+
+        // Check if Gamescope mode is enabled for in-game notifications
+        const useGamescope = protonOpts.useGamescope === true
+        let finalCmd = launch.cmd
+        let finalArgs = launch.args || []
+
+        if (useGamescope) {
+          console.log('[Launch] 🎮 Gamescope mode enabled for in-game notifications')
+          // Wrap the command with gamescope
+          // -e: enable Steam integration (overlay support)
+          // --backend sdl: use SDL for window creation
+          // -W/-H: output resolution, -w/-h: game resolution
+          finalArgs = [
+            '--backend', 'sdl',
+            '-e',
+            '-W', '1920', '-H', '1080',
+            '-w', '1920', '-h', '1080',
+            '--',
+            launch.cmd,
+            ...(launch.args || [])
+          ]
+          finalCmd = 'gamescope'
+        }
+
+        const launchStartedAt = Date.now()
+        child = spawn(finalCmd, finalArgs, {
+          env: gameEnv,
           cwd: installDir,
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe']
@@ -319,11 +720,68 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
         child.on('exit', async (code: number, signal: string) => {
           console.log('[Launch] 🏁 Process exited with code:', code, 'signal:', signal)
+
+          const earlyExit = Date.now() - launchStartedAt < 20000
+          let handoffPid: number | null = null
+          if (earlyExit && process.platform === 'linux') {
+            handoffPid = await waitForHandoffPid({
+              installDir,
+              exePath,
+              prefixPath,
+              excludePids: [child.pid],
+              timeoutMs: 20000,
+              intervalMs: 1000
+            })
+            if (handoffPid) {
+              console.warn('[Launch] Launcher repassou execução para PID:', handoffPid)
+              const existing = runningGames.get(gameUrl)
+              if (existing) runningGames.set(gameUrl, { ...existing, pid: handoffPid })
+              setCurrentGamePid(handoffPid)
+              sendGameLaunchStatus({
+                gameUrl,
+                status: 'running',
+                pid: handoffPid,
+                message: 'Launcher finalizado; acompanhando jogo.'
+              })
+              console.log('[Launch] Handoff: acompanhando processos do jogo...')
+              await waitForNoHandoffPids({
+                installDir,
+                exePath,
+                prefixPath,
+                excludePids: [child.pid],
+                intervalMs: 1500,
+                emptyStreak: 3
+              })
+              console.log('[Launch] Handoff: nenhum processo do jogo encontrado.')
+            }
+          }
+
+          const handoffNoPid = !handoffPid && isEpic && earlyExit
+          const effectiveCode = handoffPid || handoffNoPid ? 0 : code
+          const effectiveSignal = handoffPid || handoffNoPid ? null : signal
+          if (handoffNoPid) {
+            console.warn('[Launch] Epic launcher exited early; treating as handoff (no error).')
+          }
+          
+          // Cleanup overlay IPC using the session ID stored in runningGames
+          const gameInfo = runningGames.get(gameUrl)
+          if (gameInfo?.overlaySessionId) {
+            try {
+              removeOverlayServer(gameInfo.overlaySessionId)
+              console.log('[Launch] 🧹 Cleaned up overlay IPC for session:', gameInfo.overlaySessionId)
+            } catch (err) {
+              console.error('[Launch] Failed to cleanup overlay IPC:', err)
+            }
+          }
+          
+          // Clear current game PID to switch notifications back to desktop
+          setCurrentGamePid(null)
+          
           try { runningGames.delete(gameUrl) } catch {}
           try { achievementsManager.stopWatching(gameUrl) } catch {}
 
           let mergedTail = stderrTail
-          const shouldAppendLog = (code != null && Number(code) !== 0) || !!signal
+          const shouldAppendLog = (effectiveCode != null && Number(effectiveCode) !== 0) || !!effectiveSignal
           if (shouldAppendLog && protonLogPath) {
             const logRawTail = readFileTailBytes(protonLogPath, 256 * 1024)
             if (logRawTail) {
@@ -334,7 +792,8 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
               )
             }
           }
-          sendGameLaunchStatus({ gameUrl, status: 'exited', code, signal, stderrTail: mergedTail, protonLogPath })
+          const exitMsg = handoffNoPid ? 'Launcher finalizado; o jogo pode ter continuado.' : undefined
+          sendGameLaunchStatus({ gameUrl, status: 'exited', code: effectiveCode, signal: effectiveSignal, stderrTail: mergedTail, protonLogPath, message: exitMsg })
 
           // Backup saves after exit
           try {
@@ -383,7 +842,16 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.log('[Launch] 🪟 Starting native exe:', exePath)
         console.log('[Launch] 📁 Working directory:', installDir)
 
+        // Build environment for game launch
+        const gameEnv: NodeJS.ProcessEnv = { 
+          ...process.env,
+          // Session ID for notification routing
+          VOIDLAUNCHER_SESSION: overlaySessionId,
+        }
+        console.log('[Launch] 🔑 Session:', overlaySessionId)
+
         child = spawn(exePath, [], {
+          env: gameEnv,
           cwd: installDir,
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe']
@@ -405,6 +873,21 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
         child.on('exit', async (code: number, signal: string) => {
           console.log('[Launch] 🏁 Process exited with code:', code, 'signal:', signal)
+          
+          // Cleanup overlay IPC using the session ID stored in runningGames
+          const gameInfo = runningGames.get(gameUrl)
+          if (gameInfo?.overlaySessionId) {
+            try {
+              removeOverlayServer(gameInfo.overlaySessionId)
+              console.log('[Launch] 🧹 Cleaned up overlay IPC for session:', gameInfo.overlaySessionId)
+            } catch (err) {
+              console.error('[Launch] Failed to cleanup overlay IPC:', err)
+            }
+          }
+          
+          // Clear current game PID to switch notifications back to desktop
+          setCurrentGamePid(null)
+          
           try { runningGames.delete(gameUrl) } catch {}
           try { achievementsManager.stopWatching(gameUrl) } catch {}
           sendGameLaunchStatus({ gameUrl, status: 'exited', code, signal, stderrTail })
@@ -451,7 +934,21 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       }
 
       if (child?.pid) {
-        runningGames.set(gameUrl, { pid: child.pid, child, protonLogPath, startedAt: Date.now() })
+        runningGames.set(gameUrl, { pid: child.pid, child, protonLogPath, startedAt: Date.now(), overlaySessionId })
+
+        // Set current game PID for notification routing
+        setCurrentGamePid(child.pid)
+
+        // Create IPC server for in-game overlay communication (notifications)
+        if (NOTIFICATIONS_ENABLED) {
+          try {
+            const server = createOverlayServer(overlaySessionId)
+            await server.start()
+            console.log('[Launch] 🔌 Overlay IPC server started for session:', overlaySessionId)
+          } catch (err) {
+            console.error('[Launch] Failed to start overlay IPC server:', err)
+          }
+        }
 
         // Update play time
         try {
@@ -478,11 +975,28 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
               try {
                 getMainWindow()?.webContents.send('achievement-unlocked', ev)
               } catch {}
-              // Use the new notification overlay
-              try {
-                const { notifyAchievementUnlocked } = require('../notificationOverlay.js')
-                notifyAchievementUnlocked(ev.title, ev.description)
-              } catch {}
+              
+              // Send notifications (desktop + in-game overlay)
+              if (NOTIFICATIONS_ENABLED) {
+                try {
+                  const notif = notifyAchievementUnlocked(
+                    ev.achievement?.displayName || ev.achievement?.name || 'Achievement Unlocked',
+                    ev.achievement?.description,
+                    ev.achievement?.icon
+                  )
+                  
+                  // Send to in-game overlay if game is running
+                  const gameInfo = runningGames.get(gameUrl)
+                  if (gameInfo?.overlaySessionId) {
+                    const server = getOverlayServer(gameInfo.overlaySessionId)
+                    if (server && server.isRunning()) {
+                      server.sendNotification(notif)
+                    }
+                  }
+                } catch (err) {
+                  console.error('[Launch] Failed to send achievement notification:', err)
+                }
+              }
             }
           )
         } catch (err) {

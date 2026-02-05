@@ -93,6 +93,8 @@ import { vpnControllerCreateRoom, vpnControllerJoinRoom, vpnControllerListPeers,
 import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestEffort } from './ofVpnManager.js'
 import { AchievementsManager } from './achievements/manager.js'
 import { AchievementOverlay } from './achievements/overlay.js'
+import { registerNotificationHotkeys, unregisterAllHotkeys } from './notificationHotkeys.js'
+import { NOTIFICATIONS_ENABLED } from './desktopNotifications.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { registerAllIpcHandlers } from './ipc/index.js'
 import type { IpcContext } from './ipc/types.js'
@@ -107,7 +109,8 @@ import {
   findArchive,
   findExecutableInDir,
   slugify,
-  getDirectorySizeBytes
+  getDirectorySizeBytes,
+  extractSteamAppIdFromIniText
 } from './utils/index.js'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
@@ -835,28 +838,8 @@ function detectSteamAppIdFromInstall(installDir: string): string | null {
       try {
         if (!fs.existsSync(filePath)) return null
         const content = fs.readFileSync(filePath, 'utf8')
-
-        const allowedKeys = new Set([
-          'realappid',
-          'real_appid',
-          'appid',
-          'app_id',
-          'steamappid',
-          'steam_appid'
-        ])
-
-        for (const rawLine of content.split(/\r?\n/)) {
-          const line = rawLine.trim()
-          if (!line) continue
-          if (line.startsWith(';') || line.startsWith('#')) continue
-          if (line.startsWith('[') && line.endsWith(']')) continue
-
-          const m = line.match(/^([A-Za-z0-9_.-]+)\s*[:=]\s*(\d+)\b/)
-          if (!m) continue
-          const key = m[1].toLowerCase()
-          const value = m[2]
-          if (allowedKeys.has(key) && value) return value
-        }
+        const id = extractSteamAppIdFromIniText(content)
+        return id || null
       } catch {
         // ignore
       }
@@ -1106,6 +1089,9 @@ async function createMainWindow() {
     width: 1280,
     height: 800,
     icon: windowIcon,
+    show: true, // Ensure window is shown
+    x: 0, // Position at top-left for Gamescope compatibility
+    y: 0,
     webPreferences: {
       preload: preloadPath,
       nodeIntegration: false,
@@ -1113,6 +1099,13 @@ async function createMainWindow() {
       sandbox: false,
       webviewTag: true // Enable webview tag for embedded browser
     }
+  })
+
+  // Force window to show and focus (helps with Gamescope)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
+    console.log('[Main] Window ready-to-show, forcing visibility')
   })
 
   // Log renderer errors
@@ -1193,6 +1186,8 @@ app.isQuitting = false
 
 app.on('before-quit', () => {
   app.isQuitting = true
+  // Unregister global hotkeys
+  unregisterAllHotkeys()
 })
 
 app.whenReady().then(async () => {
@@ -1205,11 +1200,24 @@ app.whenReady().then(async () => {
   const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
   drive.setCloudSavesEnabled(cloudSavesEnabled)
 
+  // Register notification hotkeys for in-game testing (disabled for now)
+  if (NOTIFICATIONS_ENABLED) {
+    registerNotificationHotkeys(() => runningGames)
+    console.log('[Main] ⌨️  Hotkey registered: Ctrl+Shift+F9 to test in-game notifications')
+  } else {
+    console.log('[Main] Notifications disabled; skipping hotkeys')
+  }
+
   // Warm Proton runtimes cache at startup (Linux only).
   if (process.platform === 'linux') {
     setTimeout(() => {
       void getCachedProtonRuntimes(false).catch(() => {})
     }, 250)
+
+    // Notification system disabled
+    // installVulkanOverlay().catch((e) => {
+    //   console.warn('[vulkan-overlay] Failed to install:', e)
+    // })
   }
 
   // Proactively prepare Ludusavi in the background so Cloud Saves can work
@@ -1576,6 +1584,12 @@ async function resumeActiveDownloads() {
         continue
       }
       seen.add(dedupeKey)
+
+      const status = String(d?.status || '').toLowerCase()
+      if (status === 'paused') {
+        console.log('[Launcher] Skipping paused download on startup resume:', dedupeKey)
+        continue
+      }
 
       const gameUrl = String(d.game_url || d.download_url || '').trim()
       if (gameUrl) {

@@ -6,6 +6,7 @@ import path from 'path'
 import { google } from 'googleapis'
 import crypto from 'crypto'
 import db from './db.js'
+import { extractRealAppIdFromIniText } from './utils/onlinefixIni.js'
 
 const REDIRECT_PORT = 42813
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`
@@ -629,9 +630,9 @@ export function readRealAppIdFromOnlineFixIni(installPath: string): string | nul
   if (!iniPath) return null
   try {
     const raw = fs.readFileSync(iniPath, 'utf-8')
-    const m = raw.match(/RealAppId\s*=\s*([0-9A-Za-z_-]+)/i)
-    if (m && m[1]) return m[1]
-  } catch (e) {
+    const id = extractRealAppIdFromIniText(raw)
+    if (id) return id
+  } catch {
     return null
   }
   return null

@@ -39,6 +39,7 @@ export interface ProtonOptions {
   mangohud: boolean
   logging: boolean
   launchArgs: string
+  useGamescope: boolean // Run game inside Gamescope for in-game notifications
 }
 
 export interface ProtonRuntime {

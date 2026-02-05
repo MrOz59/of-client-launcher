@@ -207,6 +207,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     downloading: 5,
     pending: 4,
     paused: 3,
+    queued: 2,
     completed: 1
   }
 
@@ -276,6 +277,44 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     }
     return Array.from(map.values())
   }
+
+  useEffect(() => {
+    if (!queueStatus) return
+
+    setDownloads(prev => {
+      const queuedIds = new Set(queueStatus.queued.map(q => q.id))
+      const queuedGameUrls = new Set(queueStatus.queued.map(q => q.gameUrl))
+
+      // Drop queued items that are no longer in the queue.
+      const kept = prev.filter(d => {
+        if (d.status !== 'queued') return true
+        if (d.queueId && queuedIds.has(d.queueId)) return true
+        if (d.gameUrl && queuedGameUrls.has(d.gameUrl)) return true
+        return false
+      })
+
+      // Avoid showing a queued item if the same game is already active in the list.
+      const activeGameUrls = new Set(kept.filter(d => d.status !== 'queued').map(d => d.gameUrl).filter(Boolean))
+
+      const queuedItems: DownloadItem[] = queueStatus.queued
+        .filter(q => !q.gameUrl || !activeGameUrls.has(q.gameUrl))
+        .map(q => ({
+          id: `queue:${q.id}`,
+          queueId: q.id,
+          title: q.title || 'Download',
+          type: 'http',
+          url: q.gameUrl || q.id,
+          progress: 0,
+          status: 'queued',
+          gameUrl: q.gameUrl
+        }))
+
+      const next = dedupeDownloads([...kept, ...queuedItems])
+      const active = next.some(d => isInProgressStatus(d.status))
+      setHasActive(active)
+      return next
+    })
+  }, [queueStatus])
 
   const findExistingForUpdate = (list: DownloadItem[], data: any): DownloadItem | undefined => {
     const keys = [data.infoHash, data.magnet, data.url].filter(Boolean)
@@ -565,6 +604,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             status: (d.status as any) || 'downloading',
             errorMessage: d.error_message || undefined,
             infoHash: d.info_hash || undefined,
+            gameUrl: d.game_url || undefined,
             downloaded: d.downloaded ? Number(d.downloaded) : undefined,
             total: d.size ? Number(d.size) : undefined,
             speed: d.speed ? Number(d.speed) : undefined,
@@ -589,6 +629,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             status: 'completed' as const,
             errorMessage: d.error_message || undefined,
             infoHash: d.info_hash || undefined,
+            gameUrl: d.game_url || undefined,
             downloaded: d.downloaded ? Number(d.downloaded) : undefined,
             total: d.size ? Number(d.size) : undefined,
             speed: d.speed ? Number(d.speed) : undefined,
@@ -1093,8 +1134,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             <div className="download-status" style={{ color: statusColor }}>
               {getStatusText(item.status)}
               {item.status === 'prefixing' && ' • Proton'}
-              {item.status !== 'extracting' && item.type === 'torrent' && ' • Torrent'}
-              {item.status !== 'extracting' && item.type === 'http' && ' • HTTP'}
+              {item.status !== 'extracting' && item.status !== 'queued' && item.type === 'torrent' && ' • Torrent'}
+              {item.status !== 'extracting' && item.status !== 'queued' && item.type === 'http' && ' • HTTP'}
             </div>
             {variant === 'primary' && item.status === 'prefixing' && item.gameUrl ? (
               <div className="download-dest" title={item.gameUrl}>Jogo: {item.gameUrl}</div>
@@ -1274,7 +1315,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   <span className="downloads-pill" style={{ color: getStatusColor(primary.status) }}>
                     {getStatusText(primary.status)}
                   </span>
-                  {primary.status !== 'extracting' && primary.status !== 'prefixing' ? (
+                  {primary.status !== 'extracting' && primary.status !== 'prefixing' && primary.status !== 'queued' ? (
                     <span className="downloads-pill">{primary.type === 'torrent' ? 'Torrent' : 'HTTP'}</span>
                   ) : null}
                   {primary.status === 'prefixing' ? <span className="downloads-pill">Proton</span> : null}

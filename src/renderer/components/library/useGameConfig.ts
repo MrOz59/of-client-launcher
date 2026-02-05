@@ -10,7 +10,8 @@ const DEFAULT_PROTON_OPTIONS: ProtonOptions = {
   gamemode: false,
   mangohud: false,
   logging: false,
-  launchArgs: ''
+  launchArgs: '',
+  useGamescope: false
 }
 
 export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
@@ -55,7 +56,8 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     gamemode: protonOptions.gamemode,
     mangohud: protonOptions.mangohud,
     logging: protonOptions.logging,
-    launchArgs: protonOptions.launchArgs
+    launchArgs: protonOptions.launchArgs,
+    useGamescope: protonOptions.useGamescope
   }), [protonOptions])
 
   const getConfigSnapshot = useCallback(() => {
@@ -90,7 +92,8 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
       gamemode: !!parsed.gamemode,
       mangohud: !!parsed.mangohud,
       logging: !!parsed.logging,
-      launchArgs: parsed.launchArgs || ''
+      launchArgs: parsed.launchArgs || '',
+      useGamescope: !!parsed.useGamescope
     })
   }, [])
 

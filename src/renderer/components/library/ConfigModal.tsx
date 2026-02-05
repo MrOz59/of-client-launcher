@@ -701,6 +701,18 @@ function ProtonTab(props: ConfigModalProps) {
             <label className="config-toggle-item">
               <input 
                 type="checkbox" 
+                checked={protonOptions.useGamescope || false} 
+                onChange={(e) => onProtonOptionsChange({ ...protonOptions, useGamescope: e.target.checked })} 
+              />
+              <div className="config-toggle-info">
+                <span className="config-toggle-name">Gamescope</span>
+                <span className="config-toggle-desc">Notificações in-game (requer gamescope instalado)</span>
+              </div>
+            </label>
+            
+            <label className="config-toggle-item">
+              <input 
+                type="checkbox" 
                 checked={protonOptions.mesa_glthread} 
                 onChange={(e) => onProtonOptionsChange({ ...protonOptions, mesa_glthread: e.target.checked })} 
               />

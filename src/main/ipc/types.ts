@@ -67,6 +67,7 @@ export type RunningGameProc = {
   child: any
   protonLogPath?: string
   startedAt?: number
+  overlaySessionId?: string
 }
 
 // ============================================================================

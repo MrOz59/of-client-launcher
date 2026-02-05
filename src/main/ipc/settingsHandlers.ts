@@ -8,6 +8,12 @@ import { getSetting, setSetting } from '../db'
 import * as drive from '../drive'
 import { setSavedProtonRuntime, setCustomProtonRoot, setCustomProtonRoots } from '../protonManager'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
+import { 
+  notifyAchievementUnlocked, 
+  notifyDownloadComplete, 
+  notifyDownloadError,
+  notifyInfo 
+} from '../desktopNotifications'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 
@@ -67,6 +73,7 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       const lanControllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
       const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
       const notificationsEnabled = getSetting('notifications_enabled') !== 'false'
+      const notificationPosition = String(getSetting('notification_position') || 'bottom-right').trim()
       const minimizeToTray = getSetting('minimize_to_tray') === 'true'
 
       return {
@@ -89,6 +96,7 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           lanControllerUrl,
           cloudSavesEnabled,
           notificationsEnabled,
+          notificationPosition,
           minimizeToTray
         }
       }
@@ -132,6 +140,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       if (typeof settings.notificationsEnabled === 'boolean') {
         setSetting('notifications_enabled', settings.notificationsEnabled ? 'true' : 'false')
       }
+      if (typeof settings.notificationPosition === 'string') {
+        setSetting('notification_position', settings.notificationPosition.trim())
+      }
       if (typeof settings.minimizeToTray === 'boolean') {
         setSetting('minimize_to_tray', settings.minimizeToTray ? 'true' : 'false')
       }
@@ -144,95 +155,36 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
   // Test notification handler (dev/debug)
   ipcMain.handle('test-notification', async (_event, type: string) => {
     try {
-      const {
-        notifyAchievementUnlocked,
-        notifyDownloadComplete,
-        notifyDownloadError,
-        notifyDownloadProgress,
-        notifyUpdateAvailable,
-        notifyGameReady,
-        notifyCloudSync,
-        notifyInfo,
-        notifySuccess,
-        notifyWarning,
-        notifyError,
-        notifyWithActions,
-        createProgressNotification,
-        notifyConfirm
-      } = require('../notificationOverlay.js')
+      console.log('[Notifications] Testing notification type:', type)
 
       switch (type) {
         case 'achievement':
-          notifyAchievementUnlocked('Primeira Conquista!', 'Você testou o sistema de notificações')
+          notifyAchievementUnlocked(
+            'Conquista Desbloqueada!',
+            'Você completou o tutorial do VoidLauncher'
+          )
           break
-        case 'download-complete':
+
+        case 'download':
           notifyDownloadComplete('Cyberpunk 2077')
           break
-        case 'download-error':
-          notifyDownloadError('GTA VI', 'Conexão perdida durante o download')
-          break
-        case 'download-progress':
-          notifyDownloadProgress('Red Dead Redemption 2', 67, 'test-progress')
-          break
-        case 'update-available':
-          notifyUpdateAvailable('Elden Ring', 'v1.12.3')
-          break
-        case 'game-ready':
-          notifyGameReady('Baldur\'s Gate 3')
-          break
-        case 'cloud-sync':
-          notifyCloudSync('The Witcher 3', 'backup')
-          break
-        case 'success':
-          notifySuccess('Operação Concluída', 'Todos os arquivos foram processados')
-          break
-        case 'warning':
-          notifyWarning('Espaço em Disco', 'Apenas 5GB disponíveis')
-          break
+
         case 'error':
-          notifyError('Erro de Conexão', 'Não foi possível conectar ao servidor')
+          notifyDownloadError('Elden Ring', 'Espaço em disco insuficiente')
           break
-        case 'with-actions':
-          notifyWithActions(
-            'info',
-            'Atualização Disponível',
-            'Uma nova versão do launcher está disponível',
-            [
-              { id: 'update', label: 'Atualizar Agora', primary: true },
-              { id: 'later', label: 'Depois' }
-            ],
-            (actionId: string) => {
-              console.log('Notification action:', actionId)
-            }
-          )
+
+        case 'info':
+          notifyInfo('Sistema de Notificações', 'As notificações estão funcionando corretamente!')
           break
-        case 'progress-demo':
-          const progress = createProgressNotification('Instalando Mod', 'Preparando arquivos...')
-          let p = 0
-          const interval = setInterval(() => {
-            p += 10
-            if (p >= 100) {
-              clearInterval(interval)
-              progress.complete('Mod instalado com sucesso!')
-            } else {
-              progress.update(p, `Instalando... ${p}%`)
-            }
-          }, 500)
-          break
-        case 'confirm':
-          notifyConfirm(
-            'Confirmar Ação',
-            'Deseja realmente excluir este jogo?',
-            () => console.log('Confirmed!'),
-            () => console.log('Cancelled!')
-          )
-          break
+
         default:
-          notifyInfo('Notificação de Teste', 'Esta é uma notificação de teste')
+          notifyInfo('Teste de Notificação', `Tipo: ${type}`)
       }
+
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message }
+    } catch (error: any) {
+      console.error('[Notifications] Test failed:', error)
+      return { success: false, error: error?.message || String(error) }
     }
   })
 }

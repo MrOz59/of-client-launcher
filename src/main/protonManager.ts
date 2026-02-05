@@ -742,6 +742,8 @@ export function buildProtonLaunch(
     launchArgs?: string
     steamAppId?: string | number | null
     installDir?: string | null
+    enableSteamOverlay?: boolean
+    enableEosOverlay?: boolean
   },
   prefixPathOverride?: string
 ) {
@@ -756,6 +758,34 @@ export function buildProtonLaunch(
   // ✅ CORREÇÃO: Encontrar o diretório raiz do Steam
   const steamRoot = findSteamRoot()
 
+  const detectPeArch = (filePath: string): 'x86' | 'x64' | null => {
+    try {
+      const fd = fs.openSync(filePath, 'r')
+      try {
+        const head = Buffer.alloc(64)
+        const read = fs.readSync(fd, head, 0, head.length, 0)
+        if (read < 64) return null
+        if (head.readUInt16LE(0) !== 0x5a4d) return null // 'MZ'
+        const peOffset = head.readUInt32LE(0x3c)
+        if (!Number.isFinite(peOffset) || peOffset <= 0) return null
+        const pe = Buffer.alloc(6)
+        const peRead = fs.readSync(fd, pe, 0, pe.length, peOffset)
+        if (peRead < 6) return null
+        if (pe.readUInt32LE(0) !== 0x00004550) return null // 'PE\0\0'
+        const machine = pe.readUInt16LE(4)
+        if (machine === 0x8664) return 'x64'
+        if (machine === 0x014c) return 'x86'
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  }
+
+  const peArch = detectPeArch(exePath)
+
   const envOptions: Record<string, string> = {}
   // Many OnlineFix/Steamless games require native DLLs for proper functionality.
   // - steam_api/steam_api64: Steam API stubs
@@ -764,9 +794,18 @@ export function buildProtonLaunch(
   // - SteamOverlay/SteamOverlay64: Steam overlay stubs
   // - dnet: .NET interop for some games
   // - winhttp: HTTP library (n,b = native with builtin fallback)
-  const baseDllOverrides = 'steam_api=n;steam_api64=n;winmm=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;dnet=n;winhttp=n,b'
+  const baseDllOverridesSteam = 'steam_api=n;steam_api64=n;winmm=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;dnet=n;winhttp=n,b'
+  // For Epic games, use the alternate overrides requested to improve EOS overlay reliability.
+  const baseDllOverridesEpic = 'version=n,b;OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;winhttp=n,b'
+  const baseDllOverrides = options?.enableEosOverlay === true ? baseDllOverridesEpic : baseDllOverridesSteam
+  const extraOverrides: string[] = []
+  if (options?.enableEosOverlay === true) {
+    const eosDll = peArch === 'x86' ? 'EOSSDK-Win32-Shipping' : 'EOSSDK-Win64-Shipping'
+    extraOverrides.push(`${eosDll}=n,b`)
+  }
+  const combinedOverrides = extraOverrides.length > 0 ? `${baseDllOverrides};${extraOverrides.join(';')}` : baseDllOverrides
   const existingOverrides = (process.env.WINEDLLOVERRIDES || '').trim()
-  envOptions.WINEDLLOVERRIDES = existingOverrides ? `${existingOverrides};${baseDllOverrides}` : baseDllOverrides
+  envOptions.WINEDLLOVERRIDES = existingOverrides ? `${existingOverrides};${combinedOverrides}` : combinedOverrides
   if (options?.esync === false) envOptions.PROTON_NO_ESYNC = '1'
   if (options?.fsync === false) envOptions.PROTON_NO_FSYNC = '1'
   if (options?.dxvk === false) envOptions.PROTON_USE_WINED3D = '1'
@@ -787,6 +826,55 @@ export function buildProtonLaunch(
 
   const logsDir = path.join(os.homedir(), '.local/share/of-launcher/logs/proton', slug)
   try { fs.mkdirSync(logsDir, { recursive: true }) } catch {}
+
+  // === Steam Overlay (optional) ===
+  if (options?.enableSteamOverlay === true && steamAppId !== '0') {
+    const arch = peArch
+    const overlay64 = path.join(steamRoot, 'ubuntu12_64', 'gameoverlayrenderer.so')
+    const overlay32 = path.join(steamRoot, 'ubuntu12_32', 'gameoverlayrenderer.so')
+    const vulkan64 = path.join(steamRoot, 'ubuntu12_64', 'steamoverlayvulkanlayer.so')
+    const vulkan32 = path.join(steamRoot, 'ubuntu12_32', 'steamoverlayvulkanlayer.so')
+
+    const pickExisting = (a: string, b: string) => (fs.existsSync(a) ? a : (fs.existsSync(b) ? b : ''))
+    const overlayLib = arch === 'x86' ? pickExisting(overlay32, overlay64) : pickExisting(overlay64, overlay32)
+    const vulkanLib = arch === 'x86' ? pickExisting(vulkan32, vulkan64) : pickExisting(vulkan64, vulkan32)
+
+    if (overlayLib) {
+      const existing = String(process.env.LD_PRELOAD || '').trim()
+      envOptions.LD_PRELOAD = existing ? `${overlayLib} ${existing}` : overlayLib
+    } else {
+      console.warn('[Proton] Steam overlay library not found; skipping LD_PRELOAD')
+    }
+
+    if (vulkanLib) {
+      const layerDir = path.dirname(vulkanLib)
+      const existingAdd = String(process.env.VK_ADD_LAYER_PATH || '').trim()
+      envOptions.VK_ADD_LAYER_PATH = existingAdd ? `${layerDir}:${existingAdd}` : layerDir
+
+      const existingLayers = String(process.env.VK_INSTANCE_LAYERS || '').trim()
+      const layerName = 'VK_LAYER_STEAM_overlay'
+      if (existingLayers) {
+        const parts = existingLayers.split(/[:;]/).filter(Boolean)
+        envOptions.VK_INSTANCE_LAYERS = parts.includes(layerName)
+          ? existingLayers
+          : `${existingLayers}:${layerName}`
+      } else {
+        envOptions.VK_INSTANCE_LAYERS = layerName
+      }
+    } else {
+      console.warn('[Proton] Steam overlay Vulkan layer not found; skipping VK_* env')
+    }
+
+    const runtimePath = arch === 'x86'
+      ? path.join(steamRoot, 'ubuntu12_32')
+      : path.join(steamRoot, 'ubuntu12_64')
+    if (fs.existsSync(runtimePath)) {
+      envOptions.STEAM_RUNTIME = '1'
+      envOptions.STEAM_RUNTIME_LIBRARY_PATH = runtimePath
+    }
+
+    envOptions.SteamGameId = steamAppId
+  }
 
   const extraArgs = options?.launchArgs ? options.launchArgs.split(' ').filter(Boolean) : []
   // Use 'waitforexitandrun' instead of 'run' - this is required for ProtonFixes to work

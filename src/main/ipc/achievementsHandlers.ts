@@ -5,6 +5,7 @@ import { ipcMain, dialog } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import { getAllGames, getSetting, setSetting, updateGameInfo } from '../db'
+import { extractSteamAppIdFromIniText } from '../utils/onlinefixIni'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 // Helper to detect Steam AppID from install directory
@@ -22,11 +23,8 @@ function detectSteamAppIdFromInstall(installDir: string): string | null {
       const files = findFilesRecursive(installDir, pattern, 3)
       for (const file of files) {
         const content = fs.readFileSync(file, 'utf8')
-        // Look for AppId= or SteamAppId=
-        const match = content.match(/(?:AppId|SteamAppId)\s*=\s*(\d+)/i)
-        if (match && match[1]) {
-          return match[1]
-        }
+        const id = extractSteamAppIdFromIniText(content)
+        if (id) return id
       }
     } catch {
       // ignore
@@ -208,6 +206,90 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
       const { clearCachedSchema } = require('../achievements/schema.js') as typeof import('../achievements/schema')
       clearCachedSchema(steamAppId)
       return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
+  ipcMain.handle('achievements-import-epic', async (_event, gameUrl: string, offerId?: string) => {
+    try {
+      const url = String(gameUrl || '').trim()
+      if (!url) return { success: false, error: 'gameUrl ausente' }
+
+      const game = getAllGames().find((g: any) => g.url === url) as any
+      if (!game) return { success: false, error: 'Jogo não encontrado' }
+
+      console.log('[IPC] Importing Epic achievements for game:', game.title)
+      console.log('[IPC] External IDs:', game.external_ids)
+
+      const { importEpicAchievements } = require('../achievements/egdata.js') as typeof import('../achievements/egdata')
+      
+      // Build external_ids object
+      const externalIds = game.external_ids || {}
+      
+      // If offerId provided manually, use it as epic_manual
+      if (offerId && String(offerId).trim()) {
+        externalIds.epic_manual = String(offerId).trim()
+        console.log('[IPC] Using manually provided Offer ID:', externalIds.epic_manual)
+      }
+
+      // Attempt import
+      const achievements = await importEpicAchievements(externalIds)
+      
+      console.log(`[IPC] Epic import successful: ${achievements.length} achievements`)
+
+      // Save as custom schema
+      const { setCustomAchievementSchemaForGame } = require('../achievements/schema.js') as typeof import('../achievements/schema')
+      const result = setCustomAchievementSchemaForGame(url, achievements)
+      
+      if (!result.success) {
+        return { success: false, error: result.error || 'Falha ao salvar conquistas' }
+      }
+
+      return { success: true, count: achievements.length }
+    } catch (err: any) {
+      console.error('[IPC] Epic import failed:', err)
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
+  ipcMain.handle('achievements-detect-epic-offer-id', async (_event, gameUrl: string) => {
+    try {
+      const url = String(gameUrl || '').trim()
+      if (!url) return { success: false, error: 'gameUrl ausente' }
+
+      const game = getAllGames().find((g: any) => g.url === url) as any
+      if (!game) return { success: false, error: 'Jogo não encontrado' }
+
+      const externalIds = game.external_ids || {}
+      
+      // Check if we have any Epic IDs
+      const hasEpicIds = Boolean(
+        externalIds.epic ||
+        externalIds.epic_offer ||
+        externalIds.epic_manual ||
+        externalIds.epic_product ||
+        externalIds.epic_sandbox ||
+        externalIds.epic_namespace ||
+        externalIds.epic_catalog_item
+      )
+
+      if (!hasEpicIds) {
+        return { success: false, error: 'Nenhum ID Epic encontrado para este jogo' }
+      }
+
+      return { 
+        success: true, 
+        externalIds: {
+          epic: externalIds.epic || null,
+          epic_offer: externalIds.epic_offer || null,
+          epic_manual: externalIds.epic_manual || null,
+          epic_product: externalIds.epic_product || null,
+          epic_sandbox: externalIds.epic_sandbox || null,
+          epic_namespace: externalIds.epic_namespace || null,
+          epic_catalog_item: externalIds.epic_catalog_item || null
+        }
+      }
     } catch (err: any) {
       return { success: false, error: err?.message || String(err) }
     }

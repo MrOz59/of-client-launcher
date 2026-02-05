@@ -25,7 +25,7 @@ import fs from 'fs'
 import os from 'os'
 import { Worker } from 'worker_threads'
 import { session, BrowserWindow, app } from 'electron'
-import { notifyDownloadComplete, notifyDownloadError } from './notificationOverlay'
+import { notifyDownloadComplete, notifyDownloadError } from './desktopNotifications'
 
 // ============================================================================
 // DOWNLOAD QUEUE SYSTEM
@@ -1006,8 +1006,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
           })
           console.log('[DownloadManager] Cleaned up download record after successful HTTP extraction')
           
-          // Send overlay notification
-          notifyDownloadComplete(gameTitle || 'Jogo')
+          // Send desktop notification
+          try {
+            notifyDownloadComplete(gameTitle || 'Jogo')
+          } catch (err) {
+            console.error('[DownloadManager] Failed to send notification:', err)
+          }
         } catch {}
 
         finalInstallPath = installPath
@@ -1180,8 +1184,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         })
         console.log('[DownloadManager] Cleaned up download record after successful torrent extraction')
         
-        // Send overlay notification
-        notifyDownloadComplete(gameTitle || 'Jogo')
+        // Send desktop notification
+        try {
+          notifyDownloadComplete(gameTitle || 'Jogo')
+        } catch (err) {
+          console.error('[DownloadManager] Failed to send notification:', err)
+        }
       } catch {}
     } else {
       // Only send final download progress if we did NOT extract.
@@ -1231,8 +1239,12 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
     updateDownloadStatus(Number(downloadId), 'error', userFriendlyError)
     
-    // Send overlay notification for error
-    notifyDownloadError(gameTitle || 'Jogo', userFriendlyError)
+    // Send desktop notification
+    try {
+      notifyDownloadError(gameTitle || 'Jogo', userFriendlyError)
+    } catch (err) {
+      console.error('[DownloadManager] Failed to send notification:', err)
+    }
     
     return {
       success: false,
@@ -1424,6 +1436,12 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
   console.log('[DownloadManager]   title:', title)
   console.log('[DownloadManager]   destPathOverride:', destPathOverride)
   console.log('[DownloadManager]   existing record:', JSON.stringify(existing, null, 2))
+
+  try {
+    updateDownloadStatus(Number(existing.id), 'pending')
+  } catch {
+    // ignore
+  }
 
   // Fire-and-forget: start download in background so IPC returns immediately
   startGameDownload({
