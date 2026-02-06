@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Minimal torrent agent for OF-Client.
+"""Minimal torrent agent for OF-Client - MEMORY OPTIMIZED.
 
 Line-delimited JSON RPC over stdin/stdout.
 Methods: ping, add, pause, resume, remove, status
@@ -52,33 +52,97 @@ def _apply_settings(settings):
     except Exception:
         return False
 
+
+def _apply_settings_compat(settings):
+    # Older libtorrent builds may expose set_settings instead of apply_settings
+    try:
+        setter = getattr(ses, "set_settings", None)
+        if callable(setter):
+            setter(settings)
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _apply_settings_safe(settings):
+    # Apply settings one-by-one to avoid a single unsupported key
+    # invalidating the whole batch.
+    for key, value in settings.items():
+        applied = False
+        try:
+            applied = _apply_settings({key: value})
+        except Exception:
+            applied = False
+        if not applied:
+            try:
+                _apply_settings_compat({key: value})
+            except Exception:
+                pass
+
 try:
-    cache_mb = _env_int("OF_TORRENT_CACHE_MB", 64, 16, 1024)
+    # OTIMIZAÇÃO DE MEMÓRIA - valores mais agressivos
+    cache_mb = _env_int("OF_TORRENT_CACHE_MB", 16, 4, 64)  # Reduzido de 32 para 16MB
     cache_blocks = int(cache_mb * 64)  # 16 KiB blocks
 
     # Always attempt to cap cache size first (even if other keys fail).
     _apply_settings({"cache_size": cache_blocks})
+    _apply_settings_compat({"cache_size": cache_blocks})
 
-    # Optional tuning (best-effort; older libtorrent may ignore unknown keys).
-    _apply_settings(
+    # CONFIGURAÇÕES OTIMIZADAS PARA BAIXO USO DE MEMÓRIA
+    _apply_settings_safe(
         {
+            # Recursos de rede básicos
             "enable_dht": True,
             "enable_lsd": True,
             "enable_upnp": True,
             "enable_natpmp": True,
-            "max_queued_disk_bytes": 32 * 1024 * 1024,
-            "file_pool_size": 32,
-            "connections_limit": 120,
-            "max_uploads": 40,
-            "max_peerlist_size": 1500,
-            "max_paused_peerlist_size": 400,
+            
+            # Cache - CRÍTICO para controle de memória
+            "cache_expiry": 15,  # Reduzido de 30 para 15 segundos
+            
+            # I/O - REDUZIDO drasticamente para evitar acúmulo de memória
+            "max_queued_disk_bytes": 1 * 1024 * 1024,  # 1MB (era 8MB)
+            "max_outstanding_disk_bytes": 2 * 1024 * 1024,  # 2MB (era 16MB)
+            
+            # Arquivos e conexões
+            "file_pool_size": 8,  # Reduzido de 16 para 8
+            "connections_limit": 40,  # Reduzido de 60 para 40
+            "max_uploads": 10,  # Reduzido de 20 para 10
+            "max_peerlist_size": 200,  # Reduzido de 500 para 200
+            "max_paused_peerlist_size": 50,  # Reduzido de 200 para 50
+            
+            # Limites de atividade
             "active_downloads": 1,
             "active_seeds": 0,
-            "active_limit": 2,
-            "send_buffer_watermark": 2 * 1024 * 1024,
-            "send_buffer_low_watermark": 512 * 1024,
-            "send_buffer_watermark_factor": 100,
-            "aio_threads": 2,
+            "active_limit": 1,
+            
+            # Buffers de envio - REDUZIDO
+            "send_buffer_watermark": 512 * 1024,  # 512KB (era 1MB)
+            "send_buffer_low_watermark": 128 * 1024,  # 128KB (era 256KB)
+            "send_buffer_watermark_factor": 50,  # Reduzido de 100
+            
+            # Threads e slots
+            "aio_threads": 1,
+            "unchoke_slots_limit": 8,  # Reduzido de 10 para 8
+            
+            # CRÍTICO: Modo de I/O - usar cache interno ao invés do OS
+            # Valores: 0 = enable_os_cache, 1 = disable_os_cache, 2 = write_through
+            "disk_io_read_mode": 1,  # Mudado de 0 para 1 - DESABILITA cache do OS
+            "disk_io_write_mode": 1,  # Mudado de 0 para 1 - DESABILITA cache do OS
+            
+            # Adicionais para controle de memória
+            "checking_mem_usage": 128,  # 128 blocos para verificação de hash
+            "suggest_mode": 0,  # Desabilita sugestões de peças
+            "max_suggest_pieces": 0,
+            "recv_socket_buffer_size": 128 * 1024,  # Buffer de recepção menor
+            "send_socket_buffer_size": 128 * 1024,  # Buffer de envio menor
+            
+            # Otimizações adicionais
+            "whole_pieces_threshold": 1,  # Download peças inteiras mais agressivamente
+            "request_queue_time": 1,  # Reduz fila de requisições
+            "max_out_request_queue": 100,  # Limita fila de saída
+            "max_allowed_in_request_queue": 100,  # Limita fila de entrada
         }
     )
 except Exception:

@@ -71,6 +71,25 @@ function broadcastQueueStatus() {
   })
 }
 
+// Broadcast download progress to all windows (used by resume/rehydrate flows).
+const downloadProgressThrottle = new Map<string, number>()
+function broadcastDownloadProgress(payload: any) {
+  try {
+    const key = String(payload?.infoHash || payload?.magnet || payload?.url || '')
+    const now = Date.now()
+    if (key) {
+      const last = downloadProgressThrottle.get(key) || 0
+      if (now - last < 200) return
+      downloadProgressThrottle.set(key, now)
+    }
+    BrowserWindow.getAllWindows().forEach(w => {
+      try { w.webContents.send('download-progress', payload) } catch {}
+    })
+  } catch {
+    // ignore
+  }
+}
+
 // Get current queue status
 export function getDownloadQueueStatus() {
   return {
@@ -1447,6 +1466,24 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
   }
 
   // Fire-and-forget: start download in background so IPC returns immediately
+  const progressBridge = (progress: number, details?: any) => {
+    broadcastDownloadProgress({
+      magnet: url,
+      url,
+      infoHash: details?.infoHash,
+      progress,
+      speed: details?.downloadSpeed,
+      downloaded: details?.downloaded,
+      total: details?.total,
+      eta: details?.timeRemaining,
+      peers: details?.peers,
+      seeds: details?.seeds,
+      stage: details?.stage,
+      extractProgress: details?.extractProgress,
+      destPath: destPathOverride
+    })
+  }
+
   startGameDownload({
     gameUrl,
     torrentMagnet: url,
@@ -1455,7 +1492,7 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
     existingDownloadId: Number(existing.id),
     destPathOverride,
     autoExtract: false
-  }).then((result) => {
+  }, progressBridge).then((result) => {
     if (!result.success) {
       console.warn('[DownloadManager] Rehydrated download failed:', result.error)
     }
