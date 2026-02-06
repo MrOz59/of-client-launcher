@@ -79,6 +79,7 @@ export function getDownloadQueueStatus() {
     active: Array.from(activeDownloads.entries()).map(([id, d]) => ({
       id,
       gameUrl: d.options.gameUrl,
+      downloadUrl: d.options.torrentMagnet || d.options.downloadUrl,
       title: d.options.gameTitle,
       priority: d.priority,
       addedAt: d.addedAt
@@ -86,6 +87,7 @@ export function getDownloadQueueStatus() {
     queued: downloadQueue.map(d => ({
       id: d.id,
       gameUrl: d.options.gameUrl,
+      downloadUrl: d.options.torrentMagnet || d.options.downloadUrl,
       title: d.options.gameTitle,
       priority: d.priority,
       addedAt: d.addedAt

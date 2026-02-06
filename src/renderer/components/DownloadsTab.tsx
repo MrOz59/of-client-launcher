@@ -32,8 +32,8 @@ interface DownloadQueueStatus {
   maxParallel: number
   activeCount: number
   queuedCount: number
-  active: Array<{ id: string; gameUrl: string; title: string; priority: number; addedAt: number }>
-  queued: Array<{ id: string; gameUrl: string; title: string; priority: number; addedAt: number }>
+  active: Array<{ id: string; gameUrl: string; downloadUrl?: string; title: string; priority: number; addedAt: number }>
+  queued: Array<{ id: string; gameUrl: string; downloadUrl?: string; title: string; priority: number; addedAt: number }>
   updatedAt: number
 }
 
@@ -283,33 +283,65 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
     setDownloads(prev => {
       const queuedIds = new Set(queueStatus.queued.map(q => q.id))
+      const activeIds = new Set(queueStatus.active.map(q => q.id))
+      const trackedIds = new Set([...queuedIds, ...activeIds])
       const queuedGameUrls = new Set(queueStatus.queued.map(q => q.gameUrl))
+      const activeGameUrls = new Set(queueStatus.active.map(q => q.gameUrl))
+      const trackedGameUrls = new Set([...queuedGameUrls, ...activeGameUrls])
 
       // Drop queued items that are no longer in the queue.
       const kept = prev.filter(d => {
-        if (d.status !== 'queued') return true
-        if (d.queueId && queuedIds.has(d.queueId)) return true
-        if (d.gameUrl && queuedGameUrls.has(d.gameUrl)) return true
+        if (!d.queueId) return true
+        if (trackedIds.has(d.queueId)) return true
+        if (d.gameUrl && trackedGameUrls.has(d.gameUrl)) return true
         return false
       })
 
-      // Avoid showing a queued item if the same game is already active in the list.
-      const activeGameUrls = new Set(kept.filter(d => d.status !== 'queued').map(d => d.gameUrl).filter(Boolean))
+      const existingKeys = new Set(kept.map(d => downloadKey(d)).filter(Boolean))
+      const existingGameUrls = new Set(kept.map(d => d.gameUrl).filter(Boolean))
+
+      const inferType = (u?: string | null) => {
+        const v = String(u || '')
+        return v.includes('/torrents/') || v.endsWith('.torrent') ? 'torrent' : 'http'
+      }
+
+      const activeItems: DownloadItem[] = queueStatus.active
+        .filter(q => {
+          const key = q.downloadUrl || q.gameUrl || q.id
+          if (key && existingKeys.has(key)) return false
+          if (q.gameUrl && existingGameUrls.has(q.gameUrl)) return false
+          return true
+        })
+        .map(q => ({
+          id: `queue:active:${q.id}`,
+          queueId: q.id,
+          title: q.title || 'Download',
+          type: inferType(q.downloadUrl),
+          url: q.downloadUrl || q.gameUrl || q.id,
+          progress: 0,
+          status: 'pending',
+          gameUrl: q.gameUrl
+        }))
 
       const queuedItems: DownloadItem[] = queueStatus.queued
-        .filter(q => !q.gameUrl || !activeGameUrls.has(q.gameUrl))
+        .filter(q => {
+          const key = q.downloadUrl || q.gameUrl || q.id
+          if (key && existingKeys.has(key)) return false
+          if (q.gameUrl && existingGameUrls.has(q.gameUrl)) return false
+          return true
+        })
         .map(q => ({
           id: `queue:${q.id}`,
           queueId: q.id,
           title: q.title || 'Download',
-          type: 'http',
-          url: q.gameUrl || q.id,
+          type: inferType(q.downloadUrl),
+          url: q.downloadUrl || q.gameUrl || q.id,
           progress: 0,
           status: 'queued',
           gameUrl: q.gameUrl
         }))
 
-      const next = dedupeDownloads([...kept, ...queuedItems])
+      const next = dedupeDownloads([...kept, ...activeItems, ...queuedItems])
       const active = next.some(d => isInProgressStatus(d.status))
       setHasActive(active)
       return next

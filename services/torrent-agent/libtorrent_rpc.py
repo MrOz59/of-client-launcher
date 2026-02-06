@@ -31,15 +31,44 @@ except Exception as e:
     sys.exit(2)
 
 
+def _env_int(name, default, min_val=None, max_val=None):
+    try:
+        v = int(os.environ.get(name, "").strip() or default)
+        if min_val is not None:
+            v = max(min_val, v)
+        if max_val is not None:
+            v = min(max_val, v)
+        return v
+    except Exception:
+        return default
+
+
 ses = lt.session({"listen_interfaces": "0.0.0.0:6881"})
 
 try:
+    cache_mb = _env_int("OF_TORRENT_CACHE_MB", 128, 32, 1024)
+    cache_blocks = int(cache_mb * 64)  # 16 KiB blocks
     ses.apply_settings(
         {
             "enable_dht": True,
             "enable_lsd": True,
             "enable_upnp": True,
             "enable_natpmp": True,
+            # Memory bounds (best-effort; older libtorrent may ignore unknown keys)
+            "cache_size": cache_blocks,
+            "max_queued_disk_bytes": 64 * 1024 * 1024,
+            "file_pool_size": 40,
+            "connections_limit": 200,
+            "max_uploads": 50,
+            "max_peerlist_size": 2000,
+            "max_paused_peerlist_size": 500,
+            "active_downloads": 2,
+            "active_seeds": 0,
+            "active_limit": 4,
+            "send_buffer_watermark": 4 * 1024 * 1024,
+            "send_buffer_low_watermark": 1 * 1024 * 1024,
+            "send_buffer_watermark_factor": 100,
+            "aio_threads": 4,
         }
     )
 except Exception:
