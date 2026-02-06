@@ -13,6 +13,7 @@ import {
   getSetting,
   getDownloadByInfoHash,
   getDownloadByUrl,
+  getDownloadByGameUrl,
   getDownloadById,
   deleteDownload,
   extractGameIdFromUrl,
@@ -1498,6 +1499,7 @@ function findDownloadRecord(torrentId: string) {
   return (
     (getDownloadByInfoHash(torrentId) as DownloadRow | undefined) ||
     (getDownloadByUrl(torrentId) as DownloadRow | undefined) ||
+    (getDownloadByGameUrl(torrentId) as DownloadRow | undefined) ||
     (!Number.isNaN(asNumber) ? (getDownloadById(asNumber) as DownloadRow | undefined) : null) ||
     undefined
   )

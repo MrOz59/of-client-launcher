@@ -623,6 +623,18 @@ export function getDownloadByUrl(downloadUrl: string) {
   return store.downloads.find((x: any) => x.download_url === downloadUrl) || null
 }
 
+export function getDownloadByGameUrl(gameUrl: string) {
+  initDb()
+  if (sqliteAvailable) {
+    const stmt = dbInstance.prepare('SELECT * FROM downloads WHERE game_url = ? ORDER BY updated_at DESC LIMIT 1')
+    return stmt.get(gameUrl) || null
+  }
+  const store = readStore()
+  const list = store.downloads.filter((x: any) => x.game_url === gameUrl)
+  if (!list.length) return null
+  return list.sort((a: any, b: any) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))[0] || null
+}
+
 export function updateDownloadProgress(id: number, progress: number, speed?: string, eta?: string) {
   initDb()
   if (sqliteAvailable) {

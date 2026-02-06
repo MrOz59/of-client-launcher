@@ -45,30 +45,40 @@ def _env_int(name, default, min_val=None, max_val=None):
 
 ses = lt.session({"listen_interfaces": "0.0.0.0:6881"})
 
+def _apply_settings(settings):
+    try:
+        ses.apply_settings(settings)
+        return True
+    except Exception:
+        return False
+
 try:
-    cache_mb = _env_int("OF_TORRENT_CACHE_MB", 128, 32, 1024)
+    cache_mb = _env_int("OF_TORRENT_CACHE_MB", 64, 16, 1024)
     cache_blocks = int(cache_mb * 64)  # 16 KiB blocks
-    ses.apply_settings(
+
+    # Always attempt to cap cache size first (even if other keys fail).
+    _apply_settings({"cache_size": cache_blocks})
+
+    # Optional tuning (best-effort; older libtorrent may ignore unknown keys).
+    _apply_settings(
         {
             "enable_dht": True,
             "enable_lsd": True,
             "enable_upnp": True,
             "enable_natpmp": True,
-            # Memory bounds (best-effort; older libtorrent may ignore unknown keys)
-            "cache_size": cache_blocks,
-            "max_queued_disk_bytes": 64 * 1024 * 1024,
-            "file_pool_size": 40,
-            "connections_limit": 200,
-            "max_uploads": 50,
-            "max_peerlist_size": 2000,
-            "max_paused_peerlist_size": 500,
-            "active_downloads": 2,
+            "max_queued_disk_bytes": 32 * 1024 * 1024,
+            "file_pool_size": 32,
+            "connections_limit": 120,
+            "max_uploads": 40,
+            "max_peerlist_size": 1500,
+            "max_paused_peerlist_size": 400,
+            "active_downloads": 1,
             "active_seeds": 0,
-            "active_limit": 4,
-            "send_buffer_watermark": 4 * 1024 * 1024,
-            "send_buffer_low_watermark": 1 * 1024 * 1024,
+            "active_limit": 2,
+            "send_buffer_watermark": 2 * 1024 * 1024,
+            "send_buffer_low_watermark": 512 * 1024,
             "send_buffer_watermark_factor": 100,
-            "aio_threads": 4,
+            "aio_threads": 2,
         }
     )
 except Exception:

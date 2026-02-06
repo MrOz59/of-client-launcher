@@ -718,13 +718,17 @@ export async function downloadTorrent(
         const progress = Number(st?.progress ?? 0)
         const downloaded = Number(st?.totalDone ?? 0)
         const total = Number(st?.totalWanted ?? 0)
+        const normalizedProgress =
+          total > 0 && Number.isFinite(downloaded)
+            ? Math.max(0, Math.min(100, (downloaded / total) * 100))
+            : progress
         const downloadSpeed = Number(st?.downloadRate ?? 0)
         const timeRemaining = Number(st?.eta ?? 0)
         const peers = Number(st?.peers ?? 0)
         const seeds = Number(st?.seeds ?? 0)
 
         const details = {
-          progress,
+          progress: normalizedProgress,
           downloaded,
           total,
           downloadSpeed,

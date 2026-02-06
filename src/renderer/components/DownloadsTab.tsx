@@ -288,14 +288,28 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       const queuedGameUrls = new Set(queueStatus.queued.map(q => q.gameUrl))
       const activeGameUrls = new Set(queueStatus.active.map(q => q.gameUrl))
       const trackedGameUrls = new Set([...queuedGameUrls, ...activeGameUrls])
+      const activeById = new Map(queueStatus.active.map(a => [a.id, a]))
+      const activeByGameUrl = new Map(queueStatus.active.filter(a => a.gameUrl).map(a => [a.gameUrl, a]))
 
       // Drop queued items that are no longer in the queue.
-      const kept = prev.filter(d => {
-        if (!d.queueId) return true
-        if (trackedIds.has(d.queueId)) return true
-        if (d.gameUrl && trackedGameUrls.has(d.gameUrl)) return true
-        return false
-      })
+      const kept = prev
+        .filter(d => {
+          if (!d.queueId) return true
+          if (trackedIds.has(d.queueId)) return true
+          if (d.gameUrl && trackedGameUrls.has(d.gameUrl)) return true
+          return false
+        })
+        .map(d => {
+          if (!d.queueId) return d
+          const activeMatch = activeById.get(d.queueId) || (d.gameUrl ? activeByGameUrl.get(d.gameUrl) : undefined)
+          if (!activeMatch) return d
+          return {
+            ...d,
+            status: 'pending' as const,
+            url: activeMatch.downloadUrl || d.url,
+            gameUrl: activeMatch.gameUrl || d.gameUrl
+          }
+        })
 
       const existingKeys = new Set(kept.map(d => downloadKey(d)).filter(Boolean))
       const existingGameUrls = new Set(kept.map(d => d.gameUrl).filter(Boolean))
