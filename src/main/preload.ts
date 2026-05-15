@@ -10,6 +10,13 @@ type DownloadProgressPayload = {
   total?: number
   infoHash?: string
   destPath?: string
+  peers?: number
+  seeds?: number
+  statusMessage?: string
+  agentState?: string
+  hasMetadata?: boolean
+  stage?: 'download' | 'extract'
+  extractProgress?: number
 }
 
 type GameLaunchStatusPayload = {
@@ -129,6 +136,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ) => ipcRenderer.invoke('proton-build-launch', exePath, args, slug, runtimePath, prefixPath),
   protonCreateGamePrefix: (gameUrl: string, title?: string, commonRedistPath?: string) =>
     ipcRenderer.invoke('proton-create-game-prefix', gameUrl, title, commonRedistPath),
+  protonTricksStatus: () => ipcRenderer.invoke('proton-tricks-status'),
+  protonRunTricks: (gameUrl: string, tool: 'winetricks' | 'protontricks', components: string[]) =>
+    ipcRenderer.invoke('proton-run-tricks', gameUrl, tool, components),
+  protonOpenTricksGui: (gameUrl: string) => ipcRenderer.invoke('proton-open-tricks-gui', gameUrl),
+  protonOpenWinecfg: (gameUrl: string) => ipcRenderer.invoke('proton-open-winecfg', gameUrl),
+  protonOpenRegedit: (gameUrl: string) => ipcRenderer.invoke('proton-open-regedit', gameUrl),
+  protonOpenFileManager: (gameUrl: string) => ipcRenderer.invoke('proton-open-filemanager', gameUrl),
 
   setGameProtonPrefix: (gameUrl: string, prefixPath: string | null) =>
     ipcRenderer.invoke('set-game-proton-prefix', gameUrl, prefixPath),
@@ -148,6 +162,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleGameFavorite: (gameUrl: string) => ipcRenderer.invoke('toggle-game-favorite', gameUrl),
   setGameProtonOptions: (gameUrl: string, runtime: string, options: any) =>
     ipcRenderer.invoke('set-game-proton-options', gameUrl, runtime, options),
+  getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) =>
+    ipcRenderer.invoke('get-proton-log-snapshot', payload),
 
   setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) =>
     ipcRenderer.invoke('set-game-lan-settings', gameUrl, payload),

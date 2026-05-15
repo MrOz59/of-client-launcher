@@ -88,7 +88,7 @@ export const registerVpnHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       if (!code) return { success: false, error: 'Código ausente' }
       const res = await vpnControllerJoinRoom({ controllerUrl, code, name, password })
       if (!res.success) return { success: false, error: res.error || 'Falha ao entrar na sala', needsPassword: (res as any).needsPassword }
-      return { success: true, config: res.config, vpnIp: res.vpnIp, hostIp: res.hostIp, peerId: res.peerId, roomName: res.roomName }
+      return { success: true, config: res.config, vpnIp: res.vpnIp, hostIp: res.hostIp, peerId: res.peerId, roomName: res.roomName, maxPlayers: (res as any).maxPlayers }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao entrar na sala' }
     }

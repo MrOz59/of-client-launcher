@@ -16,6 +16,11 @@ type DownloadProgressPayload = {
   total?: number
   infoHash?: string
   destPath?: string
+  peers?: number
+  seeds?: number
+  statusMessage?: string
+  agentState?: string
+  hasMetadata?: boolean
   stage?: 'download' | 'extract'
   extractProgress?: number
 }
@@ -116,6 +121,12 @@ declare global {
       protonPreparePrefix: (slug: string) => Promise<{ success: boolean; prefix?: string; error?: string }>
       protonBuildLaunch: (exePath: string, args: string[], slug: string, runtimePath?: string, prefixPath?: string) => Promise<{ success: boolean; launch?: any; error?: string }>
       protonCreateGamePrefix: (gameUrl: string, title?: string, commonRedistPath?: string) => Promise<{ success: boolean; prefix?: string; error?: string }>
+      protonTricksStatus: () => Promise<{ success: boolean; winetricks?: boolean; protontricks?: boolean; error?: string }>
+      protonRunTricks: (gameUrl: string, tool: 'winetricks' | 'protontricks', components: string[]) => Promise<{ success: boolean; error?: string }>
+      protonOpenTricksGui: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
+      protonOpenWinecfg: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
+      protonOpenRegedit: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
+      protonOpenFileManager: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       setGameProtonPrefix: (gameUrl: string, prefixPath: string | null) => Promise<{ success: boolean; error?: string }>
       setGameSteamAppId: (gameUrl: string, steamAppId: string | null) => Promise<{ success: boolean; error?: string }>
       getGames: () => Promise<{ success: boolean; games: any[]; error?: string }>
@@ -129,6 +140,7 @@ declare global {
       setGameFavorite: (gameUrl: string, isFavorite: boolean) => Promise<{ success: boolean; isFavorite?: boolean; error?: string }>
       toggleGameFavorite: (gameUrl: string) => Promise<{ success: boolean; isFavorite?: boolean; error?: string }>
       setGameProtonOptions: (gameUrl: string, runtime: string, options: any) => Promise<{ success: boolean; error?: string }>
+      getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => Promise<{ success: boolean; text?: string; live?: boolean; logPath?: string | null; pid?: number; updatedAt?: number; hasProcessOutput?: boolean; hasProtonLog?: boolean; error?: string }>
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>
       vpnStatus: () => Promise<{ success: boolean; controller?: any; installed?: boolean; installError?: string; error?: string }>
       vpnInstall: () => Promise<{ success: boolean; error?: string; url?: string }>
@@ -140,7 +152,7 @@ declare global {
         public?: boolean
         maxPlayers?: number
       }) => Promise<{ success: boolean; code?: string; config?: string; vpnIp?: string; peerId?: string; roomName?: string; error?: string }>
-      vpnRoomJoin: (code: string, payload?: { name?: string; password?: string }) => Promise<{ success: boolean; config?: string; vpnIp?: string; hostIp?: string; peerId?: string; roomName?: string; needsPassword?: boolean; error?: string }>
+      vpnRoomJoin: (code: string, payload?: { name?: string; password?: string }) => Promise<{ success: boolean; config?: string; vpnIp?: string; hostIp?: string; peerId?: string; roomName?: string; maxPlayers?: number; needsPassword?: boolean; error?: string }>
       vpnRoomPeers: (code: string) => Promise<{ success: boolean; peers?: Array<{ id: string; name?: string; ip?: string; role?: string; online?: boolean }>; error?: string }>
       vpnRoomList: (payload?: { gameName?: string }) => Promise<{ success: boolean; rooms?: Array<{
         code: string

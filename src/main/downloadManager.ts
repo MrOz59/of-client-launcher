@@ -2,6 +2,7 @@ import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorre
 import { extractZipWithPassword } from './zip'
 import { processUpdateExtraction, findFilesRecursive } from './extractionUtils'
 import { findAndReadOnlineFixIni } from './utils/onlinefixIni'
+import { sanitizeVersionText } from './utils/versionUtils'
 import {
   getGame,
   createDownload,
@@ -117,6 +118,8 @@ export function getDownloadQueueStatus() {
 }
 
 // Process the download queue
+let queueRetryTimer: ReturnType<typeof setTimeout> | null = null
+
 async function processQueue() {
   if (queueProcessing) return
   queueProcessing = true
@@ -157,6 +160,16 @@ async function processQueue() {
   }
 
   broadcastQueueStatus()
+
+  // Safety net: if there are still items in the queue and slots available, retry shortly.
+  // This handles edge cases where processQueue was skipped due to the queueProcessing guard.
+  if (queueRetryTimer) clearTimeout(queueRetryTimer)
+  if (downloadQueue.length > 0 && activeDownloads.size < getMaxParallelDownloads()) {
+    queueRetryTimer = setTimeout(() => {
+      queueRetryTimer = null
+      processQueue()
+    }, 500)
+  }
 }
 
 // Execute a single download
@@ -922,9 +935,21 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
     } else {
       // HTTP download - save to downloads folder
       console.log('[DownloadManager] Starting HTTP download to:', downloadFilePath)
-      await downloadFile(url, downloadFilePath, (progress) => {
-        updateDownloadProgress(Number(downloadId), progress)
-        onProgress?.(progress, { stage: 'download', progress })
+      await downloadFile(url, downloadFilePath, (progress, details) => {
+        updateDownloadProgress(
+          Number(downloadId),
+          progress,
+          details?.speed != null ? String(Math.round(details.speed)) : undefined,
+          details?.eta != null ? String(Math.round(details.eta)) : undefined
+        )
+        onProgress?.(progress, {
+          stage: 'download',
+          progress,
+          downloadSpeed: details?.speed ?? 0,
+          downloaded: details?.downloaded ?? 0,
+          total: details?.total ?? 0,
+          timeRemaining: details?.eta ?? 0
+        })
       })
     }
 
@@ -987,9 +1012,11 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
         // Mark game as installed with new version (only after extraction completed)
         ensureGameRecord()
-        const version = (gameVersion && gameVersion !== 'unknown')
-          ? gameVersion
-          : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
+        const version = sanitizeVersionText(
+          (gameVersion && gameVersion !== 'unknown')
+            ? gameVersion
+            : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
+        ) || 'unknown'
         console.log('[DownloadManager] ========= MARKING GAME INSTALLED =========')
         console.log('[DownloadManager] gameUrl (to mark):', gameUrl)
         console.log('[DownloadManager] installPath:', installPath)
@@ -1160,9 +1187,11 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
       // Mark as installed after download (already in games folder)
       ensureGameRecord()
       const executablePath = updateResult.executablePath || findExecutable(installPath)
-      const version = (gameVersion && gameVersion !== 'unknown')
-        ? gameVersion
-        : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
+      const version = sanitizeVersionText(
+        (gameVersion && gameVersion !== 'unknown')
+          ? gameVersion
+          : (parseVersionFromName(url) || parseVersionFromName(gameTitle) || 'unknown')
+      ) || 'unknown'
       console.log('[DownloadManager] Marking torrent game installed:')
       console.log('[DownloadManager]   gameUrl:', gameUrl)
       console.log('[DownloadManager]   installPath:', installPath)
@@ -1399,9 +1428,9 @@ export function parseVersionFromName(name: string): string | null {
   for (const pattern of patterns) {
     const match = raw.match(pattern)
     if (match && match[1]) {
-      const version = match[1].trim()
+      const version = sanitizeVersionText(match[1].trim())
       // Validate it looks like a real version (not just a random number)
-      if (version.length >= 3) {
+      if (version && version.length >= 3) {
         return version
       }
     }
@@ -1478,6 +1507,9 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
       eta: details?.timeRemaining,
       peers: details?.peers,
       seeds: details?.seeds,
+      statusMessage: details?.statusMessage,
+      agentState: details?.state,
+      hasMetadata: details?.hasMetadata,
       stage: details?.stage,
       extractProgress: details?.extractProgress,
       destPath: destPathOverride
@@ -1491,7 +1523,7 @@ export async function resumeDownloadByTorrentId(torrentId: string): Promise<bool
     gameVersion: 'unknown',
     existingDownloadId: Number(existing.id),
     destPathOverride,
-    autoExtract: false
+    autoExtract: getSetting('auto_extract') !== 'false'
   }, progressBridge).then((result) => {
     if (!result.success) {
       console.warn('[DownloadManager] Rehydrated download failed:', result.error)
@@ -1512,8 +1544,16 @@ export async function cancelDownloadByTorrentId(torrentId: string): Promise<bool
 
   if (download) {
     updateDownloadStatus(Number(download.id), 'cancelled')
-    safelyRemoveDownloadData(download.dest_path)
-    safelyRemoveDownloadData(download.install_path)
+    const canRemoveInstallPath = shouldRemoveInstallPathOnCancel(download)
+    const pathsAreSame = sameResolvedPath(download.dest_path, download.install_path)
+    if (!pathsAreSame) {
+      safelyRemoveDownloadData(download.dest_path)
+    }
+    if (canRemoveInstallPath) {
+      safelyRemoveDownloadData(download.install_path)
+    } else if (download.install_path) {
+      console.log('[DownloadManager] Preserving install path on cancel:', download.install_path)
+    }
     deleteDownload(Number(download.id))
     // Notify renderer to clear any stale cards
     try {
@@ -1570,6 +1610,54 @@ function safelyRemoveDownloadData(destPath?: string | null) {
   }
 }
 
+function sameResolvedPath(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false
+  try {
+    return path.resolve(String(a)) === path.resolve(String(b))
+  } catch {
+    return String(a) === String(b)
+  }
+}
+
+function readLauncherMarker(installPath?: string | null): any | null {
+  if (!installPath) return null
+  try {
+    const markerPath = path.join(String(installPath), '.of_game.json')
+    if (!fs.existsSync(markerPath)) return null
+    return JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+function shouldRemoveInstallPathOnCancel(download: any): boolean {
+  const installPath = String(download?.install_path || '').trim()
+  if (!installPath) return false
+
+  try {
+    const game = getGame(String(download?.game_url || download?.download_url || '')) as any
+    const registeredInstallPath = String(game?.install_path || '').trim()
+    if (registeredInstallPath && sameResolvedPath(registeredInstallPath, installPath)) {
+      return false
+    }
+  } catch {
+    // Conservatively continue with marker checks below.
+  }
+
+  const marker = readLauncherMarker(installPath)
+  const markerUrl = String(marker?.url || '').trim()
+  const downloadGameUrl = String(download?.game_url || '').trim()
+  const markerMatchesDownload = !markerUrl || !downloadGameUrl || markerUrl === downloadGameUrl
+
+  // Only remove install_path automatically when it looks like a launcher-created
+  // partial install, not an existing game folder being updated in place.
+  return (
+    markerMatchesDownload &&
+    String(marker?.status || '').toLowerCase() === 'downloading' &&
+    marker?.showInLibrary === false
+  )
+}
+
 /**
  * Move directory contents from src to dest with proper error handling.
  * Throws an error if critical files fail to move.
@@ -1579,6 +1667,14 @@ function moveDirContents(src: string, dest: string): void {
     console.log('[moveDirContents] Source does not exist, skipping:', src)
     return
   }
+
+  // Guard: skip if source and destination resolve to the same path
+  try {
+    if (path.resolve(src) === path.resolve(dest)) {
+      console.log('[moveDirContents] Source and dest are the same path, skipping:', path.resolve(src))
+      return
+    }
+  } catch {}
 
   fs.mkdirSync(dest, { recursive: true })
   const entries = fs.readdirSync(src, { withFileTypes: true })

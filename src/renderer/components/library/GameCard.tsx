@@ -58,6 +58,7 @@ export function GameCard({
   const isLaunching = launchState?.status === 'starting' || launchState?.status === 'running'
   const isError = launchState?.status === 'error' || (launchState?.status === 'exited' && launchState?.code != null && Number(launchState.code) !== 0)
   const isSyncing = syncState?.status === 'syncing'
+  const canOpenLogs = Boolean(launchState?.protonLogPath || launchState?.stderrTail || isLaunching || isError)
 
   const isAchvComplete = !!achievementProgress?.complete
 
@@ -68,7 +69,7 @@ export function GameCard({
       : isPrefixing
         ? (prefixState?.message || 'Preparando prefixo...')
         : isLaunching
-          ? (launchState?.message || (launchState?.status === 'running' ? 'Abrindo jogo...' : 'Iniciando...'))
+          ? (launchState?.message || (launchState?.status === 'running' ? 'Em execução' : 'Iniciando...'))
           : isError
             ? `Falha ao iniciar${launchState?.code != null ? ` (cód. ${launchState.code})` : ''}`
             : ''
@@ -251,7 +252,7 @@ export function GameCard({
                   </button>
                 )}
 
-                {!!launchState?.protonLogPath && (
+                {canOpenLogs && (
                   <button
                     className="action-menu-item"
                     onClick={() => {

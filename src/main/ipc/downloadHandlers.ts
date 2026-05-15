@@ -29,6 +29,7 @@ import {
 } from '../downloadManager'
 import { extractZipWithPassword } from '../zip'
 import { findArchive, findExecutableInDir } from '../utils'
+import { sanitizeVersionText, isKnownUnknownVersion } from '../utils/versionUtils'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 // Helper to resolve game version
@@ -41,8 +42,9 @@ async function resolveGameVersion(options: {
   const { providedVersion, filename, title } = options
   const { parseVersionFromName } = await import('../downloadManager')
 
-  if (providedVersion && providedVersion !== 'unknown' && providedVersion.trim()) {
-    return providedVersion.trim()
+  if (!isKnownUnknownVersion(providedVersion)) {
+    const sanitized = sanitizeVersionText(providedVersion)
+    if (sanitized) return sanitized
   }
 
   if (filename) {
@@ -61,8 +63,16 @@ async function resolveGameVersion(options: {
 export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('download-http', async (_event: IpcMainInvokeEvent, url: string, destPath: string) => {
     try {
-      await downloadFile(url, destPath, (p) => {
-        ctx.sendDownloadProgress({ url, progress: p })
+      await downloadFile(url, destPath, (p, details) => {
+        ctx.sendDownloadProgress({
+          url,
+          progress: p,
+          speed: details?.speed,
+          downloaded: details?.downloaded,
+          total: details?.total,
+          eta: details?.eta,
+          stage: 'download'
+        })
       })
       return { success: true }
     } catch (err: any) {
@@ -72,8 +82,22 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
 
   ipcMain.handle('download-torrent', async (_event: IpcMainInvokeEvent, magnet: string, destPath: string) => {
     try {
-      await downloadTorrent(magnet, destPath, (p) => {
-        ctx.sendDownloadProgress({ magnet, progress: p })
+      await downloadTorrent(magnet, destPath, (p, details) => {
+        ctx.sendDownloadProgress({
+          magnet,
+          progress: p,
+          speed: details?.downloadSpeed || 0,
+          downloaded: details?.downloaded || 0,
+          total: details?.total || 0,
+          eta: details?.timeRemaining || 0,
+          peers: details?.peers,
+          seeds: details?.seeds,
+          statusMessage: details?.statusMessage,
+          agentState: details?.state,
+          hasMetadata: details?.hasMetadata,
+          infoHash: details?.infoHash || magnet,
+          stage: 'download'
+        })
       })
       return { success: true }
     } catch (err: any) {

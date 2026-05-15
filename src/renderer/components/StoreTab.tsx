@@ -297,6 +297,18 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     return n1 < n2 ? -1 : (n1 > n2 ? 1 : 0);
   }
 
+  function sanitizePageVersion(value) {
+    const raw = String(value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();
+    if (!raw) return null;
+    const withoutUiTail = raw.replace(/(download|baixar|descargar|t[eé]l[eé]charger|torrent|magnet|update|atualiza[cç][aã]o|скачать|торрент|обновить).*$/i, '').trim();
+    const text = withoutUiTail || raw;
+    const build = text.match(/\\b(Build[.\\s_]*\\d{6,10})\\b/i);
+    if (build && build[1]) return build[1].replace(/\\s+/g, ' ').trim();
+    const semver = text.match(/\\b(v?\\d+(?:\\.\\d+){1,6})(?:[-_ ]?(alpha|beta|rc|hotfix|patch)\\.?\\d*)?\\b/i);
+    if (semver && semver[0]) return semver[0].trim();
+    return text;
+  }
+
   // Extract game version from page
   function getPageVersion() {
     const article = document.querySelector('#dle-content > div > article');
@@ -318,10 +330,11 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
       const idx = text.toLowerCase().indexOf(label.toLowerCase());
       if (idx !== -1) {
         const after = text.slice(idx + label.length, idx + label.length + 50);
-        const versionMatch = after.match(/^[:\s]+((?:Build[.\s]*)?[vV]?[0-9][0-9a-zA-Z._-]*)/i);
-        if (versionMatch && versionMatch[1]) {
-          console.log('[OF Store] Found page version via label:', versionMatch[1]);
-          return versionMatch[1].trim();
+        const versionMatch = after.match(/^[:\s]+((?:Build[.\s_]*)?\d{6,10}|[vV]?\d+(?:\.\d+){1,6}(?:[-_][0-9a-zA-Z]+)?|(?:Build[.\s_]*)?[vV]?[0-9][0-9a-zA-Z._-]*)/i);
+        const version = sanitizePageVersion(versionMatch && versionMatch[1]);
+        if (version) {
+          console.log('[OF Store] Found page version via label:', version);
+          return version;
         }
       }
     }
@@ -332,14 +345,16 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
 
     let match = text.match(buildPattern);
     if (match) {
-      console.log('[OF Store] Found page version via Build pattern:', match[1]);
-      return match[1];
+      const version = sanitizePageVersion(match[1]);
+      console.log('[OF Store] Found page version via Build pattern:', version);
+      return version;
     }
 
     match = text.match(semverPattern);
     if (match) {
-      console.log('[OF Store] Found page version via semver pattern:', match[1]);
-      return match[1];
+      const version = sanitizePageVersion(match[1]);
+      console.log('[OF Store] Found page version via semver pattern:', version);
+      return version;
     }
 
     return null;

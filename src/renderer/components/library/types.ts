@@ -38,8 +38,10 @@ export interface ProtonOptions {
   gamemode: boolean
   mangohud: boolean
   logging: boolean
+  steamOverlay: boolean
   launchArgs: string
   useGamescope: boolean // Run game inside Gamescope for in-game notifications
+  wineDllOverrides: string // Custom WINEDLLOVERRIDES — replaces the launcher default when set
 }
 
 export interface ProtonRuntime {

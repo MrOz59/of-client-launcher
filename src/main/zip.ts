@@ -218,12 +218,8 @@ function extract7z(
         let errorDetail = ''
         switch (code) {
           case 1:
-            errorDetail = 'Warning (non-fatal errors occurred)'
-            // Code 1 is usually a warning, not a failure - resolve anyway
-            console.warn('[Extract] Completed with warnings:', stderrBuf.trim())
-            emitProgress(100)
-            resolve()
-            return
+            errorDetail = 'Extração concluiu com avisos; instalação não será marcada como concluída automaticamente'
+            break
           case 2:
             errorDetail = 'Fatal error'
             break

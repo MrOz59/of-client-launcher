@@ -1,6 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { VpnStatusState, VpnPeer, LanMode, PublicRoom } from './types'
 
+type CreateRoomOptions = {
+  roomName?: string
+  password?: string
+  isPublic?: boolean
+  maxPlayers?: number
+}
+
 export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode, lanNetworkId: string) {
   const [vpnLoading, setVpnLoading] = useState(false)
   const [vpnHasLoaded, setVpnHasLoaded] = useState(false)
@@ -58,18 +65,19 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     setPublicRooms([])
   }, [])
 
-  const createRoom = useCallback(async (gameName: string, onNetworkUpdate: (code: string) => void) => {
+  const createRoom = useCallback(async (gameName: string, onNetworkUpdate: (code: string) => void, options?: CreateRoomOptions) => {
     setLanRoomBusy(true)
     setVpnActionBusy(true)
     try {
-      const roomName = createRoomName.trim() || `${gameName || 'Sala'}`
+      const roomName = String(options?.roomName || createRoomName || '').trim() || `${gameName || 'Sala'}`
+      const maxPlayers = Math.min(Math.max(Number(options?.maxPlayers || 8), 2), 32)
       const res = await window.electronAPI.vpnRoomCreate?.({ 
         name: `OF ${gameName || ''}`.trim(),
         roomName,
         gameName: gameName || 'Unknown',
-        password: createRoomPassword || undefined,
-        public: createRoomPublic,
-        maxPlayers: 8
+        password: String(options?.password || createRoomPassword || '').trim() || undefined,
+        public: options?.isPublic ?? createRoomPublic,
+        maxPlayers
       })
       if (!res?.success) throw new Error(res?.error || 'Falha ao criar sala')
       const code = String(res.code || '').trim()
@@ -85,17 +93,29 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
       setVpnPeerId(peerId)
       setCurrentRoomName(roomName)
       setCurrentRoomIsHost(true)
-      setCurrentRoomMaxPlayers(8)
+      setCurrentRoomMaxPlayers(maxPlayers)
 
       const conn = await window.electronAPI.vpnConnect?.(cfg)
       if (!conn?.success) {
+        if (peerId) window.electronAPI.vpnRoomLeave?.(peerId).catch(() => {})
+        setLanRoomLastCode('')
+        setLanRoomCode('')
+        onNetworkUpdate('')
+        setVpnConfig('')
+        setVpnLocalIp('')
+        setVpnHostIp('')
+        setVpnPeerId('')
+        setCurrentRoomName('')
+        setCurrentRoomIsHost(false)
         if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em "Instalar VPN")')
         if (conn?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para conectar a VPN. Aceite o UAC e tente novamente.')
         throw new Error(conn?.error || 'Falha ao conectar')
       }
       setVpnConnected(true)
     } catch (err: any) {
-      alert(err?.message || 'Falha ao criar sala')
+      const msg = err?.message || 'Falha ao criar sala'
+      setVpnError(msg)
+      alert(msg)
     } finally {
       setLanRoomBusy(false)
       setVpnActionBusy(false)
@@ -127,13 +147,24 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
 
       const conn = await window.electronAPI.vpnConnect?.(cfg)
       if (!conn?.success) {
+        if (peerId) window.electronAPI.vpnRoomLeave?.(peerId).catch(() => {})
+        setLanRoomLastCode('')
+        onNetworkUpdate('')
+        setVpnConfig('')
+        setVpnLocalIp('')
+        setVpnHostIp('')
+        setVpnPeerId('')
+        setCurrentRoomName('')
+        setCurrentRoomIsHost(false)
         if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em "Instalar VPN")')
         if (conn?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para conectar a VPN. Aceite o UAC e tente novamente.')
         throw new Error(conn?.error || 'Falha ao conectar')
       }
       setVpnConnected(true)
     } catch (err: any) {
-      alert(err?.message || 'Falha ao entrar na sala')
+      const msg = err?.message || 'Falha ao entrar na sala'
+      setVpnError(msg)
+      alert(msg)
     } finally {
       setLanRoomBusy(false)
       setVpnActionBusy(false)
@@ -288,12 +319,16 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
 
         const code = String(lanNetworkId || '').trim()
         if (code) {
-          const peersRes = await window.electronAPI.vpnRoomPeers?.(code)
+          const peersRes = vpnConnected && vpnPeerId
+            ? await window.electronAPI.vpnHeartbeat?.(vpnPeerId)
+            : await window.electronAPI.vpnRoomPeers?.(code)
           if (cancelled) return
           if (peersRes?.success) {
             const nextPeers = Array.isArray(peersRes.peers) ? peersRes.peers : []
             const peersJson = JSON.stringify(nextPeers)
             if (peersJson !== lastPeersJson) { lastPeersJson = peersJson; setVpnPeers(nextPeers) }
+          } else if (vpnConnected && vpnPeerId) {
+            setVpnError(peersRes?.error || 'Conexão VPN sem heartbeat')
           }
         }
       } catch (err: any) {
@@ -310,7 +345,7 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     void refresh()
     timer = setInterval(refresh, 4000)
     return () => { cancelled = true; if (timer) clearInterval(timer) }
-  }, [configOpen, configTab, lanMode, lanNetworkId])
+  }, [configOpen, configTab, lanMode, lanNetworkId, vpnConnected, vpnPeerId])
 
   return {
     // State

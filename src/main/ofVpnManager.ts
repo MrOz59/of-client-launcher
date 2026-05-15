@@ -178,7 +178,12 @@ export async function vpnConnectFromConfig(params: { configText: string; userDat
   const dir = path.join(userDataDir, 'vpn')
   fs.mkdirSync(dir, { recursive: true })
   const configPath = path.join(dir, `${tunnelName}.conf`)
-  fs.writeFileSync(configPath, String(params.configText || '').trim() + os.EOL)
+  fs.writeFileSync(configPath, String(params.configText || '').trim() + os.EOL, { mode: 0o600 })
+  try {
+    fs.chmodSync(configPath, 0o600)
+  } catch {
+    // best-effort; Windows and some filesystems may ignore POSIX modes.
+  }
 
   if (process.platform === 'linux') {
     const installed = await vpnCheckInstalled()
@@ -241,4 +246,3 @@ export async function vpnDisconnect(params: { userDataDir: string }): Promise<{ 
 
   return { success: false, error: 'Plataforma não suportada (por enquanto)' }
 }
-

@@ -22,6 +22,7 @@ import { GameCard } from './library/GameCard'
 import { CloudSavesBanner } from './library/CloudSavesBanner'
 import { LibraryFilters } from './library/LibraryFilters'
 import { AchievementsModal } from './library/AchievementsModal'
+import { ProtonLogModal } from './library/ProtonLogModal'
 import { SchemaEditorModal } from './library/SchemaEditorModal'
 import { ConfigModal } from './library/ConfigModal'
 
@@ -138,6 +139,14 @@ export default function LibraryTab() {
   // Launch/prefix state
   const [launchingGames, setLaunchingGames] = useState<Record<string, LaunchState>>({})
   const [prefixJobs, setPrefixJobs] = useState<Record<string, PrefixJobState>>({})
+  const [protonLogViewer, setProtonLogViewer] = useState<{ gameUrl: string; title: string; logPath?: string | null } | null>(null)
+  const [protonLogState, setProtonLogState] = useState<{ text: string; loading: boolean; live: boolean; error: string | null; updatedAt?: number | null }>({
+    text: '',
+    loading: false,
+    live: false,
+    error: null,
+    updatedAt: null
+  })
 
   // Configuring exe
   const [configuring, setConfiguring] = useState<string | null>(null)
@@ -378,11 +387,61 @@ export default function LibraryTab() {
     else alert(res.error || 'Nenhum executável configurado')
   }, [])
 
-  // Open proton log
-  const openProtonLog = useCallback(async (logPath: string) => {
-    const res = await window.electronAPI.openPath?.(logPath)
-    if (res && res.success === false) alert(res.error || 'Falha ao abrir log')
-  }, [])
+  // Open proton log modal
+  const openProtonLog = useCallback((game: Game) => {
+    setProtonLogViewer({
+      gameUrl: game.url,
+      title: game.title,
+      logPath: launchingGames[game.url]?.protonLogPath || null
+    })
+    setProtonLogState({ text: '', loading: true, live: false, error: null, updatedAt: null })
+  }, [launchingGames])
+
+  const refreshProtonLog = useCallback(async (viewer?: { gameUrl: string; title: string; logPath?: string | null } | null, silent = false) => {
+    const target = viewer || protonLogViewer
+    if (!target) return
+
+    if (!silent) {
+      setProtonLogState((prev) => ({ ...prev, loading: true, error: null }))
+    }
+
+    try {
+      const res = await window.electronAPI.getProtonLogSnapshot({
+        gameUrl: target.gameUrl,
+        logPath: target.logPath || null,
+        maxChars: 250_000
+      })
+
+      if (!res?.success) {
+        setProtonLogState((prev) => ({
+          ...prev,
+          loading: false,
+          live: false,
+          error: res?.error || 'Falha ao carregar logs.'
+        }))
+        return
+      }
+
+      setProtonLogState({
+        text: String(res.text || ''),
+        loading: false,
+        live: !!res.live,
+        error: null,
+        updatedAt: res.updatedAt ?? Date.now()
+      })
+
+      if (res.logPath && res.logPath !== target.logPath) {
+        setProtonLogViewer((prev) => prev && prev.gameUrl === target.gameUrl ? { ...prev, logPath: res.logPath || null } : prev)
+      }
+    } catch (err: any) {
+      setProtonLogState((prev) => ({
+        ...prev,
+        loading: false,
+        live: false,
+        error: err?.message || 'Falha ao carregar logs.'
+      }))
+    }
+  }, [protonLogViewer])
 
   // Create proton prefix
   const createProtonPrefix = useCallback(async (game: Game) => {
@@ -576,6 +635,23 @@ export default function LibraryTab() {
     return () => { try { unsub?.() } catch {} }
   }, [cloudSaves])
 
+  useEffect(() => {
+    if (!protonLogViewer) return
+    const latestPath = launchingGames[protonLogViewer.gameUrl]?.protonLogPath
+    if (latestPath && latestPath !== protonLogViewer.logPath) {
+      setProtonLogViewer((prev) => prev ? { ...prev, logPath: latestPath } : prev)
+    }
+  }, [launchingGames, protonLogViewer])
+
+  useEffect(() => {
+    if (!protonLogViewer) return
+    void refreshProtonLog(protonLogViewer)
+    const timer = setInterval(() => {
+      void refreshProtonLog(protonLogViewer, true)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [protonLogViewer, refreshProtonLog])
+
   // Prefix job status listener
   useEffect(() => {
     const unsub = window.electronAPI.onPrefixJobStatus?.((data) => {
@@ -708,7 +784,7 @@ export default function LibraryTab() {
             onToggleFavorite={() => toggleFavorite(game.url)}
             onOpenFolder={() => openGameFolder(game)}
             onUpdate={() => updateGame(game)}
-            onOpenProtonLog={() => launchingGames[game.url]?.protonLogPath && openProtonLog(launchingGames[game.url].protonLogPath!)}
+            onOpenProtonLog={() => openProtonLog(game)}
             onDelete={() => deleteGame(game)}
             onOpenAchievements={() => achievements.openModal(game.url, game.title)}
             onPlay={() => playGame(game)}
@@ -808,6 +884,25 @@ export default function LibraryTab() {
         </>
       )}
 
+      {protonLogViewer && (
+        <ProtonLogModal
+          title={protonLogViewer.title}
+          text={protonLogState.text}
+          loading={protonLogState.loading}
+          live={protonLogState.live}
+          error={protonLogState.error}
+          logPath={protonLogViewer.logPath}
+          updatedAt={protonLogState.updatedAt}
+          onRefresh={() => { void refreshProtonLog() }}
+          onCopy={async () => {
+            try {
+              await navigator.clipboard.writeText(protonLogState.text || '')
+            } catch {}
+          }}
+          onClose={() => setProtonLogViewer(null)}
+        />
+      )}
+
       {/* Config Modal */}
       {configGame && (
         <ConfigModal
@@ -872,8 +967,8 @@ export default function LibraryTab() {
           lanRoomCode={vpn.lanRoomCode}
           onLanRoomCodeChange={vpn.setLanRoomCode}
           lanRoomBusy={vpn.lanRoomBusy}
-          onCreateRoom={(options) => vpn.createRoom(gameConfig.titleValue, gameConfig.setLanNetworkId)}
-          onJoinRoom={(password) => vpn.joinRoom(vpn.lanRoomCode, gameConfig.titleValue, gameConfig.setLanNetworkId, password)}
+          onCreateRoom={(options) => vpn.createRoom(gameConfig.titleValue, gameConfig.setLanNetworkId, options)}
+          onJoinRoom={(password, codeOverride) => vpn.joinRoom(codeOverride || vpn.lanRoomCode, gameConfig.titleValue, gameConfig.setLanNetworkId, password)}
           onLeaveRoom={() => vpn.leaveRoom(gameConfig.setLanNetworkId)}
           lanNetworkId={gameConfig.lanNetworkId}
           lanRoomName={vpn.currentRoomName || gameConfig.lanNetworkId}

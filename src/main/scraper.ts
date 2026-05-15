@@ -2,6 +2,7 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 import { session } from 'electron'
 import { getCookieHeaderForUrl } from './cookieManager'
+import { sanitizeVersionText } from './utils/versionUtils'
 
 function cookiesToHeader(cookies: Electron.Cookie[]) {
   const header = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
@@ -129,9 +130,9 @@ export function extractVersionFromHtml(html: string): string | null {
     )
     const match = allText.match(labelPattern)
     if (match && match[1]) {
-      const version = match[1].trim()
+      const version = sanitizeVersionText(match[1])
       // Validate it looks like a version (has at least one digit and isn't too short)
-      if (version.length >= 3 && /\d/.test(version)) {
+      if (version && version.length >= 3 && /\d/.test(version)) {
         console.log(`[Scraper] Found version via label "${label}":`, version)
         return version
       }
@@ -162,9 +163,10 @@ export function extractVersionFromHtml(html: string): string | null {
             'i'
           )
           const m = text.match(pattern)
-          if (m && m[1] && m[1].length >= 3 && /\d/.test(m[1])) {
-            console.log(`[Scraper] Found version in element "${selector}":`, m[1])
-            foundVersion = m[1]
+          const version = sanitizeVersionText(m?.[1])
+          if (version && version.length >= 3 && /\d/.test(version)) {
+            console.log(`[Scraper] Found version in element "${selector}":`, version)
+            foundVersion = version
             return false // break out of .each()
           }
         }
@@ -190,9 +192,9 @@ export function extractVersionFromHtml(html: string): string | null {
   for (const p of patterns) {
     const m = allText.match(p)
     if (m && m[1]) {
-      const version = m[1].trim()
+      const version = sanitizeVersionText(m[1])
       // Extra validation to avoid false positives
-      if (version.length >= 3) {
+      if (version && version.length >= 3) {
         console.log('[Scraper] Found version via pattern:', version)
         return version
       }
@@ -209,9 +211,10 @@ export function extractVersionFromHtml(html: string): string | null {
     // Try to extract version from link text or href
     for (const p of patterns) {
       const m = (linkText + ' ' + href).match(p)
-      if (m && m[1] && m[1].length >= 3) {
-        console.log('[Scraper] Found version in download link:', m[1])
-        linkVersion = m[1]
+      const version = sanitizeVersionText(m?.[1])
+      if (version && version.length >= 3) {
+        console.log('[Scraper] Found version in download link:', version)
+        linkVersion = version
         return false // break out of .each()
       }
     }
@@ -225,9 +228,10 @@ export function extractVersionFromHtml(html: string): string | null {
 
   for (const p of patterns) {
     const m = metaContent.match(p)
-    if (m && m[1] && m[1].length >= 3) {
-      console.log('[Scraper] Found version in meta tags:', m[1])
-      return m[1]
+    const version = sanitizeVersionText(m?.[1])
+    if (version && version.length >= 3) {
+      console.log('[Scraper] Found version in meta tags:', version)
+      return version
     }
   }
 

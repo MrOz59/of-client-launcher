@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
+import { sanitizeVersionText } from './utils/versionUtils'
 
 let dbInstance: any | null = null
 let sqliteAvailable = false
@@ -13,6 +14,10 @@ function flushJsonStoreNow() {
   initDb()
   if (sqliteAvailable) return
   if (!jsonStoreCache) return
+  if (jsonStoreWriteTimer) {
+    clearTimeout(jsonStoreWriteTimer)
+    jsonStoreWriteTimer = null
+  }
   fs.writeFileSync(dbInstance._storePath, JSON.stringify(jsonStoreCache, null, 2))
 }
 
@@ -178,27 +183,27 @@ export function addOrUpdateGame(url: string, title?: string) {
     return
   }
   // JSON fallback
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
+  const store = readStore()
+  store.games = store.games || []
   if (!store.games.some((g: any) => g.url === url)) {
     store.games.push({ url, title: title || '', installed_version: null, latest_version: null })
-    fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
+    writeStore(store)
   }
 }
 
 export function updateGameVersion(url: string, latest: string) {
   initDb()
+  const normalizedLatest = sanitizeVersionText(latest) || latest
   if (sqliteAvailable) {
     const stmt = dbInstance.prepare('UPDATE games SET latest_version = ? WHERE url = ?')
-    stmt.run(latest, url)
+    stmt.run(normalizedLatest, url)
     return
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
-  const g = store.games.find((x: any) => x.url === url)
+  const store = readStore()
+  const g = (store.games || []).find((x: any) => x.url === url)
   if (g) {
-    g.latest_version = latest
-    fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
+    g.latest_version = normalizedLatest
+    writeStore(store)
   }
 }
 
@@ -224,8 +229,7 @@ export function getGame(url: string) {
     return null
   }
 
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
+  const store = readStore()
   const byUrl = (store.games || []).find((g: any) => candidates.includes(String(g.url)))
   if (byUrl) return byUrl
   if (gameId) return (store.games || []).find((g: any) => String(g.game_id || '') === gameId) || null
@@ -238,9 +242,8 @@ export function getAllGames() {
     const stmt = dbInstance.prepare('SELECT * FROM games ORDER BY last_played DESC')
     return stmt.all()
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
-  return store.games
+  const store = readStore()
+  return store.games || []
 }
 
 export function updateGameInfo(url: string, data: {
@@ -263,19 +266,25 @@ export function updateGameInfo(url: string, data: {
 	  lan_autoconnect?: number | null
 	}) {
   initDb()
+  const normalizedData = { ...data }
+  if (typeof normalizedData.installed_version === 'string') {
+    normalizedData.installed_version = sanitizeVersionText(normalizedData.installed_version) || normalizedData.installed_version
+  }
+  if (typeof normalizedData.latest_version === 'string') {
+    normalizedData.latest_version = sanitizeVersionText(normalizedData.latest_version) || normalizedData.latest_version
+  }
   if (sqliteAvailable) {
-    const fields = Object.keys(data).map(key => `${key} = ?`).join(', ')
-    const values = Object.values(data)
+    const fields = Object.keys(normalizedData).map(key => `${key} = ?`).join(', ')
+    const values = Object.values(normalizedData)
     const stmt = dbInstance.prepare(`UPDATE games SET ${fields} WHERE url = ?`)
     stmt.run(...values, url)
     return
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
-  const g = store.games.find((x: any) => x.url === url)
+  const store = readStore()
+  const g = (store.games || []).find((x: any) => x.url === url)
   if (g) {
-    Object.assign(g, data)
-    fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
+    Object.assign(g, normalizedData)
+    writeStore(store)
   }
 }
 
@@ -336,16 +345,15 @@ export function getGameByGameId(gameId: string) {
     const stmt = dbInstance.prepare('SELECT * FROM games WHERE game_id = ?')
     return stmt.get(gameId)
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
-  return store.games.find((g: any) => g.game_id === gameId) || null
+  const store = readStore()
+  return (store.games || []).find((g: any) => g.game_id === gameId) || null
 }
 
 export function markGameInstalled(url: string, installPath: string, version: string | null, executablePath?: string) {
   initDb()
   const candidates = buildUrlCandidates(url)
   const resolvedUrl = candidates[0] || url
-  const normalizedVersion = typeof version === 'string' ? (version.trim() || null) : null
+  const normalizedVersion = typeof version === 'string' ? (sanitizeVersionText(version) || null) : null
 
   console.log('[DB] markGameInstalled called:')
   console.log('[DB]   url:', url)
@@ -432,13 +440,12 @@ export function updateGamePlayTime(url: string, playTimeMinutes: number) {
     stmt.run(playTimeMinutes, url)
     return
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
-  const g = store.games.find((x: any) => x.url === url)
+  const store = readStore()
+  const g = (store.games || []).find((x: any) => x.url === url)
   if (g) {
     g.last_played = new Date().toISOString()
     g.play_time = (g.play_time || 0) + playTimeMinutes
-    fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
+    writeStore(store)
   }
 }
 
@@ -495,8 +502,7 @@ export function deleteGame(url: string) {
     }
     return
   }
-  const raw = fs.readFileSync(dbInstance._storePath, 'utf-8')
-  const store = JSON.parse(raw)
+  const store = readStore()
   store.games = (store.games || []).filter((g: any) => {
     const u = String(g.url || '')
     const gid = String(g.game_id || '')
@@ -504,7 +510,7 @@ export function deleteGame(url: string) {
     if (gameId && gid === gameId) return false
     return true
   })
-  fs.writeFileSync(dbInstance._storePath, JSON.stringify(store, null, 2))
+  writeStore(store)
 }
 
 // Downloads management
@@ -637,24 +643,25 @@ export function getDownloadByGameUrl(gameUrl: string) {
 
 export function updateDownloadProgress(id: number, progress: number, speed?: string, eta?: string) {
   initDb()
+  const normalizedProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0
   if (sqliteAvailable) {
     const stmt = dbInstance.prepare(`
       UPDATE downloads
       SET progress = ?,
-          speed = ?,
-          eta = ?,
+          speed = COALESCE(?, speed),
+          eta = COALESCE(?, eta),
           updated_at = datetime('now')
       WHERE id = ?
     `)
-    stmt.run(progress, speed || null, eta || null, id)
+    stmt.run(normalizedProgress, speed || null, eta || null, id)
     return
   }
   const store = readStore()
   const d = store.downloads.find((x: any) => x.id === id)
   if (d) {
-    d.progress = progress
-    d.speed = speed || null
-    d.eta = eta || null
+    d.progress = normalizedProgress
+    if (speed !== undefined) d.speed = speed || null
+    if (eta !== undefined) d.eta = eta || null
     d.updated_at = new Date().toISOString()
     // Torrent progress can emit extremely frequently; don't sync-write the whole JSON store each tick.
     // We'll coalesce writes to keep the UI responsive.

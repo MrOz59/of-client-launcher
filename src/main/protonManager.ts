@@ -41,6 +41,7 @@ function findSteamRoot(): string {
     path.join(os.homedir(), '.steam', 'steam'),
     path.join(os.homedir(), '.steam', 'root'),
     path.join(os.homedir(), '.local', 'share', 'Steam'),
+    path.join(os.homedir(), '.steam', 'debian-installation'),
     path.join(os.homedir(), '.var', 'app', 'com.valvesoftware.Steam', 'data', 'Steam'),
     '/usr/share/steam',
   ]
@@ -55,6 +56,108 @@ function findSteamRoot(): string {
   const fallback = path.join(os.homedir(), '.steam', 'steam')
   console.log('[Proton] Using fallback Steam root:', fallback)
   return fallback
+}
+
+function getSteamRootCandidates(): string[] {
+  const roots = [
+    findSteamRoot(),
+    path.join(os.homedir(), '.local', 'share', 'Steam'),
+    path.join(os.homedir(), '.steam', 'steam'),
+    path.join(os.homedir(), '.steam', 'root'),
+    path.join(os.homedir(), '.steam', 'debian-installation'),
+    path.join(os.homedir(), '.var', 'app', 'com.valvesoftware.Steam', 'data', 'Steam'),
+    '/usr/share/steam'
+  ]
+  const seen = new Set<string>()
+  return roots
+    .map(p => {
+      try { return path.resolve(p) } catch { return p }
+    })
+    .filter(p => {
+      if (!p || seen.has(p)) return false
+      seen.add(p)
+      return fs.existsSync(p)
+    })
+}
+
+function findSteamOverlayPreloadEntries(preferArch?: 'x86' | 'x64' | null): string[] {
+  const entries: string[] = []
+  const add = (p: string) => {
+    if (p && fs.existsSync(p) && !entries.includes(p)) entries.push(p)
+  }
+
+  for (const root of getSteamRootCandidates()) {
+    const lib32 = path.join(root, 'ubuntu12_32', 'gameoverlayrenderer.so')
+    const lib64 = path.join(root, 'ubuntu12_64', 'gameoverlayrenderer.so')
+    if (preferArch === 'x86') {
+      add(lib32)
+      add(lib64)
+    } else {
+      add(lib64)
+      add(lib32)
+    }
+  }
+
+  return entries
+}
+
+function findSteamOverlayVulkanDirs(): string[] {
+  const dirs: string[] = []
+  const add = (p: string) => {
+    if (p && fs.existsSync(p) && !dirs.includes(path.dirname(p))) dirs.push(path.dirname(p))
+  }
+
+  for (const root of getSteamRootCandidates()) {
+    for (const rel of [
+      ['ubuntu12_64', 'steamoverlayvulkanlayer.so'],
+      ['ubuntu12_32', 'steamoverlayvulkanlayer.so'],
+      ['steamrt64', 'steamoverlayvulkanlayer.so'],
+      ['steamrt32', 'steamoverlayvulkanlayer.so']
+    ]) {
+      add(path.join(root, ...rel))
+    }
+  }
+
+  return dirs
+}
+
+function isSteamClientRunning(): boolean {
+  if (process.platform !== 'linux') return false
+  try {
+    const procEntries = fs.readdirSync('/proc', { withFileTypes: true })
+    for (const entry of procEntries) {
+      if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
+      try {
+        const comm = fs.readFileSync(path.join('/proc', entry.name, 'comm'), 'utf8').trim().toLowerCase()
+        if (comm === 'steam' || comm === 'steamwebhelper') return true
+      } catch {
+        // ignore per-process access races
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false
+}
+
+function startSteamClientForOverlay() {
+  if (process.platform !== 'linux' || isSteamClientRunning()) return
+  const steamCmd = findCommandPath('steam')
+  if (!steamCmd) {
+    console.warn('[Proton] Steam overlay requested, but steam command was not found')
+    return
+  }
+  try {
+    const child = spawn(steamCmd, ['-silent'], {
+      detached: true,
+      stdio: 'ignore',
+      env: sanitizeEnvForProton(process.env)
+    })
+    child.unref()
+    console.log('[Proton] Started Steam client for overlay')
+  } catch (err) {
+    console.warn('[Proton] Failed to start Steam client for overlay:', err)
+  }
 }
 
 export function getSavedProtonRuntime(): string | null {
@@ -438,8 +541,12 @@ export async function ensureGameCommonRedists(
     const key = item.path
 
     const prev = state.completed[key]
-    const prevOk = prev && (prev.status === 0 || prev.status === 3010)
-    if (prevOk && prev.mtimeMs === mtimeMs) continue
+    if (prev && prev.mtimeMs === mtimeMs) {
+      if (!(prev.status === 0 || prev.status === 3010)) {
+        console.log(`[Proton] Skipping repeated redist attempt for ${path.basename(item.path)}; previous status: ${prev.status}`)
+      }
+      continue
+    }
 
     ranAny = true
     const name = path.basename(item.path)
@@ -740,7 +847,9 @@ export function buildProtonLaunch(
     mangohud?: boolean
     logging?: boolean
     launchArgs?: string
+    wineDllOverrides?: string
     steamAppId?: string | number | null
+    overlayGameId?: string | null
     installDir?: string | null
     enableSteamOverlay?: boolean
     enableEosOverlay?: boolean
@@ -787,25 +896,33 @@ export function buildProtonLaunch(
   const peArch = detectPeArch(exePath)
 
   const envOptions: Record<string, string> = {}
-  // Many OnlineFix/Steamless games require native DLLs for proper functionality.
-  // - steam_api/steam_api64: Steam API stubs
-  // - winmm: Windows multimedia (n,b = native with builtin fallback)
-  // - OnlineFix/OnlineFix64: OnlineFix loader DLLs
-  // - SteamOverlay/SteamOverlay64: Steam overlay stubs
-  // - dnet: .NET interop for some games
-  // - winhttp: HTTP library (n,b = native with builtin fallback)
-  const baseDllOverridesSteam = 'steam_api=n;steam_api64=n;winmm=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;dnet=n;winhttp=n,b'
-  // For Epic games, use the alternate overrides requested to improve EOS overlay reliability.
-  const baseDllOverridesEpic = 'version=n,b;OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;winhttp=n,b'
-  const baseDllOverrides = options?.enableEosOverlay === true ? baseDllOverridesEpic : baseDllOverridesSteam
-  const extraOverrides: string[] = []
-  if (options?.enableEosOverlay === true) {
-    const eosDll = peArch === 'x86' ? 'EOSSDK-Win32-Shipping' : 'EOSSDK-Win64-Shipping'
-    extraOverrides.push(`${eosDll}=n,b`)
+
+  // Custom WINEDLLOVERRIDES: if the user specified per-game overrides, use those instead of the defaults.
+  const customDllOverrides = String(options?.wineDllOverrides || '').trim()
+  if (customDllOverrides) {
+    const existingOverrides = (process.env.WINEDLLOVERRIDES || '').trim()
+    envOptions.WINEDLLOVERRIDES = existingOverrides ? `${existingOverrides};${customDllOverrides}` : customDllOverrides
+  } else {
+    // Many OnlineFix/Steamless games require native DLLs for proper functionality.
+    // - steam_api/steam_api64: Steam API stubs
+    // - winmm: Windows multimedia (n,b = native with builtin fallback)
+    // - OnlineFix/OnlineFix64: OnlineFix loader DLLs
+    // - SteamOverlay/SteamOverlay64: Steam overlay stubs
+    // - dnet: .NET interop for some games
+    // - winhttp: HTTP library (n,b = native with builtin fallback)
+    const baseDllOverridesSteam = 'steam_api=n;steam_api64=n;winmm=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;dnet=n;winhttp=n,b'
+    // For Epic games, use the alternate overrides requested to improve EOS overlay reliability.
+    const baseDllOverridesEpic = 'version=n,b;OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;winhttp=n,b'
+    const baseDllOverrides = options?.enableEosOverlay === true ? baseDllOverridesEpic : baseDllOverridesSteam
+    const extraOverrides: string[] = []
+    if (options?.enableEosOverlay === true) {
+      const eosDll = peArch === 'x86' ? 'EOSSDK-Win32-Shipping' : 'EOSSDK-Win64-Shipping'
+      extraOverrides.push(`${eosDll}=n,b`)
+    }
+    const combinedOverrides = extraOverrides.length > 0 ? `${baseDllOverrides};${extraOverrides.join(';')}` : baseDllOverrides
+    const existingOverrides = (process.env.WINEDLLOVERRIDES || '').trim()
+    envOptions.WINEDLLOVERRIDES = existingOverrides ? `${existingOverrides};${combinedOverrides}` : combinedOverrides
   }
-  const combinedOverrides = extraOverrides.length > 0 ? `${baseDllOverrides};${extraOverrides.join(';')}` : baseDllOverrides
-  const existingOverrides = (process.env.WINEDLLOVERRIDES || '').trim()
-  envOptions.WINEDLLOVERRIDES = existingOverrides ? `${existingOverrides};${combinedOverrides}` : combinedOverrides
   if (options?.esync === false) envOptions.PROTON_NO_ESYNC = '1'
   if (options?.fsync === false) envOptions.PROTON_NO_FSYNC = '1'
   if (options?.dxvk === false) envOptions.PROTON_USE_WINED3D = '1'
@@ -823,33 +940,31 @@ export function buildProtonLaunch(
   const steamAppId = options?.steamAppId != null && String(options.steamAppId).trim() !== ''
     ? String(options.steamAppId).trim()
     : '0'
+  const overlayGameId = options?.overlayGameId != null && String(options.overlayGameId).trim() !== ''
+    ? String(options.overlayGameId).trim()
+    : steamAppId
 
   const logsDir = path.join(os.homedir(), '.local/share/of-launcher/logs/proton', slug)
   try { fs.mkdirSync(logsDir, { recursive: true }) } catch {}
 
   // === Steam Overlay (optional) ===
-  if (options?.enableSteamOverlay === true && steamAppId !== '0') {
+  if (options?.enableSteamOverlay === true && overlayGameId !== '0') {
     const arch = peArch
-    const overlay64 = path.join(steamRoot, 'ubuntu12_64', 'gameoverlayrenderer.so')
-    const overlay32 = path.join(steamRoot, 'ubuntu12_32', 'gameoverlayrenderer.so')
-    const vulkan64 = path.join(steamRoot, 'ubuntu12_64', 'steamoverlayvulkanlayer.so')
-    const vulkan32 = path.join(steamRoot, 'ubuntu12_32', 'steamoverlayvulkanlayer.so')
+    const overlayLibs = findSteamOverlayPreloadEntries(arch)
+    const vulkanDirs = findSteamOverlayVulkanDirs()
+    startSteamClientForOverlay()
 
-    const pickExisting = (a: string, b: string) => (fs.existsSync(a) ? a : (fs.existsSync(b) ? b : ''))
-    const overlayLib = arch === 'x86' ? pickExisting(overlay32, overlay64) : pickExisting(overlay64, overlay32)
-    const vulkanLib = arch === 'x86' ? pickExisting(vulkan32, vulkan64) : pickExisting(vulkan64, vulkan32)
-
-    if (overlayLib) {
+    if (overlayLibs.length) {
       const existing = String(process.env.LD_PRELOAD || '').trim()
-      envOptions.LD_PRELOAD = existing ? `${overlayLib} ${existing}` : overlayLib
+      const preload = overlayLibs.join(':')
+      envOptions.LD_PRELOAD = existing ? `${preload}:${existing}` : preload
     } else {
       console.warn('[Proton] Steam overlay library not found; skipping LD_PRELOAD')
     }
 
-    if (vulkanLib) {
-      const layerDir = path.dirname(vulkanLib)
+    if (vulkanDirs.length) {
       const existingAdd = String(process.env.VK_ADD_LAYER_PATH || '').trim()
-      envOptions.VK_ADD_LAYER_PATH = existingAdd ? `${layerDir}:${existingAdd}` : layerDir
+      envOptions.VK_ADD_LAYER_PATH = existingAdd ? `${vulkanDirs.join(':')}:${existingAdd}` : vulkanDirs.join(':')
 
       const existingLayers = String(process.env.VK_INSTANCE_LAYERS || '').trim()
       const layerName = 'VK_LAYER_STEAM_overlay'
@@ -865,6 +980,7 @@ export function buildProtonLaunch(
       console.warn('[Proton] Steam overlay Vulkan layer not found; skipping VK_* env')
     }
 
+    envOptions.ENABLE_VK_LAYER_VALVE_steam_overlay_1 = '1'
     const runtimePath = arch === 'x86'
       ? path.join(steamRoot, 'ubuntu12_32')
       : path.join(steamRoot, 'ubuntu12_64')
@@ -873,7 +989,8 @@ export function buildProtonLaunch(
       envOptions.STEAM_RUNTIME_LIBRARY_PATH = runtimePath
     }
 
-    envOptions.SteamGameId = steamAppId
+    envOptions.SteamGameId = overlayGameId
+    envOptions.SteamOverlayGameId = overlayGameId
   }
 
   const extraArgs = options?.launchArgs ? options.launchArgs.split(' ').filter(Boolean) : []
@@ -908,8 +1025,12 @@ export function buildProtonLaunch(
         STEAM_COMPAT_DATA_PATH: prefix,
         STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,  // ✅ CORREÇÃO!
         STEAM_COMPAT_INSTALL_PATH: options?.installDir ? String(options.installDir) : undefined,
+        // Keep the real app id available for steam_api/OnlineFix even when the
+        // overlay itself attaches through SteamOverlayGameId=480.
         STEAM_COMPAT_APP_ID: steamAppId,
         SteamAppId: steamAppId,
+        SteamGameId: overlayGameId !== '0' ? overlayGameId : undefined,
+        SteamOverlayGameId: overlayGameId !== '0' ? overlayGameId : undefined,
         WINEPREFIX: winePrefix,
         PROTON_LOG: logging ? '1' : undefined,
         PROTON_ENABLE_LOG: logging ? '1' : undefined,
@@ -950,8 +1071,22 @@ function sanitizeEnvForProton(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     'CLAUDE_',
   ]
 
+  const dropExact = new Set([
+    'APPIMAGE',
+    'APPDIR',
+    'ARGV0',
+    'OWD',
+    'CHROME_DESKTOP',
+    'DESKTOP_STARTUP_ID',
+    'GIO_LAUNCHED_DESKTOP_FILE',
+    'GIO_LAUNCHED_DESKTOP_FILE_PID',
+    'ELECTRON_RUN_AS_NODE',
+    'ELECTRON_NO_ATTACH_CONSOLE',
+    'ELECTRON_FORCE_IS_PACKAGED'
+  ])
+
   for (const key of Object.keys(out)) {
-    if (dropPrefixes.some(p => key.startsWith(p))) {
+    if (dropExact.has(key) || dropPrefixes.some(p => key.startsWith(p))) {
       delete out[key]
       continue
     }
@@ -1072,6 +1207,84 @@ async function runProtonTool(
   })
 }
 
+function makeHiddenWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {
+    ...env,
+    WINEDEBUG: '-all',
+    WINEDLLOVERRIDES: env.WINEDLLOVERRIDES || 'winemenubuilder.exe=d;mscoree,mshtml='
+  }
+  delete next.DISPLAY
+  delete next.WAYLAND_DISPLAY
+  delete next.XAUTHORITY
+  delete next.DESKTOP_STARTUP_ID
+  delete next.XDG_ACTIVATION_TOKEN
+  return next
+}
+
+async function runLoggedProcess(
+  cmd: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  tag: string
+): Promise<number | null> {
+  return await new Promise<number | null>((resolve) => {
+    let settled = false
+    const finish = (code: number | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(t)
+      resolve(code)
+    }
+
+    const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const t = setTimeout(() => {
+      try { proc.kill() } catch {}
+      finish(null)
+    }, timeoutMs)
+
+    proc.stdout?.on('data', (d: Buffer) => console.log(tag, d.toString().trim()))
+    proc.stderr?.on('data', (d: Buffer) => console.log(tag, d.toString().trim()))
+    proc.on('error', () => finish(null))
+    proc.on('close', (code) => finish(typeof code === 'number' ? code : null))
+  })
+}
+
+async function runWinebootBackground(
+  runner: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number
+): Promise<boolean> {
+  const xvfbRun = findCommandPath('xvfb-run')
+  if (xvfbRun) {
+    const xvfbEnv = {
+      ...env,
+      GDK_BACKEND: 'x11',
+      WINEDEBUG: '-all',
+      WINEDLLOVERRIDES: env.WINEDLLOVERRIDES || 'winemenubuilder.exe=d;mscoree,mshtml='
+    }
+    const code = await runLoggedProcess(
+      xvfbRun,
+      ['-a', '-s', '-screen 0 1024x768x24', runner, 'run', 'wineboot', '-u'],
+      xvfbEnv,
+      timeoutMs,
+      '[wineboot:hidden]'
+    )
+    return code === 0
+  }
+
+  // Best-effort fallback for systems without xvfb-run. Some Wine/Proton builds
+  // can bootstrap without a display; if they cannot, the caller retries visibly.
+  const code = await runLoggedProcess(
+    runner,
+    ['run', 'wineboot', '-u'],
+    makeHiddenWineEnv(env),
+    Math.min(timeoutMs, 30_000),
+    '[wineboot:headless]'
+  )
+  return code === 0
+}
+
 function findCommandPath(cmd: string): string | null {
   try {
     const fromEnv = (process.env.PATH || '')
@@ -1099,11 +1312,11 @@ function findCommandPath(cmd: string): string | null {
   return null
 }
 
-function winetricksAvailable(): boolean {
+export function winetricksAvailable(): boolean {
   return commandExists('winetricks')
 }
 
-function protontricksAvailable(): boolean {
+export function protontricksAvailable(): boolean {
   return commandExists('protontricks')
 }
 
@@ -1882,21 +2095,24 @@ export async function ensurePrefixDefaults(
         // ignore
       }
 
-      onProgress?.('Initializing Wine prefix...')
-      console.log('[Proton] Step 1: Initializing Wine prefix...')
+      onProgress?.('Inicializando prefixo Wine em background...')
+      console.log('[Proton] Step 1: Initializing Wine prefix in background...')
 
-      await new Promise<void>((resolve) => {
-        const p = spawn(runner, ['run', 'wineboot', '-u'], { 
-          env, 
-          stdio: ['ignore', 'pipe', 'pipe'] 
-        })
-        p.stdout?.on('data', (d: Buffer) => console.log('[wineboot]', d.toString().trim()))
-        p.stderr?.on('data', (d: Buffer) => console.log('[wineboot]', d.toString().trim()))
-        p.on('close', () => resolve())
-        p.on('error', () => resolve())
-        setTimeout(() => { try { p.kill() } catch {}; resolve() }, 60000)
-      })
-      meta.winebootDone = true
+      let winebootOk = await runWinebootBackground(runner, env, 60_000)
+      if (!winebootOk) {
+        console.warn('[Proton] Background wineboot failed or timed out; retrying with normal display')
+        onProgress?.('Inicializando prefixo Wine...')
+        const code = await runLoggedProcess(
+          runner,
+          ['run', 'wineboot', '-u'],
+          env,
+          60_000,
+          '[wineboot]'
+        )
+        winebootOk = code === 0
+      }
+
+      meta.winebootDone = winebootOk || fs.existsSync(path.join(winePrefix, 'drive_c'))
       meta.updatedAt = nowIso()
       writeDefaultDepsMeta(compatDataPath, meta)
       console.log('[Proton] ✅ Wine prefix initialized')
@@ -2034,6 +2250,150 @@ export async function installExtraComponents(
 
   console.log('[Proton] Installing extra components:', components)
   await runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir)
-  
+
   return true
+}
+
+export async function runProtontricksComponents(
+  prefixPath: string,
+  components: string[],
+  onProgress?: (msg: string) => void
+): Promise<boolean> {
+  if (!isLinux()) return false
+
+  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
+  const { compatDataPath } = resolveCompatDataPaths(prefixPath, allowMigrate)
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
+  }
+
+  console.log('[Proton] Running protontricks components:', components)
+  return await runProtontricks(compatDataPath, components, env, onProgress)
+}
+
+/**
+ * Open the full winetricks GUI targeting a game's Wine prefix.
+ * This spawns winetricks in interactive mode (no --unattended, no components).
+ */
+export function openWinetricksGui(prefixPath: string): { success: boolean; error?: string } {
+  if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
+  if (!winetricksAvailable()) return { success: false, error: 'winetricks não está instalado' }
+
+  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
+  const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
+  const steamRoot = findSteamRoot()
+  const protonPath = findProtonRuntime()
+  const { protonDir } = getProtonRunner(protonPath)
+  const protonOverrides = getProtonWineOverrides(protonDir)
+  const winetricksCmd = findCommandPath('winetricks')
+  if (!winetricksCmd) return { success: false, error: 'winetricks não encontrado no PATH' }
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...protonOverrides,
+    WINEPREFIX: winePrefix,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
+    STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,
+  }
+
+  console.log('[Proton] Opening winetricks GUI for prefix:', winePrefix)
+  const proc = spawn(winetricksCmd, ['--gui'], { env, stdio: 'ignore', detached: true })
+  proc.unref()
+  return { success: true }
+}
+
+/**
+ * Open winecfg targeting a game's Wine prefix.
+ */
+export function openWinecfg(prefixPath: string): { success: boolean; error?: string } {
+  if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
+
+  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
+  const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
+  const steamRoot = findSteamRoot()
+  const protonPath = findProtonRuntime()
+  const { runner, protonDir } = getProtonRunner(protonPath)
+
+  // Try using Proton's wine binary first, fallback to system wine
+  const protonOverrides = getProtonWineOverrides(protonDir)
+  const wineBin = protonOverrides.WINE as string | undefined
+  const winecfgCmd = wineBin ? path.join(path.dirname(wineBin), 'wine') : findCommandPath('wine')
+  if (!winecfgCmd) return { success: false, error: 'wine não encontrado. Instale o Wine ou configure um runtime Proton.' }
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...protonOverrides,
+    WINEPREFIX: winePrefix,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
+    STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,
+  }
+
+  console.log('[Proton] Opening winecfg for prefix:', winePrefix)
+  const proc = spawn(winecfgCmd, ['winecfg'], { env, stdio: 'ignore', detached: true })
+  proc.unref()
+  return { success: true }
+}
+
+/**
+ * Open Wine regedit targeting a game's Wine prefix.
+ */
+export function openRegedit(prefixPath: string): { success: boolean; error?: string } {
+  if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
+
+  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
+  const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
+  const steamRoot = findSteamRoot()
+  const protonPath = findProtonRuntime()
+  const { protonDir } = getProtonRunner(protonPath)
+
+  const protonOverrides = getProtonWineOverrides(protonDir)
+  const wineBin = protonOverrides.WINE as string | undefined
+  const wineCmd = wineBin ? path.join(path.dirname(wineBin), 'wine') : findCommandPath('wine')
+  if (!wineCmd) return { success: false, error: 'wine não encontrado. Instale o Wine ou configure um runtime Proton.' }
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...protonOverrides,
+    WINEPREFIX: winePrefix,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
+    STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,
+  }
+
+  console.log('[Proton] Opening regedit for prefix:', winePrefix)
+  const proc = spawn(wineCmd, ['regedit'], { env, stdio: 'ignore', detached: true })
+  proc.unref()
+  return { success: true }
+}
+
+/**
+ * Open Wine file manager (winefile) targeting a game's Wine prefix.
+ */
+export function openWineFileManager(prefixPath: string): { success: boolean; error?: string } {
+  if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
+
+  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
+  const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
+  const steamRoot = findSteamRoot()
+  const protonPath = findProtonRuntime()
+  const { protonDir } = getProtonRunner(protonPath)
+
+  const protonOverrides = getProtonWineOverrides(protonDir)
+  const wineBin = protonOverrides.WINE as string | undefined
+  const wineCmd = wineBin ? path.join(path.dirname(wineBin), 'wine') : findCommandPath('wine')
+  if (!wineCmd) return { success: false, error: 'wine não encontrado.' }
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...protonOverrides,
+    WINEPREFIX: winePrefix,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
+    STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,
+  }
+
+  console.log('[Proton] Opening Wine file manager for prefix:', winePrefix)
+  const proc = spawn(wineCmd, ['explorer'], { env, stdio: 'ignore', detached: true })
+  proc.unref()
+  return { success: true }
 }

@@ -1196,18 +1196,51 @@ body {
   gap: 18px;
 }
 
+.downloads-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.downloads-summary-item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px 12px;
+}
+
+.downloads-summary-item--error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.downloads-summary-label {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.downloads-summary-value {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 16px;
+  font-weight: 800;
+}
+
 .downloads-section {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 14px;
 }
 
 .downloads-section--active {
-  background:
-    radial-gradient(900px 260px at 25% 0%, rgba(59, 130, 246, 0.16), transparent 55%),
-    radial-gradient(700px 240px at 80% 40%, rgba(16, 185, 129, 0.10), transparent 60%),
-    rgba(255, 255, 255, 0.04);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.10), rgba(255, 255, 255, 0.04));
   border-color: rgba(59, 130, 246, 0.30);
 }
 
@@ -1261,7 +1294,7 @@ body {
 .downloads-graph {
   border: 1px solid rgba(255, 255, 255, 0.10);
   background: rgba(0, 0, 0, 0.22);
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -1294,13 +1327,10 @@ body {
 /* Downloads Hero (Hydra-like active card) */
 .downloads-hero {
   position: relative;
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background:
-    radial-gradient(900px 340px at 10% 10%, rgba(59, 130, 246, 0.22), transparent 55%),
-    radial-gradient(800px 320px at 90% 30%, rgba(16, 185, 129, 0.14), transparent 60%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.10));
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(0, 0, 0, 0.12));
   padding: 14px;
 }
 
@@ -1384,7 +1414,7 @@ body {
 .downloads-metric {
   border: 1px solid rgba(255, 255, 255, 0.10);
   background: rgba(0, 0, 0, 0.20);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 10px 10px;
 }
 
@@ -1408,7 +1438,7 @@ body {
 .downloads-hero-progress {
   border: 1px solid rgba(255, 255, 255, 0.10);
   background: rgba(0, 0, 0, 0.20);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 10px;
 }
 
@@ -1439,6 +1469,9 @@ body {
   .downloads-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .downloads-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .downloads-graph-empty {
@@ -1456,7 +1489,7 @@ body {
 .download-item {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 14px;
 }
 
@@ -1534,6 +1567,25 @@ body {
   transition: width 0.3s;
 }
 
+.download-progress-bar--extracting,
+.download-progress-bar--prefixing {
+  background: linear-gradient(90deg, #8b5cf6, #a855f7);
+}
+
+.download-progress-bar--paused,
+.download-progress-bar--queued,
+.download-progress-bar--pending {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.download-progress-bar--completed {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.download-progress-bar--error {
+  background: linear-gradient(90deg, #ef4444, #b91c1c);
+}
+
 .download-info {
   display: flex;
   justify-content: space-between;
@@ -1549,6 +1601,17 @@ body {
 
 .download-error {
   color: var(--danger);
+}
+
+.download-error--hero {
+  margin-top: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.24);
+  padding: 8px 10px;
+  color: #fecdd3;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .btn-icon {

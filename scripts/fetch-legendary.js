@@ -25,6 +25,10 @@ function httpGetJson(url, timeoutMs) {
         }
       },
       (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          httpGetJson(res.headers.location, timeoutMs).then(resolve, reject)
+          return
+        }
         let data = ''
         res.setEncoding('utf8')
         res.on('data', (c) => (data += c))

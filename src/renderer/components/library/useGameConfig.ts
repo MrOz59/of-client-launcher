@@ -10,8 +10,10 @@ const DEFAULT_PROTON_OPTIONS: ProtonOptions = {
   gamemode: false,
   mangohud: false,
   logging: false,
+  steamOverlay: true,
   launchArgs: '',
-  useGamescope: false
+  useGamescope: false,
+  wineDllOverrides: ''
 }
 
 export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
@@ -56,8 +58,10 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     gamemode: protonOptions.gamemode,
     mangohud: protonOptions.mangohud,
     logging: protonOptions.logging,
+    steamOverlay: protonOptions.steamOverlay !== false,
     launchArgs: protonOptions.launchArgs,
-    useGamescope: protonOptions.useGamescope
+    useGamescope: protonOptions.useGamescope,
+    wineDllOverrides: protonOptions.wineDllOverrides || undefined
   }), [protonOptions])
 
   const getConfigSnapshot = useCallback(() => {
@@ -92,8 +96,10 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
       gamemode: !!parsed.gamemode,
       mangohud: !!parsed.mangohud,
       logging: !!parsed.logging,
+      steamOverlay: parsed.steamOverlay !== false,
       launchArgs: parsed.launchArgs || '',
-      useGamescope: !!parsed.useGamescope
+      useGamescope: !!parsed.useGamescope,
+      wineDllOverrides: parsed.wineDllOverrides || ''
     })
   }, [])
 

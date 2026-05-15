@@ -36,13 +36,20 @@ import {
   isPidAlive,
   killProcessTreeBestEffort,
   readFileTailBytes,
+  readFileHeadTailBytes,
+  trimToHeadAndTailChars,
   trimToMaxChars,
+  compactProtonLogParts,
   extractInterestingProtonLog,
   findExecutableInDir,
   waitMs
 } from '../utils'
 import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
 import { ensureLegendaryAvailable } from '../legendary'
+
+const LIVE_LOG_MAX_CHARS = 300_000
+const LIVE_LOG_HEAD_CHARS = 80_000
+const LIVE_LOG_TAIL_CHARS = 220_000
 
 // ============================================================================
 // Local Helpers
@@ -62,6 +69,60 @@ function resolveWinePrefixPath(prefixPath: string): string {
   if (fs.existsSync(path.join(pfx, 'drive_c'))) return pfx
   if (fs.existsSync(path.join(prefixPath, 'drive_c'))) return prefixPath
   return prefixPath
+}
+
+function appendLiveLogChunk(record: RunningGameProc | undefined, chunk: string) {
+  if (!record || !chunk) return
+  const currentHead = record.liveLogHeadBuffer || ''
+  const headRoom = Math.max(0, LIVE_LOG_HEAD_CHARS - currentHead.length)
+  if (headRoom > 0) {
+    record.liveLogHeadBuffer = currentHead + chunk.slice(0, headRoom)
+    const overflow = chunk.slice(headRoom)
+    if (overflow) {
+      record.liveLogDroppedChars = (record.liveLogDroppedChars || 0) + overflow.length
+      record.liveLogTailBuffer = trimToMaxChars(`${record.liveLogTailBuffer || ''}${overflow}`, LIVE_LOG_TAIL_CHARS)
+    }
+  } else {
+    record.liveLogDroppedChars = (record.liveLogDroppedChars || 0) + chunk.length
+    record.liveLogTailBuffer = trimToMaxChars(`${record.liveLogTailBuffer || ''}${chunk}`, LIVE_LOG_TAIL_CHARS)
+  }
+  record.liveLogBuffer = trimToHeadAndTailChars(
+    `${record.liveLogHeadBuffer || ''}${record.liveLogDroppedChars ? `\n\n...[${record.liveLogDroppedChars} caracteres intermediarios omitidos]...\n\n` : ''}${record.liveLogTailBuffer || ''}`,
+    LIVE_LOG_MAX_CHARS
+  )
+  record.liveLogUpdatedAt = Date.now()
+}
+
+function buildProtonLogSnapshot(record?: RunningGameProc, logPath?: string | null, maxChars = LIVE_LOG_MAX_CHARS) {
+  const effectivePath = String(logPath || record?.protonLogPath || '').trim() || null
+  const processHead = String(record?.liveLogHeadBuffer || record?.liveLogBuffer || '')
+  const processTail = String(record?.liveLogTailBuffer || '')
+  const fileParts = effectivePath ? readFileHeadTailBytes(effectivePath, 180 * 1024, 320 * 1024) : null
+  const sections: string[] = []
+
+  if (processHead || processTail) {
+    const launcherParts: string[] = []
+    if (processHead) launcherParts.push(`=== Launcher stdout/stderr: inicio preservado ===\n${processHead.trimEnd()}`)
+    if (record?.liveLogDroppedChars) launcherParts.push(`...[${record.liveLogDroppedChars} caracteres intermediarios omitidos]...`)
+    if (processTail) launcherParts.push(`=== Launcher stdout/stderr: recente ===\n${processTail.trimEnd()}`)
+    sections.push(launcherParts.join('\n\n'))
+  }
+
+  if (fileParts) {
+    const compacted = compactProtonLogParts(fileParts, Math.max(80_000, Math.floor(maxChars * 0.72)))
+    if (compacted) sections.push(`=== Proton log file${effectivePath ? ` (${effectivePath})` : ''} ===\n${compacted}`)
+  }
+
+  return {
+    success: true,
+    text: trimToHeadAndTailChars(sections.join('\n\n'), maxChars),
+    live: !!record?.pid && isPidAlive(record.pid),
+    logPath: effectivePath,
+    pid: record?.pid,
+    updatedAt: record?.liveLogUpdatedAt || Date.now(),
+    hasProcessOutput: !!(processHead || processTail),
+    hasProtonLog: !!fileParts
+  }
 }
 
 function findEosOverlayInstallPath(): string | null {
@@ -228,6 +289,134 @@ async function waitForPidExit(pid: number, intervalMs = 1500): Promise<void> {
   while (isPidAlive(pid)) {
     await waitMs(intervalMs)
   }
+}
+
+function fileSizeSafe(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size || 0
+  } catch {
+    return 0
+  }
+}
+
+function hasOnlineFixBesideExe(exePath: string): boolean {
+  try {
+    const dir = path.dirname(exePath)
+    return fs.existsSync(path.join(dir, 'OnlineFix.ini')) ||
+      fs.existsSync(path.join(dir, 'onlinefix.ini')) ||
+      fs.existsSync(path.join(dir, 'OnlineFix64.dll')) ||
+      fs.existsSync(path.join(dir, 'OnlineFix.dll'))
+  } catch {
+    return false
+  }
+}
+
+function shouldPreferAutoExecutable(currentExe: string, candidateExe: string): boolean {
+  if (!currentExe || !candidateExe) return false
+  if (path.resolve(currentExe) === path.resolve(candidateExe)) return false
+
+  const currentLower = currentExe.toLowerCase()
+  const candidateLower = candidateExe.toLowerCase()
+  const currentSize = fileSizeSafe(currentExe)
+  const candidateSize = fileSizeSafe(candidateExe)
+
+  const currentIsTinyStub = currentSize > 0 && currentSize < 2 * 1024 * 1024
+  const candidateIsRealGame = candidateSize > 10 * 1024 * 1024
+  const candidateLooksUnreal =
+    candidateLower.includes('-win64-shipping.exe') ||
+    candidateLower.includes(`${path.sep}binaries${path.sep}win64${path.sep}`)
+  const currentLooksUnreal =
+    currentLower.includes('-win64-shipping.exe') ||
+    currentLower.includes(`${path.sep}binaries${path.sep}win64${path.sep}`)
+
+  if (hasOnlineFixBesideExe(candidateExe) && !hasOnlineFixBesideExe(currentExe)) return true
+  if (currentIsTinyStub && candidateIsRealGame && candidateLooksUnreal) return true
+  if (!currentLooksUnreal && candidateLooksUnreal && candidateSize > currentSize * 4) return true
+  return false
+}
+
+function gameDesktopId(gameUrl: string, title?: string | null): string {
+  const id = extractGameIdFromUrl(gameUrl) || slugify(title || gameUrl)
+  return `voidlauncher-game-${id}`.replace(/[^a-zA-Z0-9_.-]/g, '-')
+}
+
+function writeGameDesktopEntry(opts: {
+  gameUrl: string
+  title?: string | null
+  exePath?: string | null
+  appId?: string | null
+  icon?: string | null
+}) {
+  if (process.platform !== 'linux') return
+  try {
+    const desktopId = gameDesktopId(opts.gameUrl, opts.title)
+    const applicationsDir = path.join(os.homedir(), '.local', 'share', 'applications')
+    fs.mkdirSync(applicationsDir, { recursive: true })
+
+    const exeBase = opts.exePath ? path.basename(opts.exePath, path.extname(opts.exePath)) : desktopId
+    const startupClass = opts.appId && /^\d+$/.test(String(opts.appId))
+      ? `steam_app_${opts.appId}`
+      : exeBase
+
+    const icon = String(opts.icon || '').startsWith('file://')
+      ? decodeURIComponent(String(opts.icon).replace(/^file:\/\//, ''))
+      : 'voidlauncher'
+
+    const appImage = String(process.env.APPIMAGE || '').trim()
+    const execPath = appImage || process.execPath
+    const safeExec = execPath.replace(/"/g, '\\"')
+    const safeUrl = opts.gameUrl.replace(/"/g, '\\"')
+    const content = [
+      '[Desktop Entry]',
+      'Type=Application',
+      `Name=${opts.title || 'VoidLauncher Game'}`,
+      `Exec="${safeExec}" --launch-game-url "${safeUrl}"`,
+      `Icon=${icon}`,
+      `StartupWMClass=${startupClass}`,
+      `X-KDE-StartupWMClass=${startupClass}`,
+      `X-VoidLauncher-GameId=${desktopId}`,
+      'NoDisplay=true',
+      'Categories=Game;',
+      ''
+    ].join('\n')
+    fs.writeFileSync(path.join(applicationsDir, `${desktopId}.desktop`), content)
+  } catch (err) {
+    console.warn('[Launch] Failed to write per-game desktop entry:', err)
+  }
+}
+
+function withGameWindowIdentity(env: NodeJS.ProcessEnv, desktopId: string): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...env }
+  delete next.APPIMAGE
+  delete next.APPDIR
+  delete next.ARGV0
+  delete next.OWD
+  delete next.CHROME_DESKTOP
+  delete next.DESKTOP_STARTUP_ID
+  delete next.GIO_LAUNCHED_DESKTOP_FILE
+  delete next.GIO_LAUNCHED_DESKTOP_FILE_PID
+  delete next.XDG_ACTIVATION_TOKEN
+  next.SDL_VIDEO_X11_WMCLASS = desktopId
+  next.RESOURCE_NAME = desktopId
+  return next
+}
+
+function getTrackedGamePids(entry?: RunningGameProc): number[] {
+  const pids = new Set<number>()
+  if (entry?.pid && isPidAlive(entry.pid)) pids.add(entry.pid)
+  const childPid = Number(entry?.child?.pid || 0)
+  if (childPid && isPidAlive(childPid)) pids.add(childPid)
+  if (entry?.installDir) {
+    for (const pid of listLinuxHandoffPids({
+      installDir: entry.installDir,
+      exePath: entry.exePath,
+      prefixPath: entry.prefixPath,
+      excludePids: []
+    })) {
+      if (pid && isPidAlive(pid)) pids.add(pid)
+    }
+  }
+  return Array.from(pids)
 }
 
 function isEosOverlayPathValid(p: string | null): boolean {
@@ -506,6 +695,18 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       // Resolve exe path relative to install dir if not absolute
       exePath = path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath)
 
+      const bestExe = installDir ? findExecutableInDir(installDir) : null
+      if (bestExe && fs.existsSync(bestExe) && shouldPreferAutoExecutable(exePath, bestExe)) {
+        console.warn('[Launch] ⚠️ Stored executable looks like a stub; switching to better candidate:', {
+          from: exePath,
+          to: bestExe,
+          fromSize: fileSizeSafe(exePath),
+          toSize: fileSizeSafe(bestExe)
+        })
+        exePath = bestExe
+        updateGameInfo(gameUrl, { executable_path: exePath })
+      }
+
       console.log('[Launch] 🎮 Executable path:', exePath)
       console.log('[Launch] 🎮 Executable exists:', fs.existsSync(exePath))
 
@@ -518,9 +719,38 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       let child: any
       let stderrTail = ''
       let protonLogPath: string | undefined
+      let liveLogBuffer = ''
+      let liveLogHeadBuffer = ''
+      let liveLogTailBuffer = ''
+      let liveLogDroppedChars = 0
+
+      const pushLiveLog = (source: string, text: string) => {
+        if (!text) return
+        const formatted = `[${new Date().toISOString()}] [${source}] ${String(text).replace(/\r\n/g, '\n')}${String(text).endsWith('\n') ? '' : '\n'}`
+        const headRoom = Math.max(0, LIVE_LOG_HEAD_CHARS - liveLogHeadBuffer.length)
+        if (headRoom > 0) {
+          liveLogHeadBuffer += formatted.slice(0, headRoom)
+          const overflow = formatted.slice(headRoom)
+          if (overflow) {
+            liveLogDroppedChars += overflow.length
+            liveLogTailBuffer = trimToMaxChars(`${liveLogTailBuffer}${overflow}`, LIVE_LOG_TAIL_CHARS)
+          }
+        } else {
+          liveLogDroppedChars += formatted.length
+          liveLogTailBuffer = trimToMaxChars(`${liveLogTailBuffer}${formatted}`, LIVE_LOG_TAIL_CHARS)
+        }
+        liveLogBuffer = trimToHeadAndTailChars(
+          `${liveLogHeadBuffer}${liveLogDroppedChars ? `\n\n...[${liveLogDroppedChars} caracteres intermediarios omitidos]...\n\n` : ''}${liveLogTailBuffer}`,
+          LIVE_LOG_MAX_CHARS
+        )
+        const record = runningGames.get(gameUrl)
+        appendLiveLogChunk(record, formatted)
+      }
       
       // Generate unique session ID for overlay IPC (used by both Proton and native)
       const overlaySessionId = `game_${extractGameIdFromUrl(gameUrl)}_${Date.now()}`
+      const desktopId = gameDesktopId(gameUrl, game.title)
+      let activePrefixPath: string | undefined
 
       if (isLinux() && exePath.toLowerCase().endsWith('.exe')) {
         // Linux + Windows exe = use Proton
@@ -566,15 +796,20 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
         console.log('[Launch] 📂 Prefix path:', prefixPath)
         console.log('[Launch] 📂 Prefix exists:', fs.existsSync(prefixPath))
+        activePrefixPath = prefixPath
 
         // Detect OnlineFix overlay IDs (Steam vs Epic)
         let iniSteamAppId: string | null = null
+        let iniOverlayAppId: string | null = null
+        let iniRealAppId: string | null = null
         let epicProductId: string | null = null
         try {
           const found = await findAndReadOnlineFixIni(installDir)
           if (found?.content) {
             const ids = extractOnlineFixOverlayIds(found.content)
-            iniSteamAppId = ids.steamAppId || null
+            iniSteamAppId = ids.fakeAppId || ids.steamAppId || ids.realAppId || null
+            iniOverlayAppId = ids.fakeAppId || ids.steamAppId || ids.realAppId || null
+            iniRealAppId = ids.realAppId || null
             epicProductId = ids.epicProductId || null
             if (iniSteamAppId) {
               console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', iniSteamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
@@ -598,12 +833,22 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         }
         const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
         const steamAppId =
-          normalizeSteamId(game?.steam_app_id as string | null) ||
           normalizeSteamId(iniSteamAppId) ||
+          normalizeSteamId(game?.steam_app_id as string | null) ||
           normalizeSteamId(detectedSteamAppId)
+        const hasSteamIdentity = Boolean(iniOverlayAppId || iniSteamAppId || steamAppId)
+        const overlayGameId = normalizeSteamId(iniOverlayAppId) || steamAppId || (hasSteamIdentity ? '480' : null)
         const isEpic = Boolean(epicProductId)
-        const enableSteamOverlay = !isEpic && Boolean(steamAppId)
+        const enableSteamOverlay = !isEpic && protonOpts.steamOverlay !== false && Boolean(overlayGameId || steamAppId)
         const enableEosOverlay = isEpic
+
+        writeGameDesktopEntry({
+          gameUrl,
+          title: game.title,
+          exePath,
+          appId: normalizeSteamId(iniRealAppId) || normalizeSteamId(detectedSteamAppId) || normalizeSteamId(steamAppId),
+          icon: game.image_url || null
+        })
 
         // Run known redistributables
         try {
@@ -632,7 +877,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
           [],
           slug,
           game.proton_runtime || undefined,
-          { ...protonOpts, steamAppId: steamAppId || undefined, installDir, enableSteamOverlay, enableEosOverlay: eosOverlayEnabled },
+          { ...protonOpts, steamAppId: steamAppId || undefined, overlayGameId: overlayGameId || undefined, installDir, enableSteamOverlay, enableEosOverlay: eosOverlayEnabled },
           prefixPath
         )
 
@@ -659,12 +904,11 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.log('[Launch] 📁 Working directory:', installDir)
 
         // Build environment for game launch
-        const gameEnv: NodeJS.ProcessEnv = { 
-          ...process.env, 
+        const gameEnv: NodeJS.ProcessEnv = withGameWindowIdentity({
           ...launch.env,
           // Session ID for notification routing
           VOIDLAUNCHER_SESSION: overlaySessionId,
-        }
+        }, desktopId)
         console.log('[Launch] 🔑 Session:', overlaySessionId)
 
         // Check if Gamescope mode is enabled for in-game notifications
@@ -700,21 +944,45 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
         try {
           const logDir = String((launch.env as any)?.PROTON_LOG_DIR || '')
-          const appId = String((launch.env as any)?.SteamAppId || (launch.env as any)?.STEAM_COMPAT_APP_ID || '')
+          const appId = String((launch.env as any)?.SteamAppId || (launch.env as any)?.STEAM_COMPAT_APP_ID || (launch.env as any)?.SteamOverlayGameId || '')
           if (logDir && appId) protonLogPath = path.join(logDir, `steam-${appId}.log`)
         } catch {}
 
+        pushLiveLog('launcher', [
+          `cmd: ${finalCmd}`,
+          `args: ${finalArgs.join(' ')}`,
+          `cwd: ${installDir}`,
+          `pid: pending`,
+          `protonLogPath: ${protonLogPath || 'none'}`,
+          `SteamAppId: ${String(gameEnv.SteamAppId || gameEnv.STEAM_COMPAT_APP_ID || '')}`,
+          `SteamGameId: ${String((launch.env as any)?.SteamGameId || '')}`,
+          `SteamOverlayGameId: ${String((launch.env as any)?.SteamOverlayGameId || '')}`,
+          `DesktopId: ${desktopId}`,
+          `WINEPREFIX: ${String(gameEnv.WINEPREFIX || '')}`,
+          `WINEDLLOVERRIDES: ${String(gameEnv.WINEDLLOVERRIDES || '')}`,
+          `LD_PRELOAD: ${String(gameEnv.LD_PRELOAD || '')}`,
+          `VK_INSTANCE_LAYERS: ${String(gameEnv.VK_INSTANCE_LAYERS || '')}`,
+          `VK_ADD_LAYER_PATH: ${String(gameEnv.VK_ADD_LAYER_PATH || '')}`,
+          `ENABLE_VK_LAYER_VALVE_steam_overlay_1: ${String(gameEnv.ENABLE_VK_LAYER_VALVE_steam_overlay_1 || '')}`,
+          ''
+        ].join('\n'))
+
         child.stdout?.on('data', (data: Buffer) => {
-          console.log('[Game stdout]', data.toString())
+          const text = data.toString()
+          console.log('[Game stdout]', text)
+          pushLiveLog('stdout', text)
         })
 
         child.stderr?.on('data', (data: Buffer) => {
-          console.error('[Game stderr]', data.toString())
-          stderrTail = (stderrTail + data.toString()).slice(-8192)
+          const text = data.toString()
+          console.error('[Game stderr]', text)
+          pushLiveLog('stderr', text)
+          stderrTail = (stderrTail + text).slice(-8192)
         })
 
         child.on('error', (err: Error) => {
           console.error('[Launch] ❌ Spawn error:', err)
+          pushLiveLog('launcher-error', err.message || String(err))
           sendGameLaunchStatus({ gameUrl, status: 'error', message: err.message || String(err), stderrTail, protonLogPath })
         })
 
@@ -848,26 +1116,48 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
           // Session ID for notification routing
           VOIDLAUNCHER_SESSION: overlaySessionId,
         }
+        const nativeEnv = withGameWindowIdentity(gameEnv, desktopId)
         console.log('[Launch] 🔑 Session:', overlaySessionId)
 
+        writeGameDesktopEntry({
+          gameUrl,
+          title: game.title,
+          exePath,
+          appId: game.steam_app_id || null,
+          icon: game.image_url || null
+        })
+
         child = spawn(exePath, [], {
-          env: gameEnv,
+          env: nativeEnv,
           cwd: installDir,
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe']
         })
 
+        pushLiveLog('launcher', [
+          `cmd: ${exePath}`,
+          `args: `,
+          `cwd: ${installDir}`,
+          `pid: pending`,
+          ''
+        ].join('\n'))
+
         child.stdout?.on('data', (data: Buffer) => {
-          console.log('[Game stdout]', data.toString())
+          const text = data.toString()
+          console.log('[Game stdout]', text)
+          pushLiveLog('stdout', text)
         })
 
         child.stderr?.on('data', (data: Buffer) => {
-          console.error('[Game stderr]', data.toString())
-          stderrTail = (stderrTail + data.toString()).slice(-8192)
+          const text = data.toString()
+          console.error('[Game stderr]', text)
+          pushLiveLog('stderr', text)
+          stderrTail = (stderrTail + text).slice(-8192)
         })
 
         child.on('error', (err: Error) => {
           console.error('[Launch] ❌ Spawn error:', err)
+          pushLiveLog('launcher-error', err.message || String(err))
           sendGameLaunchStatus({ gameUrl, status: 'error', message: err.message || String(err), stderrTail })
         })
 
@@ -934,7 +1224,22 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       }
 
       if (child?.pid) {
-        runningGames.set(gameUrl, { pid: child.pid, child, protonLogPath, startedAt: Date.now(), overlaySessionId })
+        runningGames.set(gameUrl, {
+          pid: child.pid,
+          child,
+          protonLogPath,
+          startedAt: Date.now(),
+          overlaySessionId,
+          installDir,
+          exePath,
+          prefixPath: activePrefixPath,
+          liveLogBuffer,
+          liveLogHeadBuffer,
+          liveLogTailBuffer,
+          liveLogDroppedChars,
+          liveLogUpdatedAt: Date.now()
+        })
+        pushLiveLog('launcher', `childPid: ${child.pid}`)
 
         // Set current game PID for notification routing
         setCurrentGamePid(child.pid)
@@ -1007,7 +1312,8 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       child.unref()
       console.log('[Launch] ✅ Game process started successfully (PID:', child.pid, ')')
       console.log('[Launch] ========================================')
-      sendGameLaunchStatus({ gameUrl, status: 'running', pid: child.pid, protonLogPath })
+      const entryForStatus = runningGames.get(gameUrl)
+      sendGameLaunchStatus({ gameUrl, status: 'running', pid: entryForStatus?.pid || child.pid, protonLogPath, message: 'Em execução' })
 
       return { success: true }
 
@@ -1022,36 +1328,55 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
   ipcMain.handle('stop-game', async (_event, gameUrl: string, force?: boolean) => {
     try {
       const entry = runningGames.get(gameUrl)
-      const pid = entry?.pid
-      if (!pid || !isPidAlive(pid)) {
+      const initialPids = getTrackedGamePids(entry)
+      if (!entry || initialPids.length === 0) {
         try { runningGames.delete(gameUrl) } catch {}
         try { achievementsManager.stopWatching(gameUrl) } catch {}
         return { success: false, error: 'Jogo não está em execução' }
       }
 
-      sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Parando jogo...', pid })
+      sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Parando jogo...', pid: entry.pid })
 
       // First try a graceful stop
-      killProcessTreeBestEffort(pid, 'SIGTERM')
+      for (const pid of initialPids) killProcessTreeBestEffort(pid, 'SIGTERM')
 
       const waitMs = async (ms: number) => await new Promise<void>(r => setTimeout(r, ms))
       await waitMs(2500)
 
-      if (force === true && isPidAlive(pid)) {
-        killProcessTreeBestEffort(pid, 'SIGKILL')
-        await waitMs(800)
-      } else if (isPidAlive(pid)) {
-        killProcessTreeBestEffort(pid, 'SIGKILL')
+      let remaining = getTrackedGamePids(entry)
+      if (force === true || remaining.length > 0) {
+        for (const pid of remaining) killProcessTreeBestEffort(pid, 'SIGKILL')
         await waitMs(800)
       }
 
-      if (!isPidAlive(pid)) {
+      remaining = getTrackedGamePids(entry)
+      if (remaining.length === 0) {
         try { runningGames.delete(gameUrl) } catch {}
         try { achievementsManager.stopWatching(gameUrl) } catch {}
+        setCurrentGamePid(null)
+        sendGameLaunchStatus({ gameUrl, status: 'exited', code: 0, signal: 'SIGTERM', message: 'Jogo parado pelo launcher', protonLogPath: entry.protonLogPath })
         return { success: true }
       }
 
-      return { success: false, error: `Falha ao encerrar processo (PID ${pid})` }
+      sendGameLaunchStatus({ gameUrl, status: 'running', pid: remaining[0], message: 'Em execução', protonLogPath: entry.protonLogPath })
+      return { success: false, error: `Falha ao encerrar processo(s): ${remaining.join(', ')}` }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
+  ipcMain.handle('get-proton-log-snapshot', async (_event, payload?: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => {
+    try {
+      const gameUrl = typeof payload?.gameUrl === 'string' ? payload.gameUrl.trim() : ''
+      const logPath = typeof payload?.logPath === 'string' ? payload.logPath.trim() : ''
+      const maxChars = Math.max(8_192, Math.min(Number(payload?.maxChars) || LIVE_LOG_MAX_CHARS, 1_000_000))
+      const record = gameUrl ? runningGames.get(gameUrl) : undefined
+
+      if (!record && !logPath) {
+        return { success: false, error: 'Nenhum log disponível para este jogo.' }
+      }
+
+      return buildProtonLogSnapshot(record, logPath || undefined, maxChars)
     } catch (err: any) {
       return { success: false, error: err?.message || String(err) }
     }
@@ -1060,9 +1385,10 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
   ipcMain.handle('is-game-running', async (_event, gameUrl: string) => {
     try {
       const entry = runningGames.get(gameUrl)
-      const pid = entry?.pid
-      if (!pid) return { running: false }
-      return { running: isPidAlive(pid), pid, startedAt: entry?.startedAt }
+      const pids = getTrackedGamePids(entry)
+      if (!entry || pids.length === 0) return { running: false }
+      if (entry.pid !== pids[0]) runningGames.set(gameUrl, { ...entry, pid: pids[0] })
+      return { running: true, pid: pids[0], startedAt: entry?.startedAt }
     } catch {
       return { running: false }
     }

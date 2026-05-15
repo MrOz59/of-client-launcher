@@ -13,32 +13,74 @@ export {
   type TorrentProgress
 } from './torrentLibtorrentRpc'
 
+export type HttpDownloadProgress = {
+  percent: number
+  downloaded: number
+  total: number
+  speed: number
+  eta: number
+}
+
 export async function downloadFile(
   url: string,
   destPath: string,
-  onProgress?: (percent: number) => void,
+  onProgress?: (percent: number, details?: HttpDownloadProgress) => void,
   headers?: Record<string, string>
 ) {
-  const writer = fs.createWriteStream(destPath)
-  const res = await axios.get(url, {
-    responseType: 'stream',
-    headers: headers || {}
-  })
-  const total = parseInt(res.headers['content-length'] || '0', 10)
+  fs.mkdirSync(path.dirname(destPath), { recursive: true })
+  const partialPath = `${destPath}.part`
+  const startedAt = Date.now()
+  let writer: fs.WriteStream | null = null
 
-  let loaded = 0
-  res.data.on('data', (chunk: any) => {
-    loaded += chunk.length
+  try {
+    try { fs.rmSync(partialPath, { force: true }) } catch {}
+
+    const res = await axios.get(url, {
+      responseType: 'stream',
+      headers: headers || {},
+      timeout: 30000,
+      maxRedirects: 5,
+      validateStatus: status => status >= 200 && status < 300
+    })
+    const total = parseInt(res.headers['content-length'] || '0', 10)
+
+    writer = fs.createWriteStream(partialPath)
+    let loaded = 0
+    let lastEmitAt = 0
+
+    res.data.on('data', (chunk: any) => {
+      loaded += chunk.length
+      if (!onProgress || total <= 0) return
+
+      const now = Date.now()
+      if (now - lastEmitAt < 250 && loaded < total) return
+      lastEmitAt = now
+
+      const elapsed = Math.max(0.001, (now - startedAt) / 1000)
+      const speed = loaded / elapsed
+      const remaining = Math.max(0, total - loaded)
+      const eta = speed > 0 ? remaining / speed : 0
+      const percent = Math.max(0, Math.min(100, (loaded / total) * 100))
+      onProgress(percent, { percent, downloaded: loaded, total, speed, eta })
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      res.data.on('error', reject)
+      writer?.on('finish', resolve)
+      writer?.on('error', reject)
+      res.data.pipe(writer as fs.WriteStream)
+    })
+
+    try { fs.rmSync(destPath, { force: true }) } catch {}
+    fs.renameSync(partialPath, destPath)
     if (onProgress && total > 0) {
-      onProgress((loaded / total) * 100)
+      onProgress(100, { percent: 100, downloaded: total, total, speed: 0, eta: 0 })
     }
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    res.data.pipe(writer)
-    writer.on('finish', resolve)
-    writer.on('error', reject)
-  })
+  } catch (err) {
+    try { writer?.destroy() } catch {}
+    try { fs.rmSync(partialPath, { force: true }) } catch {}
+    throw err
+  }
 }
 
 /**

@@ -15,6 +15,13 @@ export interface TorrentProgress {
   total: number
   timeRemaining: number
   infoHash?: string
+  peers?: number
+  seeds?: number
+  state?: string
+  statusMessage?: string
+  hasMetadata?: boolean
+  paused?: boolean
+  errorMessage?: string | null
 }
 
 type RpcRequest = { id: number; method: string; params?: any }
@@ -30,7 +37,7 @@ class LibtorrentUnavailableError extends Error {
 
 type RpcClient = {
   start(): Promise<void>
-  call(method: string, params?: any): Promise<any>
+  call(method: string, params?: any, timeoutMs?: number): Promise<any>
 }
 
 type ActiveTorrent = {
@@ -285,7 +292,7 @@ class LibtorrentRpcClient {
     return this.starting
   }
 
-  async call(method: string, params?: any): Promise<any> {
+  async call(method: string, params?: any, timeoutMs = 30000): Promise<any> {
     await this.start()
     if (!this.proc) throw new LibtorrentUnavailableError('sidecar not running')
 
@@ -295,11 +302,29 @@ class LibtorrentRpcClient {
     const payload = JSON.stringify(req)
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const cleanup = () => {
+        if (timer) { clearTimeout(timer); timer = null }
+        this.pending.delete(id)
+      }
+
+      this.pending.set(id, {
+        resolve: (v: any) => { cleanup(); resolve(v) },
+        reject: (e: any) => { cleanup(); reject(e) }
+      })
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          timer = null
+          this.pending.delete(id)
+          reject(new Error(`RPC call '${method}' timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+      }
+
       try {
         this.proc!.stdin.write(payload + '\n')
       } catch (e) {
-        this.pending.delete(id)
+        cleanup()
         reject(e)
       }
     })
@@ -491,7 +516,7 @@ class TransmissionRpcClient {
     return this.starting
   }
 
-  async call(method: string, params?: any): Promise<any> {
+  async call(method: string, params?: any, _timeoutMs?: number): Promise<any> {
     await this.start()
 
     const p = params || {}
@@ -561,6 +586,8 @@ class TransmissionRpcClient {
             'sizeWhenDone',
             'eta',
             'isFinished',
+            'status',
+            'errorString',
             'peersConnected',
             'seeders',
             'leechers'
@@ -578,6 +605,29 @@ class TransmissionRpcClient {
       const peers = Number(t.leechers ?? t.peersConnected ?? 0)
       const seeds = Number(t.seeders ?? 0)
       const isFinished = Boolean(t.isFinished)
+      const statusCode = Number(t.status ?? 0)
+      const stateNames: Record<number, string> = {
+        0: 'stopped',
+        1: 'check_wait',
+        2: 'checking',
+        3: 'download_wait',
+        4: 'downloading',
+        5: 'seed_wait',
+        6: 'seeding'
+      }
+      const state = stateNames[statusCode] || String(statusCode)
+      const errorMessage = String(t.errorString || '').trim()
+      const statusMessage = errorMessage
+        ? `Erro: ${errorMessage}`
+        : isFinished
+          ? 'Concluído'
+          : statusCode === 0
+            ? 'Pausado'
+            : peers <= 0 && downloadRate <= 0
+              ? 'Conectando aos peers'
+              : downloadRate <= 0
+                ? 'Aguardando peças'
+                : 'Baixando'
 
       return {
         progress: percentDone * 100,
@@ -587,7 +637,12 @@ class TransmissionRpcClient {
         eta,
         peers,
         seeds,
-        isFinished
+        isFinished,
+        state,
+        statusMessage,
+        paused: statusCode === 0,
+        hasMetadata: totalWanted > 0,
+        errorMessage: errorMessage || null
       }
     }
 
@@ -622,9 +677,9 @@ class FallbackRpcClient implements RpcClient {
     this.selected = this.fallback
   }
 
-  async call(method: string, params?: any): Promise<any> {
+  async call(method: string, params?: any, timeoutMs?: number): Promise<any> {
     await this.start()
-    return this.selected!.call(method, params)
+    return this.selected!.call(method, params, timeoutMs)
   }
 }
 
@@ -664,11 +719,10 @@ export async function downloadTorrent(
     unregisterActive(record)
   }
 
-  const finish = (err?: Error) => {
+  const finish = () => {
     if (finished) return
     finished = true
     cleanup()
-    if (err) throw err
   }
 
   registerActive(record)
@@ -706,6 +760,16 @@ export async function downloadTorrent(
 
   // Poll status and emit progress.
   await new Promise<void>((resolve, reject) => {
+    const settle = (err?: Error) => {
+      if (finished) return
+      finished = true
+      cleanup()
+      if (err) reject(err)
+      else resolve()
+    }
+
+    record.finish = settle
+
     const tick = async () => {
       try {
         await rejectIfCancelled()
@@ -721,7 +785,7 @@ export async function downloadTorrent(
         const normalizedProgress =
           total > 0 && Number.isFinite(downloaded)
             ? Math.max(0, Math.min(100, (downloaded / total) * 100))
-            : progress
+            : Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0))
         const downloadSpeed = Number(st?.downloadRate ?? 0)
         const timeRemaining = Number(st?.eta ?? 0)
         const peers = Number(st?.peers ?? 0)
@@ -731,23 +795,26 @@ export async function downloadTorrent(
           progress: normalizedProgress,
           downloaded,
           total,
-          downloadSpeed,
-          timeRemaining,
+          downloadSpeed: Number.isFinite(downloadSpeed) ? Math.max(0, downloadSpeed) : 0,
+          timeRemaining: Number.isFinite(timeRemaining) ? Math.max(0, timeRemaining) : 0,
           infoHash,
           peers: Number.isFinite(peers) ? peers : 0,
-          seeds: Number.isFinite(seeds) ? seeds : 0
+          seeds: Number.isFinite(seeds) ? seeds : 0,
+          state: typeof st?.state === 'string' ? st.state : undefined,
+          statusMessage: typeof st?.statusMessage === 'string' ? st.statusMessage : undefined,
+          hasMetadata: typeof st?.hasMetadata === 'boolean' ? st.hasMetadata : undefined,
+          paused: typeof st?.paused === 'boolean' ? st.paused : undefined,
+          errorMessage: typeof st?.errorMessage === 'string' ? st.errorMessage : undefined
         }
-        onProgress?.(progress, details)
+        onProgress?.(normalizedProgress, details)
 
         const done = Boolean(st?.isFinished) || (total > 0 && downloaded >= total)
         if (done) {
           try { await rpc.call('pause', { torrentId: infoHash }) } catch {}
-          cleanup()
-          resolve()
+          settle()
         }
       } catch (err) {
-        cleanup()
-        reject(err)
+        settle(err instanceof Error ? err : new Error(String(err)))
       }
     }
 

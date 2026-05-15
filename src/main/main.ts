@@ -110,7 +110,9 @@ import {
   findExecutableInDir,
   slugify,
   getDirectorySizeBytes,
-  extractSteamAppIdFromIniText
+  extractSteamAppIdFromIniText,
+  sanitizeVersionText,
+  isKnownUnknownVersion
 } from './utils/index.js'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
@@ -158,8 +160,9 @@ async function resolveGameVersion(options: {
   const { providedVersion, filename, title, gameUrl } = options
 
   // 1. Use provided version if valid
-  if (providedVersion && providedVersion !== 'unknown' && providedVersion.trim()) {
-    return providedVersion.trim()
+  if (!isKnownUnknownVersion(providedVersion)) {
+    const sanitized = sanitizeVersionText(providedVersion)
+    if (sanitized) return sanitized
   }
 
   // 2. Try to parse from filename
@@ -199,8 +202,11 @@ async function resolveGameVersion(options: {
     try {
       const game = getGame(gameUrl)
       if (game?.latest_version && game.latest_version !== 'unknown') {
-        console.log('[resolveGameVersion] Using existing latest_version:', game.latest_version)
-        return game.latest_version
+        const sanitized = sanitizeVersionText(game.latest_version)
+        if (sanitized) {
+          console.log('[resolveGameVersion] Using existing latest_version:', sanitized)
+          return sanitized
+        }
       }
     } catch {}
   }
@@ -375,8 +381,11 @@ async function runQueuedUpdate(gameUrl: string) {
       downloaded: (details as any)?.downloaded || 0,
       total: (details as any)?.total || 0,
       eta: (details as any)?.timeRemaining || 0,
-        peers: (details as any)?.peers,
-        seeds: (details as any)?.seeds,
+      peers: (details as any)?.peers,
+      seeds: (details as any)?.seeds,
+      statusMessage: (details as any)?.statusMessage,
+      agentState: (details as any)?.state,
+      hasMetadata: (details as any)?.hasMetadata,
       infoHash: (details as any)?.infoHash || torrentUrl,
       stage: (details as any)?.stage || 'download',
       extractProgress: (details as any)?.extractProgress,
@@ -444,6 +453,9 @@ type RunningGameProc = {
   child: any
   protonLogPath?: string
   startedAt?: number
+  overlaySessionId?: string
+  liveLogBuffer?: string
+  liveLogUpdatedAt?: number
 }
 
 const runningGames = new Map<string, RunningGameProc>()
@@ -1042,6 +1054,9 @@ async function handleExternalDownload(url: string) {
         eta: details?.timeRemaining || 0,
         peers: (details as any)?.peers,
         seeds: (details as any)?.seeds,
+        statusMessage: (details as any)?.statusMessage,
+        agentState: (details as any)?.state,
+        hasMetadata: (details as any)?.hasMetadata,
         infoHash: details?.infoHash || torrentUrl,
         stage: details?.stage || 'download',
         extractProgress: (details as any)?.extractProgress,
@@ -1351,11 +1366,14 @@ app.whenReady().then(async () => {
       if (resumed) return
       resumed = true
       // Small delay to keep first paint snappy.
-      setTimeout(() => {
-        // First, clean up orphaned downloads before resuming
-        cleanupOrphanedDownloads().catch((err) => {
+      setTimeout(async () => {
+        // First, clean up orphaned downloads before resuming (must complete before resume starts)
+        try {
+          await cleanupOrphanedDownloads()
+        } catch (err) {
           console.warn('Failed to cleanup orphaned downloads', err)
-        })
+        }
+        // Only resume after cleanup is done to avoid race conditions
         resumeActiveDownloads().catch((err) => {
           console.warn('Failed to resume active downloads', err)
         })
@@ -1576,6 +1594,31 @@ async function resumeActiveDownloads() {
       }
     }
 
+    const hasCompletionMarker = (d: any, installPath: string): boolean => {
+      const p = String(installPath || '').trim()
+      if (!p) return false
+      const abs = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p)
+      const createdAt = d?.created_at ? new Date(d.created_at).getTime() : 0
+      for (const marker of ['.of_extracted', '.of_update_extracted']) {
+        try {
+          const markerPath = path.join(abs, marker)
+          if (!fs.existsSync(markerPath)) continue
+          if (!createdAt) return true
+          const markerTime = fs.statSync(markerPath).mtimeMs
+          if (markerTime >= createdAt - 1000) return true
+        } catch {
+          // ignore
+        }
+      }
+      return false
+    }
+
+    const shouldFinalizeInterruptedDownload = (d: any, installPath: string): boolean => {
+      const progress = Number(d?.progress || 0)
+      if (hasCompletionMarker(d, installPath)) return true
+      return progress >= 99.5 && looksInstalled(installPath)
+    }
+
     const seen = new Set<string>()
     for (const d of active) {
       const dedupeKey = String(d.info_hash || d.download_url || d.id)
@@ -1593,11 +1636,13 @@ async function resumeActiveDownloads() {
 
       const gameUrl = String(d.game_url || d.download_url || '').trim()
       if (gameUrl) {
-        // If the game is already installed, do NOT resume the download (prevents re-downloading after a successful extract/install).
+        // Only finalize interrupted rows when this specific download looks complete.
+        // A game can already be installed while a torrent update is still downloading
+        // into the same install path.
         try {
           const g = getGame(gameUrl) as any
           const ip = String(g?.install_path || d?.install_path || '').trim()
-          if (ip && looksInstalled(ip)) {
+          if (ip && shouldFinalizeInterruptedDownload(d, ip)) {
             const abs = path.isAbsolute(ip) ? ip : path.resolve(process.cwd(), ip)
             console.log('[Launcher] Download row is active but game looks installed; marking completed and skipping resume:', dedupeKey)
             finalizeAsCompleted(d, gameUrl, abs)
@@ -1610,7 +1655,7 @@ async function resumeActiveDownloads() {
         // If we have an install_path on the download row and it looks installed, also skip.
         try {
           const ip = String(d?.install_path || '').trim()
-          if (ip && looksInstalled(ip)) {
+          if (ip && shouldFinalizeInterruptedDownload(d, ip)) {
             const abs = path.isAbsolute(ip) ? ip : path.resolve(process.cwd(), ip)
             console.log('[Launcher] Active download has completed install markers; marking completed and skipping resume:', dedupeKey)
             finalizeAsCompleted(d, gameUrl, abs)
@@ -1622,6 +1667,10 @@ async function resumeActiveDownloads() {
       }
 
       const isTorrent = d.type === 'torrent'
+
+      // Reset DB status to 'pending' so the renderer shows the correct state while queued.
+      // startGameDownloadInternal will set it to 'downloading' once it actually starts.
+      try { updateDownloadStatus(Number(d.id), 'pending') } catch {}
 
       // dest_path for HTTP is usually the archive file path; startGameDownload expects a directory override.
       let destPathOverride: string | undefined = d.dest_path || undefined
@@ -1637,7 +1686,7 @@ async function resumeActiveDownloads() {
         gameVersion: 'unknown',
         existingDownloadId: Number(d.id),
         destPathOverride,
-        autoExtract: false
+        autoExtract: getSetting('auto_extract') !== 'false'
       }, (progress, details) => {
         const id = d.info_hash || d.download_url
         sendDownloadProgress({
@@ -1648,6 +1697,9 @@ async function resumeActiveDownloads() {
           downloaded: details?.downloaded || 0,
           total: details?.total || 0,
           eta: details?.timeRemaining || 0,
+          statusMessage: (details as any)?.statusMessage,
+          agentState: (details as any)?.state,
+          hasMetadata: (details as any)?.hasMetadata,
           infoHash: details?.infoHash || d.info_hash || d.download_url
         })
       }).then((res) => {
@@ -1671,6 +1723,30 @@ async function resumeActiveDownloads() {
         console.warn('[Launcher] Failed to resume download', dedupeKey, err)
       })
     }
+
+    // Broadcast paused downloads so the renderer shows them even if initial load was delayed
+    try {
+      const paused = (getActiveDownloads() as any[]).filter(d => {
+        const st = String(d?.status || '').toLowerCase()
+        return st === 'paused'
+      })
+      for (const d of paused) {
+        const idKey = String(d?.info_hash || d?.download_url || d?.id || '')
+        if (!idKey) continue
+        try {
+          mainWindow?.webContents.send('download-progress', {
+            magnet: idKey,
+            url: d?.download_url || idKey,
+            infoHash: d?.info_hash || undefined,
+            progress: d?.progress || 0,
+            speed: 0,
+            downloaded: 0,
+            total: 0,
+            eta: 0
+          })
+        } catch {}
+      }
+    } catch {}
   } catch (err) {
     console.warn('Failed to resume active downloads', err)
   }
@@ -1776,8 +1852,8 @@ async function cleanupOrphanedDownloads() {
         }
       }
 
-      // Case 3: Pending/downloading with no dest_path and no download_url
-      if ((status === 'pending' || status === 'downloading') && !destPath && !d?.download_url) {
+      // Case 3: Pending/downloading with no dest_path, no download_url, and no info_hash
+      if ((status === 'pending' || status === 'downloading') && !destPath && !d?.download_url && !d?.info_hash) {
         shouldDelete = true
         reason = 'pending/downloading with no valid download info'
       }

@@ -65,7 +65,7 @@ export interface ConfigModalProps {
   onLanRoomCodeChange: (code: string) => void
   lanRoomBusy: boolean
   onCreateRoom: (options?: { roomName?: string; password?: string; isPublic?: boolean; maxPlayers?: number }) => void
-  onJoinRoom: (password?: string) => void
+  onJoinRoom: (password?: string, codeOverride?: string) => void
   onLeaveRoom: () => void
   lanNetworkId: string
   lanRoomName: string
@@ -520,6 +520,29 @@ function ProtonTab(props: ConfigModalProps) {
   const isPrefixBusy = prefixJob?.status === 'starting' || prefixJob?.status === 'progress'
   const [showAdvanced, setShowAdvanced] = useState(false)
 
+  // Winetricks/Protontricks state
+  const [tricksInput, setTricksInput] = useState('')
+  const [tricksTool, setTricksTool] = useState<'winetricks' | 'protontricks'>('winetricks')
+  const [tricksRunning, setTricksRunning] = useState(false)
+  const [tricksToolStatus, setTricksToolStatus] = useState<{ winetricks?: boolean; protontricks?: boolean } | null>(null)
+
+  // Check tool availability on mount
+  React.useEffect(() => {
+    window.electronAPI.protonTricksStatus().then((res) => {
+      if (res.success) setTricksToolStatus({ winetricks: res.winetricks, protontricks: res.protontricks })
+    }).catch(() => {})
+  }, [])
+
+  const handleRunTricks = async () => {
+    const components = tricksInput.trim().split(/[\s,]+/).filter(Boolean)
+    if (!components.length) return
+    setTricksRunning(true)
+    try {
+      await window.electronAPI.protonRunTricks(game.url, tricksTool, components)
+    } catch {}
+    setTricksRunning(false)
+  }
+
   return (
     <div className="modal-section">
       {/* Wine Prefix Section */}
@@ -576,6 +599,142 @@ function ProtonTab(props: ConfigModalProps) {
           </div>
         </div>
       </div>
+
+      {/* Winetricks / Protontricks Section */}
+      {protonPrefix && (
+        <div className="config-section">
+          <div className="config-section-header">
+            <Settings2 size={18} />
+            <h4>Winetricks / Protontricks</h4>
+          </div>
+          <div className="config-section-content">
+            <div className="config-form-group">
+              <label>Ferramenta</label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <label className="config-toggle-item" style={{ flex: 1 }}>
+                  <input
+                    type="radio"
+                    name="tricks-tool"
+                    checked={tricksTool === 'winetricks'}
+                    onChange={() => setTricksTool('winetricks')}
+                    disabled={isPrefixBusy || tricksRunning}
+                  />
+                  <div className="config-toggle-info">
+                    <span className="config-toggle-name">winetricks</span>
+                    <span className="config-toggle-desc">
+                      {tricksToolStatus?.winetricks === false ? '⚠ Não instalado' : 'Disponível'}
+                    </span>
+                  </div>
+                </label>
+                <label className="config-toggle-item" style={{ flex: 1 }}>
+                  <input
+                    type="radio"
+                    name="tricks-tool"
+                    checked={tricksTool === 'protontricks'}
+                    onChange={() => setTricksTool('protontricks')}
+                    disabled={isPrefixBusy || tricksRunning}
+                  />
+                  <div className="config-toggle-info">
+                    <span className="config-toggle-name">protontricks</span>
+                    <span className="config-toggle-desc">
+                      {tricksToolStatus?.protontricks === false ? '⚠ Não instalado' : 'Disponível'}
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="config-form-group">
+              <label>Componentes</label>
+              <div className="config-input-action">
+                <input
+                  value={tricksInput}
+                  onChange={(e) => setTricksInput(e.target.value)}
+                  placeholder="vcrun2022 d3dx9 dotnet48"
+                  className="config-input"
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  disabled={isPrefixBusy || tricksRunning}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleRunTricks() }}
+                />
+                <button
+                  className="config-btn primary"
+                  onClick={handleRunTricks}
+                  disabled={isPrefixBusy || tricksRunning || !tricksInput.trim()}
+                >
+                  {tricksRunning ? (
+                    <><RefreshCw size={14} className="of-spin" /> Executando...</>
+                  ) : (
+                    <><Play size={14} /> Executar</>
+                  )}
+                </button>
+              </div>
+              <span className="config-hint">
+                Separe os componentes por espaço. Ex: vcrun2019 d3dx9 dotnet48 dxvk
+              </span>
+            </div>
+
+            {(prefixJob?.status === 'starting' || prefixJob?.status === 'progress') && tricksRunning && (
+              <div className="config-progress">
+                <RefreshCw size={14} className="of-spin" />
+                <span>{prefixJob?.message || 'Executando...'}</span>
+              </div>
+            )}
+
+            <div className="config-form-group" style={{ marginTop: 12 }}>
+              <label>Ferramentas Wine</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button
+                  className="config-btn secondary"
+                  onClick={async () => {
+                    const res = await window.electronAPI.protonOpenTricksGui(game.url)
+                    if (!res.success) alert(res.error || 'Erro ao abrir winetricks')
+                  }}
+                  disabled={isPrefixBusy || tricksRunning}
+                  title="Abrir interface completa do winetricks"
+                >
+                  <Settings2 size={14} /> Winetricks GUI
+                </button>
+                <button
+                  className="config-btn secondary"
+                  onClick={async () => {
+                    const res = await window.electronAPI.protonOpenWinecfg(game.url)
+                    if (!res.success) alert(res.error || 'Erro ao abrir winecfg')
+                  }}
+                  disabled={isPrefixBusy || tricksRunning}
+                  title="Abrir configuração do Wine (winecfg)"
+                >
+                  <Wrench size={14} /> Winecfg
+                </button>
+                <button
+                  className="config-btn secondary"
+                  onClick={async () => {
+                    const res = await window.electronAPI.protonOpenRegedit(game.url)
+                    if (!res.success) alert(res.error || 'Erro ao abrir regedit')
+                  }}
+                  disabled={isPrefixBusy || tricksRunning}
+                  title="Abrir editor de registro do Wine"
+                >
+                  <Terminal size={14} /> Regedit
+                </button>
+                <button
+                  className="config-btn secondary"
+                  onClick={async () => {
+                    const res = await window.electronAPI.protonOpenFileManager(game.url)
+                    if (!res.success) alert(res.error || 'Erro ao abrir explorador')
+                  }}
+                  disabled={isPrefixBusy || tricksRunning}
+                  title="Abrir explorador de arquivos do Wine"
+                >
+                  <FolderOpen size={14} /> Explorer
+                </button>
+              </div>
+              <span className="config-hint">
+                Abre as ferramentas diretamente no prefixo Wine deste jogo.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Runtime Section */}
       <div className="config-section">
@@ -697,6 +856,18 @@ function ProtonTab(props: ConfigModalProps) {
                 <span className="config-toggle-desc">Overlay com métricas de performance</span>
               </div>
             </label>
+
+            <label className="config-toggle-item">
+              <input
+                type="checkbox"
+                checked={protonOptions.steamOverlay !== false}
+                onChange={(e) => onProtonOptionsChange({ ...protonOptions, steamOverlay: e.target.checked })}
+              />
+              <div className="config-toggle-info">
+                <span className="config-toggle-name">Steam Overlay</span>
+                <span className="config-toggle-desc">Ativa Shift+Tab para jogos Steam/OnlineFix com AppID detectado</span>
+              </div>
+            </label>
             
             <label className="config-toggle-item">
               <input 
@@ -768,6 +939,20 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-input"
                 />
               </div>
+            </div>
+
+            <div className="config-form-group" style={{ marginTop: 10 }}>
+              <label>WINEDLLOVERRIDES</label>
+              <input
+                value={protonOptions.wineDllOverrides}
+                onChange={(e) => onProtonOptionsChange({ ...protonOptions, wineDllOverrides: e.target.value })}
+                placeholder="steam_api=n;steam_api64=n;winmm=n,b;winhttp=n,b"
+                className="config-input"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <span className="config-toggle-desc" style={{ marginTop: 4, display: 'block' }}>
+                Substitui o WINEDLLOVERRIDES padrão do launcher. Deixe vazio para usar o padrão.
+              </span>
             </div>
           </div>
         )}
@@ -1140,7 +1325,7 @@ function LanTab(props: ConfigModalProps) {
                             if (room.hasPassword) {
                               setShowJoinPassword(true)
                             } else {
-                              onJoinRoom()
+                              onJoinRoom(undefined, room.code)
                             }
                           }}
                           disabled={lanRoomBusy || vpnActionBusy}

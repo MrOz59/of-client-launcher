@@ -20,6 +20,9 @@ export type DownloadProgressPayload = {
   eta?: number
   peers?: number
   seeds?: number
+  statusMessage?: string
+  agentState?: string
+  hasMetadata?: boolean
   stage?: 'download' | 'extract'
   extractProgress?: number
   destPath?: string
@@ -68,6 +71,14 @@ export type RunningGameProc = {
   protonLogPath?: string
   startedAt?: number
   overlaySessionId?: string
+  installDir?: string
+  exePath?: string
+  prefixPath?: string
+  liveLogBuffer?: string
+  liveLogHeadBuffer?: string
+  liveLogTailBuffer?: string
+  liveLogDroppedChars?: number
+  liveLogUpdatedAt?: number
 }
 
 // ============================================================================

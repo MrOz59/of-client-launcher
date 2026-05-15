@@ -7,6 +7,8 @@ dist-preload/
 release/
 out/
 build/
+vendor/
+release*/
 
 # Packaged binaries/installers (electron-builder etc)
 *.AppImage

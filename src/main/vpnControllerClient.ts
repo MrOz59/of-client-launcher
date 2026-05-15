@@ -1,5 +1,5 @@
 type VpnRoomCreateResponse = { ok: boolean; code?: string; config?: string; vpnIp?: string; peerId?: string; roomName?: string; error?: string }
-type VpnRoomJoinResponse = { ok: boolean; config?: string; vpnIp?: string; hostIp?: string | null; peerId?: string; roomName?: string; error?: string; needsPassword?: boolean }
+type VpnRoomJoinResponse = { ok: boolean; config?: string; vpnIp?: string; hostIp?: string | null; peerId?: string; roomName?: string; maxPlayers?: number; error?: string; needsPassword?: boolean }
 type VpnPeersResponse = { ok: boolean; peers?: Array<{ id: string; name?: string; ip?: string; role?: string; online?: boolean }>; error?: string }
 type VpnStatusResponse = { ok: boolean; enabled?: boolean; ready?: boolean; publicKey?: string; error?: string }
 type VpnRoomListResponse = { ok: boolean; rooms?: Array<{
@@ -131,7 +131,8 @@ export async function vpnControllerJoinRoom(params: {
     vpnIp: out.data.vpnIp,
     hostIp: out.data.hostIp ?? null,
     peerId: out.data.peerId,
-    roomName: out.data.roomName
+    roomName: out.data.roomName,
+    maxPlayers: out.data.maxPlayers
   }
 }
 
@@ -180,4 +181,3 @@ export async function vpnControllerLeaveRoom(params: { controllerUrl: string; pe
   if (!out.ok || !out.data?.ok) return { success: false, error: out.error || out.data?.error || 'Falha ao sair da sala' }
   return { success: true }
 }
-
