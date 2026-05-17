@@ -459,8 +459,9 @@ async function runInstallerWithProton(
   timeoutMs: number
 ): Promise<number | null> {
   return await new Promise<number | null>((resolve) => {
-    const proc = spawn(runner, ['run', installerPath, ...args], {
-      env,
+    const hidden = makeHiddenProcess(runner, ['run', installerPath, ...args], env)
+    const proc = spawn(hidden.cmd, hidden.args, {
+      env: hidden.env,
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -1188,7 +1189,7 @@ async function runProtonTool(
   tag: string
 ): Promise<number | null> {
   return await new Promise<number | null>((resolve) => {
-    const proc = spawn(runner, ['run', ...toolArgs], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawn(runner, ['run', ...toolArgs], { env: makeQuietWineEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
 
     const t = setTimeout(() => {
       try { proc.kill() } catch {}
@@ -1209,18 +1210,51 @@ async function runProtonTool(
   })
 }
 
-function makeHiddenWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = {
+function mergeDllOverrides(current?: string, required = 'winemenubuilder.exe=d;mscoree,mshtml=') {
+  const raw = String(current || '').trim()
+  if (!raw) return required
+  if (/winemenubuilder\.exe=/i.test(raw)) return raw
+  return `${raw};${required}`
+}
+
+function makeQuietWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
     ...env,
     WINEDEBUG: '-all',
-    WINEDLLOVERRIDES: env.WINEDLLOVERRIDES || 'winemenubuilder.exe=d;mscoree,mshtml='
+    WINEDLLOVERRIDES: mergeDllOverrides(env.WINEDLLOVERRIDES),
+    WINETRICKS_NONINTERACTIVE: env.WINETRICKS_NONINTERACTIVE || '1',
+    WINETRICKS_QUIET: env.WINETRICKS_QUIET || '1',
+    SDL_VIDEODRIVER: env.SDL_VIDEODRIVER || 'dummy'
   }
+}
+
+function makeHiddenWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = makeQuietWineEnv(env)
   delete next.DISPLAY
   delete next.WAYLAND_DISPLAY
   delete next.XAUTHORITY
   delete next.DESKTOP_STARTUP_ID
   delete next.XDG_ACTIVATION_TOKEN
   return next
+}
+
+function makeHiddenProcess(
+  cmd: string,
+  args: string[],
+  env: NodeJS.ProcessEnv
+): { cmd: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const xvfbRun = findCommandPath('xvfb-run')
+  if (xvfbRun) {
+    return {
+      cmd: xvfbRun,
+      args: ['-a', '-s', '-screen 0 1024x768x24', cmd, ...args],
+      env: {
+        ...makeQuietWineEnv(env),
+        GDK_BACKEND: 'x11'
+      }
+    }
+  }
+  return { cmd, args, env: makeHiddenWineEnv(env) }
 }
 
 async function runLoggedProcess(
@@ -1257,32 +1291,13 @@ async function runWinebootBackground(
   env: NodeJS.ProcessEnv,
   timeoutMs: number
 ): Promise<boolean> {
-  const xvfbRun = findCommandPath('xvfb-run')
-  if (xvfbRun) {
-    const xvfbEnv = {
-      ...env,
-      GDK_BACKEND: 'x11',
-      WINEDEBUG: '-all',
-      WINEDLLOVERRIDES: env.WINEDLLOVERRIDES || 'winemenubuilder.exe=d;mscoree,mshtml='
-    }
-    const code = await runLoggedProcess(
-      xvfbRun,
-      ['-a', '-s', '-screen 0 1024x768x24', runner, 'run', 'wineboot', '-u'],
-      xvfbEnv,
-      timeoutMs,
-      '[wineboot:hidden]'
-    )
-    return code === 0
-  }
-
-  // Best-effort fallback for systems without xvfb-run. Some Wine/Proton builds
-  // can bootstrap without a display; if they cannot, the caller retries visibly.
+  const hidden = makeHiddenProcess(runner, ['run', 'wineboot', '-u'], env)
   const code = await runLoggedProcess(
-    runner,
-    ['run', 'wineboot', '-u'],
-    makeHiddenWineEnv(env),
-    Math.min(timeoutMs, 30_000),
-    '[wineboot:headless]'
+    hidden.cmd,
+    hidden.args,
+    hidden.env,
+    timeoutMs,
+    '[wineboot:hidden]'
   )
   return code === 0
 }
@@ -1620,7 +1635,7 @@ async function runWinetricks(
 
     // Try direct winetricks with Proton overrides (more reliable than proton run)
     const protonOverrides = getProtonWineOverrides(protonDir)
-    const winetricksEnv: NodeJS.ProcessEnv = {
+    const winetricksEnv = makeQuietWineEnv({
       ...env,
       ...protonOverrides,
       WINEPREFIX: winePrefix,
@@ -1629,11 +1644,12 @@ async function runWinetricks(
       // 🆕 Reduce verbosity
       WINETRICKS_DOWNLOADER: 'wget',
       WINETRICKS_QUIET: '1'
-    }
+    })
 
     const result = await new Promise<number | null>((resolve) => {
-      const proc = spawn(winetricksCmd, ['--force', '-q', ...comps], {
-        env: winetricksEnv,
+      const hidden = makeHiddenProcess(winetricksCmd, ['--force', '-q', ...comps], winetricksEnv)
+      const proc = spawn(hidden.cmd, hidden.args, {
+        env: hidden.env,
         stdio: ['ignore', 'pipe', 'pipe']
       })
 
@@ -1735,13 +1751,15 @@ async function runProtontricks(
       console.log(`[Proton] Installing ${component} via protontricks...`)
 
       const result = await new Promise<number | null>((resolve) => {
-        const proc = spawn(protontricksCmd, ['--no-steam', '-c', `winetricks -q ${component}`, prefixPath], {
-          env: {
-            ...env,
-            STEAM_COMPAT_DATA_PATH: prefixPath,
-            WINETRICKS_NONINTERACTIVE: '1',
-            WINETRICKS_QUIET: '1'
-          },
+        const protontricksEnv = makeQuietWineEnv({
+          ...env,
+          STEAM_COMPAT_DATA_PATH: prefixPath,
+          WINETRICKS_NONINTERACTIVE: '1',
+          WINETRICKS_QUIET: '1'
+        })
+        const hidden = makeHiddenProcess(protontricksCmd, ['--no-steam', '-c', `winetricks -q ${component}`, prefixPath], protontricksEnv)
+        const proc = spawn(hidden.cmd, hidden.args, {
+          env: hidden.env,
           stdio: ['ignore', 'pipe', 'pipe']
         })
 
@@ -1834,8 +1852,9 @@ async function runCommonRedistInstallers(
         ? ['run', 'msiexec', '/i', installer, '/quiet', '/norestart']
         : ['run', installer, '/quiet', '/silent', '/norestart', '-silent', '-q']
       
-      const result = spawnSync(runner, args, { 
-        env, 
+      const hidden = makeHiddenProcess(runner, args, env)
+      const result = spawnSync(hidden.cmd, hidden.args, { 
+        env: hidden.env, 
         stdio: 'pipe',
         timeout: 120000 // 2 minute timeout per installer
       })
@@ -2102,14 +2121,15 @@ export async function ensurePrefixDefaults(
 
       let winebootOk = await runWinebootBackground(runner, env, 60_000)
       if (!winebootOk) {
-        console.warn('[Proton] Background wineboot failed or timed out; retrying with normal display')
-        onProgress?.('Inicializando prefixo Wine...')
+        console.warn('[Proton] Hidden wineboot failed or timed out; retrying hidden once')
+        onProgress?.('Inicializando prefixo Wine em modo oculto...')
+        const hiddenRetry = makeHiddenProcess(runner, ['run', 'wineboot', '-u'], env)
         const code = await runLoggedProcess(
-          runner,
-          ['run', 'wineboot', '-u'],
-          env,
+          hiddenRetry.cmd,
+          hiddenRetry.args,
+          hiddenRetry.env,
           60_000,
-          '[wineboot]'
+          '[wineboot:hidden:retry]'
         )
         winebootOk = code === 0
       }

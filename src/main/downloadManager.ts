@@ -27,7 +27,7 @@ import fs from 'fs'
 import os from 'os'
 import { Worker } from 'worker_threads'
 import { session, BrowserWindow, app } from 'electron'
-import { notifyDownloadComplete, notifyDownloadError } from './desktopNotifications'
+import { notifyDownloadError } from './desktopNotifications'
 import { taskId, upsertTask } from './taskManager'
 import { findExecutableInDir } from './utils'
 
@@ -39,10 +39,18 @@ interface QueuedDownload {
   id: string
   options: DownloadOptions
   onProgress?: (progress: number, details?: ProgressDetails) => void
-  resolve: (result: { success: boolean; error?: string; installPath?: string }) => void
+  resolve: (result: StartGameDownloadResult) => void
   reject: (error: Error) => void
   addedAt: number
   priority: number // Lower = higher priority
+}
+
+export type StartGameDownloadResult = {
+  success: boolean
+  error?: string
+  installPath?: string
+  firstInstall?: boolean
+  wasUpdate?: boolean
 }
 
 // Download queue state
@@ -160,6 +168,31 @@ function dirLooksInstalled(dir?: string | null): boolean {
     // ignore malformed marker
   }
   return Boolean(findExecutableInDir(rp))
+}
+
+export function hasExistingGameInstall(gameUrl: string, installPath?: string | null): boolean {
+  try {
+    const game = getGame(gameUrl) as any
+    if (fileExists(game?.install_path) || fileExists(game?.executable_path)) return true
+    if (game?.installed_at && fileExists(installPath)) return true
+  } catch {
+    // ignore DB lookup failures
+  }
+
+  const rp = resolvedPathMaybe(installPath)
+  if (!rp || !fs.existsSync(rp)) return false
+  try {
+    if (fs.existsSync(path.join(rp, '.of_extracted'))) return true
+    if (fs.existsSync(path.join(rp, '.of_update_extracted'))) return true
+    const marker = path.join(rp, '.of_game.json')
+    if (fs.existsSync(marker)) {
+      const parsed = JSON.parse(fs.readFileSync(marker, 'utf8'))
+      if (parsed?.status === 'installed') return true
+    }
+  } catch {
+    // ignore malformed marker
+  }
+  return false
 }
 
 function hasExtractionMarker(dir?: string | null): boolean {
@@ -340,7 +373,7 @@ async function executeDownload(queued: QueuedDownload) {
 export function queueGameDownload(
   options: DownloadOptions,
   onProgress?: (progress: number, details?: ProgressDetails) => void
-): Promise<{ success: boolean; error?: string; installPath?: string }> {
+): Promise<StartGameDownloadResult> {
   return new Promise((resolve, reject) => {
     const id = generateQueueId()
     const queued: QueuedDownload = {
@@ -896,7 +929,7 @@ interface ProgressDetails extends Partial<TorrentProgress> {
 export async function startGameDownload(
   options: DownloadOptions,
   onProgress?: (progress: number, details?: ProgressDetails) => void
-): Promise<{ success: boolean; error?: string; installPath?: string }> {
+): Promise<StartGameDownloadResult> {
   // Use the queue system
   return queueGameDownload(options, onProgress)
 }
@@ -908,7 +941,7 @@ export async function startGameDownload(
 async function startGameDownloadInternal(
   options: DownloadOptions,
   onProgress?: (progress: number, details?: ProgressDetails) => void
-): Promise<{ success: boolean; error?: string; installPath?: string }> {
+): Promise<StartGameDownloadResult> {
   const isCancelledError = (err: any) => err?.message === 'cancelled'
 
   const {
@@ -951,6 +984,8 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
 // Install path (final - games folder)
   const installPath = path.join(gamesPath, gameFolderName)
+  const hadExistingInstall = hasExistingGameInstall(gameUrl, installPath)
+  const firstInstall = !hadExistingInstall
 
   console.log('[DownloadManager] Paths configured:')
   console.log('[DownloadManager]   gamesPath:', gamesPath)
@@ -958,6 +993,7 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
   console.log('[DownloadManager]   downloadDestPath:', downloadDestPath)
   console.log('[DownloadManager]   installPath:', installPath)
   console.log('[DownloadManager]   destPathOverride:', destPathOverride)
+  console.log('[DownloadManager]   firstInstall:', firstInstall)
 
   const ensureGameRecord = () => {
     addOrUpdateGame(gameUrl, gameTitle)
@@ -999,7 +1035,7 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
     if (downloadType === 'torrent') {
       if (isTorrentActive(url)) {
         console.log('[DownloadManager] Torrent already active, skipping duplicate start:', url)
-        return { success: true, installPath }
+        return { success: true, firstInstall, wasUpdate: !firstInstall }
       }
       const aliases = [url, String(downloadId)]
 
@@ -1211,12 +1247,6 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
           })
           console.log('[DownloadManager] Cleaned up download record after successful HTTP extraction')
           
-          // Send desktop notification
-          try {
-            notifyDownloadComplete(gameTitle || 'Jogo')
-          } catch (err) {
-            console.error('[DownloadManager] Failed to send notification:', err)
-          }
         } catch {}
 
         finalInstallPath = installPath
@@ -1391,12 +1421,6 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         })
         console.log('[DownloadManager] Cleaned up download record after successful torrent extraction')
         
-        // Send desktop notification
-        try {
-          notifyDownloadComplete(gameTitle || 'Jogo')
-        } catch (err) {
-          console.error('[DownloadManager] Failed to send notification:', err)
-        }
       } catch {}
     } else {
       // Only send final download progress if we did NOT extract.
@@ -1406,7 +1430,9 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
 
     return {
       success: true,
-      installPath: finalInstallPath
+      installPath: finalInstallPath,
+      firstInstall,
+      wasUpdate: !firstInstall
     }
   } catch (error: any) {
     if (isCancelledError(error)) {

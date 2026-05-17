@@ -343,6 +343,7 @@ export default function LibraryTab() {
     } catch (err: any) {
       console.error('[UpdateGame] Failed to start update', err)
       alert(err?.message || 'Falha ao iniciar a atualização')
+      setUpdatingGames(prev => { const next = { ...prev }; delete next[game.url]; return next })
     }
   }, [updateQueue.running, updatingGames, loadGames])
 

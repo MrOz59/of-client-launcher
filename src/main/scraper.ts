@@ -293,23 +293,45 @@ function extractTorrentLink($: cheerio.CheerioAPI, pageUrl: string): string | nu
   return null
 }
 
+function getFriendlyUpdateFetchError(err: any): string {
+  const status = Number(err?.response?.status)
+  if (status === 404) {
+    return 'A página deste jogo não está mais disponível no Online-Fix. Ele pode ter sido removido do site, então não é possível buscar atualizações automaticamente.'
+  }
+  if (status === 401 || status === 403) {
+    return 'Não foi possível acessar a página do jogo. Faça login novamente no Online-Fix e tente buscar a atualização de novo.'
+  }
+  if (status >= 500) {
+    return 'O Online-Fix retornou um erro temporário ao buscar a atualização. Tente novamente mais tarde.'
+  }
+  if (err?.code === 'ECONNABORTED') {
+    return 'A busca de atualização demorou demais. Verifique sua conexão e tente novamente.'
+  }
+  return err?.message || 'Falha ao buscar dados de atualização.'
+}
+
 export async function fetchGameUpdateInfo(url: string): Promise<{ version: string | null; torrentUrl: string | null }> {
   const cookieHeader = await getCookieHeaderForUrl(url)
 
-  // Retrieve page with cookies to authorize
-  const resp = await axios.get(url, {
-    headers: {
-      Cookie: cookieHeader,
-      'User-Agent': 'OF-Client/0.1'
-    },
-    responseType: 'arraybuffer'
-  })
+  try {
+    // Retrieve page with cookies to authorize
+    const resp = await axios.get(url, {
+      headers: {
+        Cookie: cookieHeader,
+        'User-Agent': 'OF-Client/0.1'
+      },
+      responseType: 'arraybuffer',
+      timeout: 15000
+    })
 
-  const html = decodeHtmlResponse(resp)
-  const $ = cheerio.load(html)
-  const parsed = extractVersionFromHtml(html)
-  const torrentUrl = extractTorrentLink($, url)
-  return { version: parsed, torrentUrl }
+    const html = decodeHtmlResponse(resp)
+    const $ = cheerio.load(html)
+    const parsed = extractVersionFromHtml(html)
+    const torrentUrl = extractTorrentLink($, url)
+    return { version: parsed, torrentUrl }
+  } catch (err: any) {
+    throw new Error(getFriendlyUpdateFetchError(err))
+  }
 }
 
 export async function checkGameVersion(url: string): Promise<string> {

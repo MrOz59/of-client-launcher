@@ -98,7 +98,7 @@ export interface IpcContext {
   runningGames: Map<string, RunningGameProc>
 
   // Prefix jobs state
-  inFlightPrefixJobs: Map<string, { startedAt: number }>
+  inFlightPrefixJobs: Map<string, { startedAt: number; promise?: Promise<boolean> }>
 
   // Update queue state
   updateQueue: string[]
@@ -123,7 +123,8 @@ export interface IpcContext {
 
   // Utility functions
   fetchAndPersistBanner: (gameUrl: string, title: string) => Promise<void>
-  prepareGamePrefixAfterInstall: (gameUrl: string, title: string, installDir: string) => Promise<void>
+  prepareGamePrefixAfterInstall: (gameUrl: string, title: string, installDir: string) => Promise<boolean>
+  notifyGameReadyAfterInstall: (gameUrl: string, title: string, installDir: string, firstInstall?: boolean) => Promise<void>
 }
 
 // ============================================================================

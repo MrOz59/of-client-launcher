@@ -83,7 +83,7 @@ import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo } from './scraper
 import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
 import { shouldBlockRequest } from './easylist-filters.js'
-import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir, reconcileDownloadState } from './downloadManager.js'
+import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir, reconcileDownloadState, hasExistingGameInstall } from './downloadManager.js'
 import axios from 'axios'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResolver.js'
 // fs is already imported at the top for early sandbox configuration
@@ -94,7 +94,7 @@ import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestE
 import { AchievementsManager } from './achievements/manager.js'
 import { AchievementOverlay } from './achievements/overlay.js'
 import { registerNotificationHotkeys, unregisterAllHotkeys } from './notificationHotkeys.js'
-import { NOTIFICATIONS_ENABLED } from './desktopNotifications.js'
+import { NOTIFICATIONS_ENABLED, notifyDownloadComplete } from './desktopNotifications.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { registerAllIpcHandlers } from './ipc/index.js'
 import type { IpcContext } from './ipc/types.js'
@@ -412,6 +412,9 @@ async function runQueuedUpdate(gameUrl: string) {
 
   // Auto-fetch banner after successful install
   fetchAndPersistBanner(url, title).catch(() => {})
+  if (result.installPath) {
+    notifyGameReadyAfterInstall(url, title, result.installPath, result.firstInstall !== false).catch(() => {})
+  }
 }
 
 async function pumpUpdateQueue() {
@@ -482,7 +485,7 @@ type PrefixJobStatusPayload = {
   prefix?: string
 }
 
-const inFlightPrefixJobs = new Map<string, { startedAt: number }>()
+const inFlightPrefixJobs = new Map<string, { startedAt: number; promise?: Promise<boolean> }>()
 
 type GameLaunchStatusPayload = {
   gameUrl: string
@@ -923,39 +926,60 @@ function detectSteamAppIdFromInstall(installDir: string): string | null {
   return null
 }
 
-async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, installPath: string) {
-  if (!isLinux()) return
-  if (!installPath || !fs.existsSync(installPath)) return
+async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, installPath: string): Promise<boolean> {
+  if (!isLinux()) return true
+  if (!installPath || !fs.existsSync(installPath)) return false
+
+  const existingJob = inFlightPrefixJobs.get(gameUrl)
+  if (existingJob?.promise) return existingJob.promise
+  if (existingJob) return true
+
+  const startedAt = Date.now()
+  const job = (async () => {
+    try {
+      const game = getGame(gameUrl) as any
+
+      // Se já tem prefixo, não precisa criar
+      if (game?.proton_prefix) return true
+
+      const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
+      const slug = stableId ? `game_${stableId}` : slugify(title || game?.title || gameUrl || 'game')
+      const runtime = (game?.proton_runtime as string | null) || findProtonRuntime() || undefined
+
+      // Enviar feedback visual para o usuário
+      sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo do Proton...' })
+
+      const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
+        sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
+      })
+      updateGameInfo(gameUrl, { proton_prefix: prefix })
+
+      // Notificar que terminou
+      sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
+      return true
+    } catch (err: any) {
+      console.warn('[Proton] Failed to prepare prefix after install:', err)
+      sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
+      return false
+    } finally {
+      try { inFlightPrefixJobs.delete(gameUrl) } catch {}
+    }
+  })()
+
+  inFlightPrefixJobs.set(gameUrl, { startedAt, promise: job })
+  return job
+}
+
+async function notifyGameReadyAfterInstall(gameUrl: string, title: string, installPath: string, firstInstall = true) {
+  if (firstInstall) {
+    const prefixReady = await prepareGamePrefixAfterInstall(gameUrl, title, installPath)
+    if (!prefixReady) return
+  }
 
   try {
-    const game = getGame(gameUrl) as any
-
-    // Se já tem prefixo, não precisa criar
-    if (game?.proton_prefix) return
-
-    const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
-    const slug = stableId ? `game_${stableId}` : slugify(title || game?.title || gameUrl || 'game')
-    const runtime = (game?.proton_runtime as string | null) || findProtonRuntime() || undefined
-
-    // Evitar jobs duplicados
-    if (inFlightPrefixJobs.has(gameUrl)) return
-    inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
-
-    // Enviar feedback visual para o usuário
-    sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo do Proton...' })
-
-    const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
-      sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-    })
-    updateGameInfo(gameUrl, { proton_prefix: prefix })
-
-    // Notificar que terminou
-    sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
-    inFlightPrefixJobs.delete(gameUrl)
-  } catch (err: any) {
-    console.warn('[Proton] Failed to prepare prefix after install:', err)
-    try { inFlightPrefixJobs.delete(gameUrl) } catch {}
-    sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
+    notifyDownloadComplete(title || 'Jogo')
+  } catch (err) {
+    console.error('[Launcher] Failed to send ready notification:', err)
   }
 }
 
@@ -1017,7 +1041,8 @@ const ipcContext: IpcContext = {
   sendPrefixJobStatus,
   sendCloudSavesStatus,
   fetchAndPersistBanner,
-  prepareGamePrefixAfterInstall
+  prepareGamePrefixAfterInstall,
+  notifyGameReadyAfterInstall
 }
 
 // Register all modular IPC handlers
@@ -1133,7 +1158,7 @@ async function handleExternalDownload(url: string) {
       // Auto-fetch banner once installed
       fetchAndPersistBanner(referer, title).catch(() => {})
       if (result.installPath) {
-        prepareGamePrefixAfterInstall(referer, title, result.installPath).catch(() => {})
+        notifyGameReadyAfterInstall(referer, title, result.installPath, result.firstInstall !== false).catch(() => {})
       }
     }
   } catch (err) {
@@ -1779,7 +1804,7 @@ async function resumeActiveDownloads() {
           const title = String(d.title || resolvedGameUrl)
           // Auto-fetch banner once installed
           fetchAndPersistBanner(resolvedGameUrl, title).catch(() => {})
-          prepareGamePrefixAfterInstall(resolvedGameUrl, title, res.installPath).catch(() => {})
+          notifyGameReadyAfterInstall(resolvedGameUrl, title, res.installPath, res.firstInstall !== false).catch(() => {})
         }
       }).catch((err) => {
         console.warn('[Launcher] Failed to resume download', dedupeKey, err)
@@ -2243,6 +2268,8 @@ async function resumeInterruptedExtractions() {
       const gameUrl = String(d?.game_url || d?.download_url || idKey)
 
       const installPath = resolveInstallPathForDownloadRow(d)
+      const firstInstall = !hasExistingGameInstall(gameUrl, installPath)
+      const title = String(d?.title || gameUrl || 'Jogo')
       try {
         updateDownloadInstallPath(downloadId, installPath)
       } catch {
@@ -2305,6 +2332,7 @@ async function resumeInterruptedExtractions() {
 
         updateDownloadStatus(downloadId, 'completed')
         mainWindow?.webContents.send('download-complete', { magnet: idKey, infoHash: d?.info_hash || undefined, destPath: installPath })
+        notifyGameReadyAfterInstall(gameUrl, title, installPath, firstInstall).catch(() => {})
         continue
       }
 
@@ -2377,6 +2405,7 @@ async function resumeInterruptedExtractions() {
 
       updateDownloadStatus(downloadId, 'completed')
       mainWindow?.webContents.send('download-complete', { magnet: idKey, infoHash: d?.info_hash || undefined, destPath: installPath })
+      notifyGameReadyAfterInstall(gameUrl, title, installPath, firstInstall).catch(() => {})
     }
   } catch (err) {
     console.warn('Failed to resume interrupted extractions', err)

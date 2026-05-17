@@ -124,7 +124,7 @@ export const registerTorrentHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =>
         // Auto-fetch banner once installed
         ctx.fetchAndPersistBanner(gamePageUrl, title).catch(() => {})
         if (result.installPath) {
-          ctx.prepareGamePrefixAfterInstall(gamePageUrl, title, result.installPath).catch(() => {})
+          ctx.notifyGameReadyAfterInstall(gamePageUrl, title, result.installPath, result.firstInstall !== false).catch(() => {})
         }
       }
 

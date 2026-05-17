@@ -26,12 +26,12 @@ import {
   reconcileDownloadState,
   prioritizeDownload,
   removeFromQueue,
-  swapActiveDownload
+  swapActiveDownload,
+  hasExistingGameInstall
 } from '../downloadManager'
 import { extractZipWithPassword } from '../zip'
 import { findArchive, findExecutableInDir } from '../utils'
 import { sanitizeVersionText, isKnownUnknownVersion } from '../utils/versionUtils'
-import { notifyDownloadComplete } from '../desktopNotifications'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 // Helper to resolve game version
@@ -196,6 +196,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       // For torrent downloads (type === 'torrent'), use processUpdateExtraction
       if (record?.type === 'torrent') {
         console.log('[Extract] Using processUpdateExtraction for torrent:', target)
+        const firstInstall = !hasExistingGameInstall(gameUrl, target)
 
         // Notify start
         ctx.sendDownloadProgress({
@@ -228,7 +229,6 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           infoHash: infoHash || undefined,
           destPath: target
         })
-        try { notifyDownloadComplete(String(record?.title || 'Jogo')) } catch {}
 
         // Update game info
         if (gameUrl) {
@@ -257,7 +257,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           }
           // Auto-fetch banner once installed
           ctx.fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
-          ctx.prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), target).catch(() => {})
+          ctx.notifyGameReadyAfterInstall(gameUrl, String(record?.title || gameUrl), target, firstInstall).catch(() => {})
         }
 
         // Clean up download record from database
@@ -277,6 +277,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       if (!archivePath) {
         return { success: false, error: 'Nenhum arquivo .zip/.rar/.7z encontrado para extrair' }
       }
+      const firstInstall = !hasExistingGameInstall(gameUrl, destDir)
 
       // Prevent deletion while extracting
       const extractionLockFile = path.join(destDir, '.extracting')
@@ -338,7 +339,6 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         infoHash: infoHash || undefined,
         destPath: destDir
       })
-      try { notifyDownloadComplete(String(record?.title || 'Jogo')) } catch {}
 
       // Add to library after extraction
       if (gameUrl) {
@@ -368,7 +368,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         }
         // Auto-fetch banner once installed
         ctx.fetchAndPersistBanner(gameUrl, String(record?.title || gameUrl)).catch(() => {})
-        ctx.prepareGamePrefixAfterInstall(gameUrl, String(record?.title || gameUrl), destDir).catch(() => {})
+        ctx.notifyGameReadyAfterInstall(gameUrl, String(record?.title || gameUrl), destDir, firstInstall).catch(() => {})
       }
 
       // Clean up download record from database

@@ -1282,8 +1282,9 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   }
 
   const TaskPanel = () => {
-    const activeTasks = taskStatus?.active || []
-    const recentTasks = (taskStatus?.recent || []).slice(0, 4)
+    const isVisibleTask = (task: LauncherTask) => task.kind !== 'download' && task.kind !== 'extract'
+    const activeTasks = (taskStatus?.active || []).filter(isVisibleTask)
+    const recentTasks = (taskStatus?.recent || []).filter(isVisibleTask).slice(0, 4)
     const visible = [...activeTasks, ...recentTasks].slice(0, 8)
     if (!visible.length) return null
 
