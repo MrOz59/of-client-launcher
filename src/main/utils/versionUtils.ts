@@ -15,7 +15,7 @@ export function sanitizeVersionText(value?: string | null): string | null {
   const build = text.match(/\b(Build[.\s_]*\d{6,10})\b/i)
   if (build?.[1]) return build[1].replace(/\s+/g, ' ').trim()
 
-  const semantic = text.match(/\b(v?\d+(?:\.\d+){1,6})(?:[-_ ]?(alpha|beta|rc|hotfix|patch)\.?\d*)?\b/i)
+  const semantic = text.match(/\b(v?\d+(?:[._-][0-9a-z]+){1,12})(?:[-_ ]?(alpha|beta|rc|hotfix|patch)\.?\d*)?\b/i)
   if (semantic?.[0]) return semantic[0].trim()
 
   const isoDate = text.match(/\b(20\d{2}[.\-_]\d{2}[.\-_]\d{2})\b/)

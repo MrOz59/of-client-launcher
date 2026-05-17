@@ -2,6 +2,7 @@ import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
 import { sanitizeVersionText } from './utils/versionUtils'
+import { sanitizeGameMetadataPatch, sanitizeTitle, sanitizeUrl } from './utils/metadataSanitizer'
 
 let dbInstance: any | null = null
 let sqliteAvailable = false
@@ -9,6 +10,12 @@ let sqliteAvailable = false
 // JSON fallback performance: keep an in-memory cache and debounce writes.
 let jsonStoreCache: any | null = null
 let jsonStoreWriteTimer: NodeJS.Timeout | null = null
+
+type Migration = {
+  id: number
+  name: string
+  up: (db: any) => void
+}
 
 function flushJsonStoreNow() {
   initDb()
@@ -122,26 +129,123 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 `)
-    // Migrations for existing installations
-    ensureColumn(db, 'downloads', 'title', 'TEXT')
-    ensureColumn(db, 'downloads', 'info_hash', 'TEXT')
-    ensureColumn(db, 'downloads', 'install_path', 'TEXT')
-  
-    ensureColumn(db, 'games', 'game_id', 'TEXT')
-    ensureColumn(db, 'games', 'proton_prefix', 'TEXT')
-    ensureColumn(db, 'games', 'proton_runtime', 'TEXT')
-    ensureColumn(db, 'games', 'proton_options', 'TEXT')
-    ensureColumn(db, 'games', 'steam_app_id', 'TEXT')
-    ensureColumn(db, 'games', 'is_favorite', 'INTEGER')
-    ensureColumn(db, 'games', 'play_time', 'INTEGER')
-    ensureColumn(db, 'games', 'last_played', 'DATETIME')
-    ensureColumn(db, 'games', 'file_size', 'TEXT')
-    ensureColumn(db, 'games', 'lan_mode', 'TEXT')
-    ensureColumn(db, 'games', 'lan_network_id', 'TEXT')
-    ensureColumn(db, 'games', 'lan_autoconnect', 'INTEGER')
+    runMigrations(db)
   }
   
   return dbInstance
+}
+
+const MIGRATIONS: Migration[] = [
+  {
+    id: 1,
+    name: 'ensure-evolved-launcher-columns',
+    up: (db) => {
+      ensureColumn(db, 'downloads', 'title', 'TEXT')
+      ensureColumn(db, 'downloads', 'info_hash', 'TEXT')
+      ensureColumn(db, 'downloads', 'install_path', 'TEXT')
+
+      ensureColumn(db, 'games', 'game_id', 'TEXT')
+      ensureColumn(db, 'games', 'proton_prefix', 'TEXT')
+      ensureColumn(db, 'games', 'proton_runtime', 'TEXT')
+      ensureColumn(db, 'games', 'proton_options', 'TEXT')
+      ensureColumn(db, 'games', 'steam_app_id', 'TEXT')
+      ensureColumn(db, 'games', 'is_favorite', 'INTEGER')
+      ensureColumn(db, 'games', 'play_time', 'INTEGER')
+      ensureColumn(db, 'games', 'last_played', 'DATETIME')
+      ensureColumn(db, 'games', 'file_size', 'TEXT')
+      ensureColumn(db, 'games', 'lan_mode', 'TEXT')
+      ensureColumn(db, 'games', 'lan_network_id', 'TEXT')
+      ensureColumn(db, 'games', 'lan_autoconnect', 'INTEGER')
+    }
+  },
+  {
+    id: 2,
+    name: 'sanitize-existing-game-metadata',
+    up: (db) => {
+      const rows = db.prepare('SELECT id, title, url, installed_version, latest_version, install_path, executable_path, proton_prefix, proton_runtime, steam_app_id FROM games').all()
+      const stmt = db.prepare(`
+        UPDATE games
+        SET title = ?,
+            url = ?,
+            installed_version = ?,
+            latest_version = ?,
+            install_path = ?,
+            executable_path = ?,
+            proton_prefix = ?,
+            proton_runtime = ?,
+            steam_app_id = ?
+        WHERE id = ?
+      `)
+      for (const row of rows) {
+        const patch = sanitizeGameMetadataPatch(row as any)
+        stmt.run(
+          patch.title,
+          patch.url,
+          patch.installed_version || null,
+          patch.latest_version || null,
+          patch.install_path || null,
+          patch.executable_path || null,
+          patch.proton_prefix || null,
+          patch.proton_runtime || null,
+          patch.steam_app_id || null,
+          row.id
+        )
+      }
+    }
+  },
+  {
+    id: 3,
+    name: 'sanitize-existing-download-metadata',
+    up: (db) => {
+      const rows = db.prepare('SELECT id, game_url, title, download_url, dest_path, install_path, info_hash FROM downloads').all()
+      const stmt = db.prepare(`
+        UPDATE downloads
+        SET game_url = ?,
+            title = ?,
+            download_url = ?,
+            dest_path = ?,
+            install_path = ?,
+            info_hash = ?
+        WHERE id = ?
+      `)
+      for (const row of rows) {
+        const patch = sanitizeGameMetadataPatch(row as any)
+        stmt.run(
+          patch.game_url || row.game_url,
+          patch.title ? sanitizeTitle(patch.title) : row.title,
+          patch.download_url || row.download_url,
+          patch.dest_path || null,
+          patch.install_path || null,
+          String(row.info_hash || '').trim() || null,
+          row.id
+        )
+      }
+    }
+  }
+]
+
+function runMigrations(db: any) {
+  db.exec(`
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+`)
+
+  const appliedRows = db.prepare('SELECT id FROM schema_migrations').all() as Array<{ id: number }>
+  const applied = new Set(appliedRows.map(r => Number(r.id)))
+  const ordered = MIGRATIONS.slice().sort((a, b) => a.id - b.id)
+  for (const migration of ordered) {
+    if (applied.has(migration.id)) continue
+    console.log(`[DB] Applying migration ${migration.id}: ${migration.name}`)
+    const tx = db.transaction(() => {
+      migration.up(db)
+      db.prepare('INSERT OR REPLACE INTO schema_migrations (id, name) VALUES (?, ?)').run(migration.id, migration.name)
+      db.pragma(`user_version = ${migration.id}`)
+    })
+    tx()
+  }
 }
 
 function ensureColumn(db: any, table: string, column: string, type: string) {
@@ -177,30 +281,33 @@ function writeStore(store: any) {
 
 export function addOrUpdateGame(url: string, title?: string) {
   initDb()
+  const cleanUrl = sanitizeUrl(url)
+  const cleanTitle = sanitizeTitle(title || deriveTitleFromUrl(cleanUrl))
   if (sqliteAvailable) {
     const stmt = dbInstance.prepare('INSERT OR IGNORE INTO games (url, title) VALUES (?, ?)')
-    stmt.run(url, title || '')
+    stmt.run(cleanUrl, cleanTitle)
     return
   }
   // JSON fallback
   const store = readStore()
   store.games = store.games || []
-  if (!store.games.some((g: any) => g.url === url)) {
-    store.games.push({ url, title: title || '', installed_version: null, latest_version: null })
+  if (!store.games.some((g: any) => g.url === cleanUrl)) {
+    store.games.push({ url: cleanUrl, title: cleanTitle, installed_version: null, latest_version: null })
     writeStore(store)
   }
 }
 
 export function updateGameVersion(url: string, latest: string) {
   initDb()
+  const cleanUrl = sanitizeUrl(url)
   const normalizedLatest = sanitizeVersionText(latest) || latest
   if (sqliteAvailable) {
     const stmt = dbInstance.prepare('UPDATE games SET latest_version = ? WHERE url = ?')
-    stmt.run(normalizedLatest, url)
+    stmt.run(normalizedLatest, cleanUrl)
     return
   }
   const store = readStore()
-  const g = (store.games || []).find((x: any) => x.url === url)
+  const g = (store.games || []).find((x: any) => x.url === cleanUrl)
   if (g) {
     g.latest_version = normalizedLatest
     writeStore(store)
@@ -210,7 +317,7 @@ export function updateGameVersion(url: string, latest: string) {
 export function getGame(url: string) {
   initDb()
   const candidates = buildUrlCandidates(url)
-  const resolvedUrl = candidates[0] || url
+  const resolvedUrl = candidates[0] || sanitizeUrl(url)
   const gameId = extractGameIdFromUrl(resolvedUrl)
 
   if (sqliteAvailable) {
@@ -266,22 +373,17 @@ export function updateGameInfo(url: string, data: {
 	  lan_autoconnect?: number | null
 	}) {
   initDb()
-  const normalizedData = { ...data }
-  if (typeof normalizedData.installed_version === 'string') {
-    normalizedData.installed_version = sanitizeVersionText(normalizedData.installed_version) || normalizedData.installed_version
-  }
-  if (typeof normalizedData.latest_version === 'string') {
-    normalizedData.latest_version = sanitizeVersionText(normalizedData.latest_version) || normalizedData.latest_version
-  }
+  const cleanUrl = sanitizeUrl(url)
+  const normalizedData = sanitizeGameMetadataPatch({ ...data })
   if (sqliteAvailable) {
     const fields = Object.keys(normalizedData).map(key => `${key} = ?`).join(', ')
     const values = Object.values(normalizedData)
     const stmt = dbInstance.prepare(`UPDATE games SET ${fields} WHERE url = ?`)
-    stmt.run(...values, url)
+    stmt.run(...values, cleanUrl)
     return
   }
   const store = readStore()
-  const g = (store.games || []).find((x: any) => x.url === url)
+  const g = (store.games || []).find((x: any) => x.url === cleanUrl)
   if (g) {
     Object.assign(g, normalizedData)
     writeStore(store)
@@ -323,7 +425,7 @@ function deriveTitleFromUrl(url: string): string {
 }
 
 function buildUrlCandidates(url: string): string[] {
-  const trimmed = String(url || '').trim()
+  const trimmed = sanitizeUrl(url)
   if (!trimmed) return []
 
   const withoutQuery = trimmed.split(/[?#]/)[0]
@@ -354,14 +456,16 @@ export function markGameInstalled(url: string, installPath: string, version: str
   const candidates = buildUrlCandidates(url)
   const resolvedUrl = candidates[0] || url
   const normalizedVersion = typeof version === 'string' ? (sanitizeVersionText(version) || null) : null
+  const cleanInstallPath = sanitizeGameMetadataPatch({ install_path: installPath }).install_path || installPath
+  const cleanExecutablePath = sanitizeGameMetadataPatch({ executable_path: executablePath || null }).executable_path || null
 
   console.log('[DB] markGameInstalled called:')
   console.log('[DB]   url:', url)
   console.log('[DB]   candidates:', candidates)
   console.log('[DB]   resolvedUrl:', resolvedUrl)
-  console.log('[DB]   installPath:', installPath)
+  console.log('[DB]   installPath:', cleanInstallPath)
   console.log('[DB]   version:', normalizedVersion)
-  console.log('[DB]   executablePath:', executablePath)
+  console.log('[DB]   executablePath:', cleanExecutablePath)
 
   if (sqliteAvailable) {
     let canonicalUrl = resolvedUrl
@@ -398,7 +502,7 @@ export function markGameInstalled(url: string, installPath: string, version: str
           install_date = datetime('now')
       WHERE url = ?
     `)
-    stmt.run(gameId, normalizedVersion, normalizedVersion, installPath, executablePath || null, downloadUrl, canonicalUrl)
+    stmt.run(gameId, normalizedVersion, normalizedVersion, cleanInstallPath, cleanExecutablePath, downloadUrl, canonicalUrl)
     return
   }
 
@@ -421,8 +525,8 @@ export function markGameInstalled(url: string, installPath: string, version: str
   g.game_id = g.game_id || extractGameIdFromUrl(canonicalUrl)
   g.installed_version = normalizedVersion
   if (!g.latest_version && normalizedVersion) g.latest_version = normalizedVersion
-  g.install_path = installPath
-  g.executable_path = executablePath || null
+  g.install_path = cleanInstallPath
+  g.executable_path = cleanExecutablePath
   g.install_date = new Date().toISOString()
   if (download?.download_url && !g.download_url) g.download_url = download.download_url
   writeStore(store)
@@ -525,6 +629,7 @@ export function createDownload(data: {
   size?: string
 }) {
   initDb()
+  const clean = sanitizeGameMetadataPatch({ ...data })
   if (sqliteAvailable) {
     const db = dbInstance
     const stmt = db.prepare(`
@@ -532,13 +637,13 @@ export function createDownload(data: {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `)
     const result = stmt.run(
-      data.game_url,
-      data.title,
+      clean.game_url,
+      sanitizeTitle(clean.title),
       data.type,
-      data.download_url,
-      data.dest_path,
-      data.install_path || null,
-      data.info_hash || null,
+      clean.download_url,
+      clean.dest_path,
+      clean.install_path || null,
+      String(data.info_hash || '').trim() || null,
       data.size || null
     )
     return result.lastInsertRowid
@@ -548,13 +653,13 @@ export function createDownload(data: {
   const id = (store.downloads.reduce((max: number, d: any) => Math.max(max, d.id || 0), 0) || 0) + 1
   const entry = {
     id,
-    game_url: data.game_url,
-    title: data.title,
+    game_url: clean.game_url,
+    title: sanitizeTitle(clean.title),
     type: data.type,
-    download_url: data.download_url,
-    dest_path: data.dest_path,
-    install_path: data.install_path || null,
-    info_hash: data.info_hash || null,
+    download_url: clean.download_url,
+    dest_path: clean.dest_path,
+    install_path: clean.install_path || null,
+    info_hash: String(data.info_hash || '').trim() || null,
     size: data.size || null,
     progress: 0,
     status: 'pending',
@@ -568,15 +673,16 @@ export function createDownload(data: {
 
 export function updateDownloadInstallPath(id: number, installPath: string) {
   initDb()
+  const cleanPath = sanitizeGameMetadataPatch({ install_path: installPath }).install_path || null
   if (sqliteAvailable) {
     const stmt = dbInstance.prepare('UPDATE downloads SET install_path = ?, updated_at = datetime(\'now\') WHERE id = ?')
-    stmt.run(installPath || null, id)
+    stmt.run(cleanPath, id)
     return
   }
   const store = readStore()
   const d = store.downloads.find((x: any) => x.id === id)
   if (d) {
-    d.install_path = installPath || null
+    d.install_path = cleanPath
     d.updated_at = new Date().toISOString()
     writeStore(store)
   }
@@ -584,15 +690,16 @@ export function updateDownloadInstallPath(id: number, installPath: string) {
 
 export function updateDownloadInfoHash(id: number, infoHash: string) {
   const db = initDb()
+  const cleanHash = String(infoHash || '').trim() || null
   if (sqliteAvailable) {
     const stmt = db.prepare('UPDATE downloads SET info_hash = ? WHERE id = ?')
-    stmt.run(infoHash, id)
+    stmt.run(cleanHash, id)
     return
   }
   const store = readStore()
   const d = store.downloads.find((x: any) => x.id === id)
   if (d) {
-    d.info_hash = infoHash
+    d.info_hash = cleanHash
     d.updated_at = new Date().toISOString()
     writeStore(store)
   }

@@ -488,8 +488,11 @@ export default function LibraryTab() {
     // Auto-check updates
     ;(async () => {
       try {
-        await window.electronAPI.checkAllUpdates?.()
-        try { void loadGames() } catch {}
+        const settings = await window.electronAPI.getSettings()
+        if (settings?.success && settings.settings?.autoUpdate === true) {
+          await window.electronAPI.checkAllUpdates?.()
+          try { void loadGames() } catch {}
+        }
       } catch {}
     })()
 

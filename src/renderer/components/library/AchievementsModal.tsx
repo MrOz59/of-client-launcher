@@ -1,5 +1,5 @@
 import React from 'react'
-import { RefreshCw, Trophy } from 'lucide-react'
+import { CheckCircle2, Eye, FileJson, Lock, Plus, RefreshCw, Trash2, Trophy, X } from 'lucide-react'
 
 export interface AchievementsModalProps {
   gameUrl: string | null
@@ -39,6 +39,7 @@ export function AchievementsModal({
 
   const unlockedCount = items.filter((x: any) => !!x?.unlocked).length
   const total = items.length
+  const progress = total > 0 ? Math.round((unlockedCount / total) * 100) : 0
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -65,7 +66,7 @@ export function AchievementsModal({
                 disabled={loading}
                 title="Importar schema (JSON)"
               >
-                Importar schema
+                <FileJson size={14} /> Importar
               </button>
 
               <button
@@ -74,7 +75,7 @@ export function AchievementsModal({
                 disabled={loading}
                 title="Criar ou editar schema"
               >
-                Criar schema
+                <Plus size={14} /> Schema
               </button>
 
               <button
@@ -83,11 +84,11 @@ export function AchievementsModal({
                 disabled={loading}
                 title="Remover schema importado"
               >
-                Remover schema
+                <Trash2 size={14} /> Remover
               </button>
 
               <button className="btn ghost" onClick={onClose} title="Fechar">
-                ✕
+                <X size={14} />
               </button>
             </div>
           </div>
@@ -102,7 +103,18 @@ export function AchievementsModal({
             <div style={{ padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                 <div style={{ fontWeight: 700 }}>Conquistas</div>
-                <div style={{ opacity: 0.8, fontSize: 12 }}>{unlockedCount}/{total}</div>
+                <div style={{ opacity: 0.8, fontSize: 12 }}>{unlockedCount}/{total} ({progress}%)</div>
+              </div>
+              <div style={{ marginTop: 10, height: 7, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${progress}%`,
+                    height: '100%',
+                    borderRadius: 999,
+                    background: progress >= 100 ? '#d6a72f' : '#3b82f6',
+                    transition: 'width 180ms ease'
+                  }}
+                />
               </div>
 
               <div style={{ marginTop: 10, maxHeight: 360, overflow: 'auto', paddingRight: 6 }}>
@@ -129,7 +141,8 @@ export function AchievementsModal({
                       Possíveis causas:
                       <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
                         <li>O jogo não possui conquistas no Steam</li>
-                        <li>O jogo ainda não foi iniciado (o crack precisa criar os arquivos)</li>
+                        <li>O jogo ainda não foi iniciado ou o emulador ainda não criou os arquivos</li>
+                        <li>O AppID/Offer ID não foi detectado para buscar um schema</li>
                         <li>A Steam API Key não está configurada nas Configurações</li>
                       </ul>
                     </div>
@@ -148,7 +161,10 @@ export function AchievementsModal({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {sources.map((s: any, idx: number) => (
                       <div key={`${idx}:${String(s.path || s.label || '')}`} style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.12)' }}>
-                        <div style={{ fontWeight: 700, fontSize: 12 }}>{String(s.label || s.kind || 'Fonte')}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 12 }}>
+                          <FileJson size={13} />
+                          {String(s.label || s.kind || 'Fonte')}
+                        </div>
                         {s.path && <div style={{ marginTop: 4, fontSize: 12, opacity: 0.8, wordBreak: 'break-all' }}>{String(s.path)}</div>}
                       </div>
                     ))}
@@ -259,18 +275,24 @@ function AchievementItem({ achievement: a, isRevealed, onReveal, onForceRefreshS
               </div>
               {isHiddenLocked && (
                 <div style={{ fontSize: 11, opacity: 0.72, border: '1px solid rgba(255,255,255,0.14)', borderRadius: 999, padding: '2px 8px', flex: '0 0 auto' }}>
-                  {revealed ? 'Revelada' : 'Escondida'}
+                  {revealed ? <><Eye size={11} /> Revelada</> : 'Escondida'}
                 </div>
               )}
             </div>
             {a?.unlocked ? (
               a?.unlockedAt ? (
-                <div style={{ fontSize: 12, opacity: 0.8 }}>{new Date(Number(a.unlockedAt)).toLocaleString()}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, opacity: 0.8 }}>
+                  <CheckCircle2 size={13} /> {new Date(Number(a.unlockedAt)).toLocaleString()}
+                </div>
               ) : (
-                <div style={{ fontSize: 12, opacity: 0.7 }}>Desbloqueada</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, opacity: 0.7 }}>
+                  <CheckCircle2 size={13} /> Desbloqueada
+                </div>
               )
             ) : (
-              <div style={{ fontSize: 12, opacity: 0.6 }}>Bloqueada</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, opacity: 0.6 }}>
+                <Lock size={13} /> Bloqueada
+              </div>
             )}
           </div>
           <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85, lineHeight: 1.25 }}>

@@ -17,15 +17,17 @@
     "bundle:torrent-agent": "node scripts/build-torrent-agent.js",
     "bundle:torrent-agent-runtime": "node scripts/build-torrent-agent-runtime.js",
     "build:game-overlay": "node scripts/build-game-overlay.js",
+    "build:notification-overlay:linux": "npm --prefix notification-overlay run build:linux",
+    "build:notification-overlay:windows": "npm --prefix notification-overlay run build:windows",
     "fetch:ludusavi": "node scripts/fetch-ludusavi.js",
     "fetch:legendary": "node scripts/fetch-legendary.js",
     "build:app": "npm run build:preload && vite build && tsc -p tsconfig.build.json",
     "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:app",
-    "dist:linux": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
-    "dist:appimage": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
-    "dist:rpm": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
-    "dist:pacman": "npm run fetch:ludusavi && npm run fetch:legendary && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
-    "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build && electron-builder --win --publish never",
+    "dist:linux": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
+    "dist:appimage": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
+    "dist:rpm": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
+    "dist:pacman": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
+    "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:windows && npm run build && electron-builder --win --publish never",
     "start": "electron .",
     "test:scraper": "node scripts/test-scraper-dist.js"
   },
@@ -119,6 +121,13 @@
         "to": "legendary",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "notification-overlay/dist",
+        "to": "void-toast",
+        "filter": [
+          "void-toast-*"
         ]
       }
     ],

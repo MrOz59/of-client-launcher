@@ -1,0 +1,33 @@
+# Ignore everything in this standalone notification project by default.
+# Whitelist only the files needed to rebuild and package void-toast.
+*
+
+!.gitignore
+!package.json
+!package-lock.json
+!toast.html
+
+!scripts/
+scripts/*
+!scripts/build-standalone.sh
+!scripts/build-standalone.ps1
+
+!src-tauri/
+src-tauri/*
+!src-tauri/Cargo.toml
+!src-tauri/Cargo.lock
+!src-tauri/build.rs
+!src-tauri/tauri.conf.json
+
+!src-tauri/capabilities/
+src-tauri/capabilities/*
+!src-tauri/capabilities/default.json
+
+!src-tauri/icons/
+src-tauri/icons/*
+!src-tauri/icons/icon.png
+
+!src-tauri/src/
+src-tauri/src/*
+!src-tauri/src/lib.rs
+!src-tauri/src/main.rs

@@ -81,6 +81,30 @@ type DownloadQueueStatus = {
   updatedAt: number
 }
 
+type LauncherTask = {
+  id: string
+  kind: 'download' | 'extract' | 'prefix' | 'redist' | 'cloud-save'
+  title: string
+  status: 'queued' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
+  progress?: number
+  message?: string
+  gameUrl?: string
+  gameKey?: string
+  targetPath?: string
+  impact?: 'network' | 'disk' | 'compat' | 'cloud' | 'background'
+  startedAt: number
+  updatedAt: number
+  finishedAt?: number
+}
+
+type LauncherTaskStatus = {
+  activeCount: number
+  recentCount: number
+  active: LauncherTask[]
+  recent: LauncherTask[]
+  updatedAt: number
+}
+
 export {}
 
 declare global {
@@ -104,14 +128,18 @@ declare global {
       
       // Download Queue APIs
       getDownloadQueueStatus: () => Promise<{ success: boolean; status?: DownloadQueueStatus; error?: string }>
+      getTaskQueueStatus: () => Promise<{ success: boolean; status?: LauncherTaskStatus; error?: string }>
+      reconcileDownloads: () => Promise<{ success: boolean; result?: any; error?: string }>
       prioritizeDownload: (queueId: string) => Promise<{ success: boolean; error?: string }>
       removeFromDownloadQueue: (queueId: string) => Promise<{ success: boolean; error?: string }>
       swapActiveDownload: (queueId: string) => Promise<{ success: boolean; error?: string }>
       onDownloadQueueStatus: (cb: (data: DownloadQueueStatus) => void) => (() => void)
+      onTaskStatus: (cb: (data: LauncherTaskStatus) => void) => (() => void)
 
       openPath: (target: string) => Promise<DownloadResult>
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
+      getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
       selectDirectory: () => Promise<{ success: boolean; path?: string; error?: string }>
       extractDownload: (downloadId: number | string, path?: string) => Promise<DownloadResult & { destPath?: string }>
       protonEnsureRuntime: (customPath?: string) => Promise<{ success: boolean; runtime?: string; runner?: string; error?: string }>
@@ -130,6 +158,8 @@ declare global {
       setGameProtonPrefix: (gameUrl: string, prefixPath: string | null) => Promise<{ success: boolean; error?: string }>
       setGameSteamAppId: (gameUrl: string, steamAppId: string | null) => Promise<{ success: boolean; error?: string }>
       getGames: () => Promise<{ success: boolean; games: any[]; error?: string }>
+      getGameDiagnostics: (gameUrl: string) => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      repairGameDiagnostics: (gameUrl: string) => Promise<{ success: boolean; diagnostics?: any; actions?: any[]; error?: string }>
       launchGame: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       stopGame: (gameUrl: string, force?: boolean) => Promise<{ success: boolean; error?: string }>
       deleteGame: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
@@ -224,6 +254,8 @@ declare global {
         ludusaviDownloaded?: boolean
         ludusaviError?: string
       }>
+      driveStatus: () => Promise<{ success?: boolean; connected?: boolean; message?: string; error?: string }>
+      driveDisconnect: () => Promise<{ success: boolean; message?: string; error?: string }>
       driveGetCredentials: () => Promise<{ success: boolean; content?: string; message?: string }>
       driveOpenCredentials: () => Promise<{ success: boolean; message?: string }>
       driveSaveCredentials: (rawJson: string) => Promise<{ success: boolean; message?: string }>

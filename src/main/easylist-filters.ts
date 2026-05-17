@@ -69,7 +69,7 @@ export const cssHidingRules: string[] = []
  * Check if URL should be blocked (only for popup/redirect related)
  * Returns true only for known popup/redirect networks
  */
-export function shouldBlockRequest(url: string): boolean {
+export function shouldBlockRequest(url: string, _details?: { resourceType?: string; initiator?: string | null }): boolean {
   const urlLower = url.toLowerCase()
 
   // Check popup domains
@@ -180,4 +180,3 @@ export function generateAdBlockScript(): string {
   })();
   `
 }
-

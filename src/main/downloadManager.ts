@@ -1,4 +1,4 @@
-import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorrent, type TorrentProgress, isTorrentActive, getActiveTorrentIds } from './downloader'
+import { downloadFile, downloadTorrent, pauseTorrent, resumeTorrent, cancelTorrent, type TorrentProgress, isTorrentActive, getActiveTorrentIds, getActiveTorrentSnapshots } from './downloader'
 import { extractZipWithPassword } from './zip'
 import { processUpdateExtraction, findFilesRecursive } from './extractionUtils'
 import { findAndReadOnlineFixIni } from './utils/onlinefixIni'
@@ -28,6 +28,8 @@ import os from 'os'
 import { Worker } from 'worker_threads'
 import { session, BrowserWindow, app } from 'electron'
 import { notifyDownloadComplete, notifyDownloadError } from './desktopNotifications'
+import { taskId, upsertTask } from './taskManager'
+import { findExecutableInDir } from './utils'
 
 // ============================================================================
 // DOWNLOAD QUEUE SYSTEM
@@ -83,6 +85,20 @@ function broadcastDownloadProgress(payload: any) {
       if (now - last < 200) return
       downloadProgressThrottle.set(key, now)
     }
+    if (key) {
+      const isExtract = payload?.stage === 'extract' || payload?.extractProgress !== undefined
+      const progress = isExtract ? (payload?.extractProgress ?? payload?.progress) : payload?.progress
+      upsertTask({
+        id: taskId(isExtract ? 'extract' : 'download', key),
+        kind: isExtract ? 'extract' : 'download',
+        title: isExtract ? 'Extraindo jogo' : 'Baixando jogo',
+        status: progress >= 100 ? 'done' : 'running',
+        progress,
+        message: payload?.statusMessage,
+        targetPath: payload?.destPath,
+        impact: isExtract ? 'disk' : 'network'
+      })
+    }
     BrowserWindow.getAllWindows().forEach(w => {
       try { w.webContents.send('download-progress', payload) } catch {}
     })
@@ -115,6 +131,137 @@ export function getDownloadQueueStatus() {
     })),
     updatedAt: Date.now()
   }
+}
+
+function resolvedPathMaybe(p?: string | null): string | null {
+  const value = String(p || '').trim()
+  if (!value) return null
+  try { return path.isAbsolute(value) ? value : path.resolve(process.cwd(), value) } catch { return value }
+}
+
+function fileExists(p?: string | null): boolean {
+  const rp = resolvedPathMaybe(p)
+  if (!rp) return false
+  try { return fs.existsSync(rp) } catch { return false }
+}
+
+function dirLooksInstalled(dir?: string | null): boolean {
+  const rp = resolvedPathMaybe(dir)
+  if (!rp || !fs.existsSync(rp)) return false
+  try {
+    if (fs.existsSync(path.join(rp, '.of_extracted'))) return true
+    if (fs.existsSync(path.join(rp, '.of_update_extracted'))) return true
+    const marker = path.join(rp, '.of_game.json')
+    if (fs.existsSync(marker)) {
+      const parsed = JSON.parse(fs.readFileSync(marker, 'utf8'))
+      if (parsed?.status === 'installed') return true
+    }
+  } catch {
+    // ignore malformed marker
+  }
+  return Boolean(findExecutableInDir(rp))
+}
+
+function hasExtractionMarker(dir?: string | null): boolean {
+  const rp = resolvedPathMaybe(dir)
+  if (!rp || !fs.existsSync(rp)) return false
+  return fs.existsSync(path.join(rp, '.of_extracting.json')) ||
+    fs.existsSync(path.join(rp, '.of_update_extracting.json')) ||
+    fs.existsSync(path.join(rp, '.extracting'))
+}
+
+function emitDownloadDeleted() {
+  BrowserWindow.getAllWindows().forEach(w => {
+    try { w.webContents.send('download-deleted') } catch {}
+  })
+}
+
+export function reconcileDownloadState(reason = 'manual') {
+  const actions: Array<{ id: number; action: string; reason: string }> = []
+  const downloads = getActiveDownloads() as any[]
+  const activeTorrents = getActiveTorrentSnapshots()
+  const activeAliases = new Set<string>()
+  for (const torrent of activeTorrents) {
+    for (const alias of torrent.aliases || []) activeAliases.add(String(alias))
+    if (torrent.infoHash) activeAliases.add(String(torrent.infoHash))
+    if (torrent.source) activeAliases.add(String(torrent.source))
+  }
+
+  for (const d of downloads) {
+    const id = Number(d?.id)
+    if (!Number.isFinite(id)) continue
+    const status = String(d?.status || '').toLowerCase()
+    const type = String(d?.type || '').toLowerCase()
+    const progress = Number(d?.progress || 0)
+    const installPath = resolvedPathMaybe(d?.install_path || d?.dest_path)
+    const destPath = resolvedPathMaybe(d?.dest_path)
+    const keys = [d?.info_hash, d?.download_url, d?.game_url, String(id)].filter(Boolean).map(String)
+    const hasAgent = keys.some(k => activeAliases.has(k))
+
+    try {
+      if (status === 'completed') continue
+
+      if (dirLooksInstalled(installPath) && progress >= 99) {
+        updateDownloadProgress(id, 100)
+        updateDownloadStatus(id, 'completed')
+        deleteDownload(id)
+        emitDownloadDeleted()
+        upsertTask({
+          id: taskId('download', d?.info_hash || d?.download_url || String(id)),
+          kind: 'download',
+          title: d?.title || 'Download',
+          status: 'done',
+          progress: 100,
+          message: 'Reconciliado como instalado pelo conteúdo no disco',
+          gameUrl: d?.game_url,
+          targetPath: installPath || undefined,
+          impact: 'network'
+        })
+        actions.push({ id, action: 'completed-and-removed', reason: 'installed-files-found' })
+        continue
+      }
+
+      if (status === 'extracting') {
+        if (dirLooksInstalled(installPath)) {
+          updateDownloadProgress(id, 100)
+          updateDownloadStatus(id, 'completed')
+          deleteDownload(id)
+          emitDownloadDeleted()
+          actions.push({ id, action: 'completed-and-removed', reason: 'extraction-finished-on-disk' })
+        } else if (!hasExtractionMarker(installPath) && !hasExtractionMarker(destPath)) {
+          updateDownloadStatus(id, 'error', 'Extração interrompida. Execute a extração novamente.')
+          actions.push({ id, action: 'error', reason: 'missing-extraction-marker' })
+        }
+        continue
+      }
+
+      if (type === 'torrent' && ['downloading', 'pending'].includes(status) && !hasAgent) {
+        if (progress >= 99 && dirLooksInstalled(installPath)) {
+          updateDownloadProgress(id, 100)
+          updateDownloadStatus(id, 'completed')
+          deleteDownload(id)
+          emitDownloadDeleted()
+          actions.push({ id, action: 'completed-and-removed', reason: 'torrent-done-on-disk' })
+        } else {
+          updateDownloadStatus(id, 'paused', 'Torrent não estava ativo no agente; pausado para retomada segura.')
+          actions.push({ id, action: 'paused', reason: 'missing-agent-session' })
+        }
+        continue
+      }
+
+      if (type === 'http' && status === 'downloading' && !fileExists(d?.dest_path) && !fileExists(`${d?.dest_path || ''}.part`)) {
+        updateDownloadStatus(id, 'error', 'Arquivo parcial do download não encontrado.')
+        actions.push({ id, action: 'error', reason: 'missing-http-file' })
+      }
+    } catch (err: any) {
+      console.warn('[DownloadReconciler] Failed to reconcile row:', id, err?.message || err)
+    }
+  }
+
+  if (actions.length) {
+    console.log('[DownloadReconciler] Applied actions:', reason, actions)
+  }
+  return { checked: downloads.length, actions, activeTorrentAliases: activeAliases.size, updatedAt: Date.now() }
 }
 
 // Process the download queue

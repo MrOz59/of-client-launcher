@@ -330,7 +330,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
       const idx = text.toLowerCase().indexOf(label.toLowerCase());
       if (idx !== -1) {
         const after = text.slice(idx + label.length, idx + label.length + 50);
-        const versionMatch = after.match(/^[:\s]+((?:Build[.\s_]*)?\d{6,10}|[vV]?\d+(?:\.\d+){1,6}(?:[-_][0-9a-zA-Z]+)?|(?:Build[.\s_]*)?[vV]?[0-9][0-9a-zA-Z._-]*)/i);
+        const versionMatch = after.match(/^[:\s]+((?:Build[.\s_]*)?\d{6,10}|[vV]?\d+(?:[._-][0-9a-zA-Z]+){1,12}|(?:Build[.\s_]*)?[vV]?[0-9][0-9a-zA-Z._-]*)/i);
         const version = sanitizePageVersion(versionMatch && versionMatch[1]);
         if (version) {
           console.log('[OF Store] Found page version via label:', version);
@@ -341,7 +341,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
 
     // Fallback patterns
     const buildPattern = /\b(Build[.\s]*\d{6,10})\b/i;
-    const semverPattern = /\bv?([0-9]+\.[0-9]+(?:\.[0-9]+){1,3})\b/i;
+    const semverPattern = /\bv?([0-9]+(?:[._-][0-9a-z]+){1,12})\b/i;
 
     let match = text.match(buildPattern);
     if (match) {
@@ -936,6 +936,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
   const webviewRef = useRef<HTMLDivElement>(null)
   const webviewInstance = useRef<any>(null)
   const targetUrlRef = useRef<string | null>(null)
+  const lastTorrentRequestRef = useRef<{ url: string; at: number } | null>(null)
 
   useEffect(() => {
     if (!webviewRef.current) return
@@ -993,11 +994,19 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       }, 400)
     }
 
-    const handleTorrentNav = (url: string) => {
+    const startTorrentDownloadOnce = (url: string, source: string) => {
       if (!ensureUsable() || !isReady) return false
       if (!isAllowedTorrentUrl(url)) return false
-      console.log('[StoreTab] Navigation detected:', url)
-      console.log('[StoreTab] ✅ Torrent link detected! Starting download...')
+
+      const now = Date.now()
+      const prev = lastTorrentRequestRef.current
+      if (prev && prev.url === url && now - prev.at < 2500) {
+        console.log('[StoreTab] Ignoring duplicate torrent request:', url)
+        return true
+      }
+      lastTorrentRequestRef.current = { url, at: now }
+
+      console.log(`[StoreTab] ✅ Torrent request from ${source}; starting download...`)
       console.log('[StoreTab] Torrent URL:', url)
       console.log('[StoreTab] Referer:', wv.getURL())
 
@@ -1011,6 +1020,8 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
       return true
     }
+
+    const handleTorrentNav = (url: string) => startTorrentDownloadOnce(url, 'navigation')
 
     // Block popunders/popups at the <webview> level
     wv.addEventListener('new-window', (e: any) => {
@@ -1092,14 +1103,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
             return
           }
           console.log('[StoreTab] Captured torrent download request from console:', torrentUrl)
-
-          window.electronAPI.startTorrentDownload(torrentUrl, wv.getURL())
-            .then((result: any) => {
-              console.log('[StoreTab] Download started:', result)
-            })
-            .catch((err: any) => {
-              console.error('[StoreTab] Failed to start download:', err)
-            })
+          startTorrentDownloadOnce(torrentUrl, 'console')
         }
       }
     })
@@ -1166,14 +1170,15 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
     wv.addEventListener('will-navigate', (e: any) => {
       if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] will-navigate event:', e.url)
+      if (handleTorrentNav(e.url)) {
+        if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing navigation to torrent link')
+        e.preventDefault()
+        return
+      }
       if (!isAllowedWebviewUrl(e.url)) {
         console.warn('[StoreTab] Blocked navigation to non-allowed URL:', e.url)
         e.preventDefault()
         return
-      }
-      if (handleTorrentNav(e.url)) {
-        if ((import.meta as any)?.env?.DEV) console.log('[StoreTab] Preventing navigation to torrent link')
-        e.preventDefault()
       }
     })
 

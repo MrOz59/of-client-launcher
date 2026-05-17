@@ -10,6 +10,7 @@ export {
   cancelTorrent,
   isTorrentActive,
   getActiveTorrentIds,
+  getActiveTorrentSnapshots,
   type TorrentProgress
 } from './torrentLibtorrentRpc'
 

@@ -7,6 +7,7 @@ import { parseEmpressAchievementsJson, parseGoldbergAchievementsJson, parseIniUn
 export type WatchTickResult = {
   sources: GameAchievementSource[]
   unlocks: UnlockedAchievement[]
+  baseline?: boolean
 }
 
 function safeStatMtimeMs(p: string): number | null {
@@ -77,7 +78,7 @@ export class AchievementsWatcher {
     this.sources = discoverAchievementSources(this.meta)
     this.lastDiscoverAt = Date.now()
     const initialUnlocks = this.collectUnlocks(true)
-    onTick({ sources: this.sources, unlocks: initialUnlocks })
+    onTick({ sources: this.sources, unlocks: initialUnlocks, baseline: true })
 
     this.timer = setInterval(() => {
       try {

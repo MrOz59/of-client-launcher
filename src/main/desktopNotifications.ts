@@ -2,8 +2,10 @@ import { Notification as ElectronNotification } from 'electron'
 import type { NotificationMessage } from './overlayIPC'
 import { showGameNotification, isGamescopeAvailable, closeAllGameNotifications } from './gameNotificationWindow'
 import { showDesktopOverlayNotification, closeAllDesktopNotifications } from './desktopNotificationWindow'
+import { showStandaloneToast, closeAllStandaloneToasts } from './standaloneToast'
+import { getSetting } from './db'
 
-export const NOTIFICATIONS_ENABLED = false
+export const NOTIFICATIONS_ENABLED = true
 
 let notificationsEnabled = NOTIFICATIONS_ENABLED
 let useGameOverlay = true // Use in-game overlay when available
@@ -14,6 +16,7 @@ export function setNotificationsEnabled(enabled: boolean) {
   if (!enabled) {
     closeAllGameNotifications()
     closeAllDesktopNotifications()
+    closeAllStandaloneToasts()
   }
 }
 
@@ -30,7 +33,8 @@ export function setCurrentGamePid(pid: number | null) {
 }
 
 export function showDesktopNotification(notification: NotificationMessage) {
-  if (!NOTIFICATIONS_ENABLED || !notificationsEnabled) {
+  const persistedEnabled = getSetting('notifications_enabled') !== 'false'
+  if (!NOTIFICATIONS_ENABLED || !notificationsEnabled || !persistedEnabled) {
     console.log('[Notifications] Notifications disabled')
     return
   }
@@ -43,6 +47,15 @@ export function showDesktopNotification(notification: NotificationMessage) {
   }
 
   // Otherwise use custom desktop overlay notifications
+  try {
+    if (showStandaloneToast(notification)) {
+      console.log('[Notifications] Standalone toast notification shown:', notification.title)
+      return
+    }
+  } catch (err) {
+    console.error('[Notifications] Failed to show standalone toast notification:', err)
+  }
+
   try {
     const win = showDesktopOverlayNotification(notification)
     if (win) {
@@ -73,13 +86,15 @@ export function showDesktopNotification(notification: NotificationMessage) {
 export function notifyAchievementUnlocked(
   title: string,
   description?: string,
-  icon?: string
+  icon?: string,
+  game?: string
 ): NotificationMessage {
   const notification: NotificationMessage = {
     type: 'achievement_unlocked',
     title,
     description,
     icon,
+    game,
     duration_ms: 5000,
   }
 
@@ -93,8 +108,9 @@ export function notifyDownloadComplete(
 ): NotificationMessage {
   const notification: NotificationMessage = {
     type: 'download_complete',
-    title: 'Download Completo',
+    title: 'Pronto para jogar',
     description: `${gameName} foi baixado com sucesso!`,
+    game: gameName,
     icon,
     duration_ms: 4000,
   }
@@ -111,6 +127,7 @@ export function notifyDownloadError(
     type: 'download_error',
     title: 'Erro no Download',
     description: `${gameName}: ${error}`,
+    game: gameName,
     duration_ms: 6000,
   }
 
@@ -123,6 +140,7 @@ export function notifyInfo(title: string, description?: string): NotificationMes
     type: 'info',
     title,
     description,
+    source: 'VoidLauncher',
     duration_ms: 4000,
   }
 

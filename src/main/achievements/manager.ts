@@ -1,9 +1,11 @@
-import type { GameMetaForAchievements, AchievementListItem } from './types'
+import fs from 'fs'
+import type { GameMetaForAchievements, AchievementListItem, GameAchievementSource, ParsedAchievement, UnlockedAchievement } from './types'
 import { discoverAchievementSources } from './discovery'
 import { AchievementsWatcher } from './watcher'
 import { listUnlockedForGame, mergeUnlockedAchievements, type AchievementStoreEntry } from './store'
 import { getAchievementSchema, getCustomAchievementSchemaForGame, matchAchievementId, type AchievementSchemaItem } from './schema'
 import { resolveSteamAppIdByTitle } from './steamAppId'
+import { parseAchievementsJsonAll, parseIniAll, parseRazor1911AchievementFile } from './parsers'
 
 export type AchievementUnlockedEvent = {
   gameUrl: string
@@ -20,6 +22,120 @@ function gameKey(meta: GameMetaForAchievements): string {
   return `url:${meta.gameUrl}`
 }
 
+function canParseAllFromSource(source: GameAchievementSource): boolean {
+  if (source.isDirectory) return false
+  if (source.kind === 'goldberg_json' || source.kind === 'empress_json') return true
+  if (source.kind === 'razor1911_txt') return true
+  return source.kind.endsWith('_ini') || source.kind === 'creamapi_cfg'
+}
+
+function parseAllFromSource(source: GameAchievementSource): ParsedAchievement[] {
+  if (!canParseAllFromSource(source) || !fs.existsSync(source.path)) return []
+
+  try {
+    if (source.kind === 'goldberg_json' || source.kind === 'empress_json') {
+      return parseAchievementsJsonAll(source.path, source.kind)
+    }
+
+    if (source.kind === 'razor1911_txt') {
+      return parseRazor1911AchievementFile(source.path).map((u) => ({
+        id: u.id,
+        name: u.name,
+        description: u.description,
+        unlocked: true,
+        unlockedAt: u.unlockedAt
+      }))
+    }
+
+    return parseIniAll(source.path, source.kind)
+  } catch (err) {
+    console.warn('[AchievementsManager] Failed to parse local achievement source', source.kind, source.path, err)
+    return []
+  }
+}
+
+function schemaCompletenessScore(item: AchievementSchemaItem): number {
+  let score = 0
+  if (item.name && item.name !== item.id) score += 3
+  if (item.description) score += 3
+  if (item.iconUrl) score += 2
+  if (typeof item.percent === 'number') score += 1
+  if (typeof item.hidden === 'boolean') score += 1
+  return score
+}
+
+function parsedToSchemaItem(parsed: ParsedAchievement): AchievementSchemaItem | null {
+  const id = String(parsed.id || '').trim()
+  if (!id) return null
+
+  return {
+    id,
+    name: String(parsed.name || id).trim(),
+    description: parsed.description ? String(parsed.description).trim() : undefined
+  }
+}
+
+function mergeLocalSchemaItems(items: AchievementSchemaItem[]): AchievementSchemaItem[] {
+  const merged: AchievementSchemaItem[] = []
+
+  for (const item of items) {
+    const existingIndex = merged.findIndex((it) => matchAchievementId(it.id, item.id))
+    if (existingIndex === -1) {
+      merged.push(item)
+      continue
+    }
+
+    const existing = merged[existingIndex]
+    const candidate = schemaCompletenessScore(item) > schemaCompletenessScore(existing) ? item : existing
+    merged[existingIndex] = {
+      ...candidate,
+      id: existing.id,
+      name: candidate.name || existing.name || existing.id,
+      description: candidate.description || existing.description,
+      iconUrl: candidate.iconUrl || existing.iconUrl,
+      percent: candidate.percent ?? existing.percent,
+      hidden: candidate.hidden ?? existing.hidden
+    }
+  }
+
+  return merged
+}
+
+function readLocalAchievementSnapshot(meta: GameMetaForAchievements): {
+  schema: AchievementSchemaItem[]
+  unlocked: UnlockedAchievement[]
+  sources: GameAchievementSource[]
+} {
+  const sources = discoverAchievementSources(meta)
+  const schemaItems: AchievementSchemaItem[] = []
+  const unlocked: UnlockedAchievement[] = []
+
+  for (const source of sources) {
+    const parsed = parseAllFromSource(source)
+    for (const item of parsed) {
+      const schema = parsedToSchemaItem(item)
+      if (schema) schemaItems.push(schema)
+
+      if (item.unlocked) {
+        unlocked.push({
+          id: item.id,
+          name: item.name,
+          description: item.description,
+          unlockedAt: item.unlockedAt,
+          sourcePath: source.path,
+          sourceKind: source.kind
+        })
+      }
+    }
+  }
+
+  return {
+    schema: mergeLocalSchemaItems(schemaItems),
+    unlocked,
+    sources
+  }
+}
+
 export class AchievementsManager {
   private watcherByGameUrl = new Map<string, AchievementsWatcher>()
 
@@ -34,9 +150,11 @@ export class AchievementsManager {
 
     const key = gameKey(meta)
 
-    watcher.start(({ unlocks }) => {
+    watcher.start(({ unlocks, baseline }) => {
       if (!unlocks?.length) return
       const { changed } = mergeUnlockedAchievements(key, unlocks)
+      if (baseline) return
+
       for (const u of changed) {
         const title = u.name || u.id
         onUnlocked({
@@ -68,10 +186,16 @@ export class AchievementsManager {
    * Priority:
    * 1. Custom schema (user-imported JSON)
    * 2. Steam schema (via Web API or Community scraping)
-   * 3. Just unlocked achievements (no schema available)
+   * 3. Local schema from achievement files generated by emulators/cracks
+   * 4. Just unlocked achievements (no schema available)
    */
   async getAchievements(meta: GameMetaForAchievements): Promise<AchievementListItem[]> {
     const key = gameKey(meta)
+    const localSnapshot = readLocalAchievementSnapshot(meta)
+    if (localSnapshot.unlocked.length) {
+      mergeUnlockedAchievements(key, localSnapshot.unlocked)
+    }
+
     const unlocked = listUnlockedForGame(key)
     const unlockedList = Object.values(unlocked)
 
@@ -117,7 +241,13 @@ export class AchievementsManager {
       console.log('[AchievementsManager] No steamAppId available, cannot fetch schema')
     }
 
-    // 3. No schema available - just return unlocked achievements
+    // 3. Use local schema embedded in achievement files when available.
+    if (localSnapshot.schema.length) {
+      console.log(`[AchievementsManager] Using local achievement schema (${localSnapshot.schema.length} items)`)
+      return this.mergeSchemaWithUnlocked(localSnapshot.schema, unlockedList)
+    }
+
+    // 4. No schema available - just return unlocked achievements
     console.log('[AchievementsManager] Returning only unlocked achievements (no schema)')
     return unlockedList
       .map((u) => ({

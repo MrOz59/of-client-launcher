@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Plus, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2 } from 'lucide-react'
+import { AlertCircle, Bell, Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2, Terminal } from 'lucide-react'
 
 interface Settings {
   downloadPath: string
@@ -17,15 +17,46 @@ interface Settings {
   lanControllerUrl?: string
   cloudSavesEnabled: boolean
   minimizeToTray: boolean
+  notificationsEnabled: boolean
+  notificationPosition: string
 }
 
 type DriveFile = { id: string; name: string; modifiedTime?: string }
+type SaveStatus = { state: 'idle' | 'pending' | 'saving' | 'saved' | 'error'; message: string }
+type LauncherDiagnosticCheck = { id: string; label: string; status: 'ok' | 'warn' | 'error' | 'info'; detail?: string }
+type LauncherDiagnostics = {
+  error?: string
+  app?: { platform?: string }
+  linux?: { protonRuntime?: string | null }
+  tools?: { torrentAgentPath?: string | null; ludusaviPath?: string | null }
+  checks?: LauncherDiagnosticCheck[]
+}
 
 function formatMaybeDate(s?: string) {
   if (!s) return '—'
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return s
   return d.toLocaleString()
+}
+
+function settingsSnapshot(settings: Settings) {
+  return JSON.stringify({
+    downloadPath: String(settings.downloadPath || '').trim(),
+    gamesPath: String(settings.gamesPath || '').trim(),
+    autoExtract: !!settings.autoExtract,
+    autoUpdate: !!settings.autoUpdate,
+    parallelDownloads: Math.max(1, Math.min(10, Number(settings.parallelDownloads) || 3)),
+    steamWebApiKey: String(settings.steamWebApiKey || '').trim(),
+    achievementSchemaBaseUrl: String(settings.achievementSchemaBaseUrl || '').trim(),
+    protonDefaultRuntimePath: String(settings.protonDefaultRuntimePath || '').trim(),
+    protonExtraPaths: (settings.protonExtraPaths || []).map(p => String(p).trim()).filter(Boolean).sort(),
+    lanDefaultNetworkId: String(settings.lanDefaultNetworkId || '').trim(),
+    lanControllerUrl: String(settings.lanControllerUrl || '').trim(),
+    cloudSavesEnabled: !!settings.cloudSavesEnabled,
+    minimizeToTray: !!settings.minimizeToTray,
+    notificationsEnabled: !!settings.notificationsEnabled,
+    notificationPosition: String(settings.notificationPosition || 'bottom-right').trim()
+  })
 }
 
 export default function SettingsTab() {
@@ -48,11 +79,17 @@ export default function SettingsTab() {
     lanControllerUrl: 'https://vpn.mroz.dev.br',
     cloudSavesEnabled: true,
     minimizeToTray: false,
+    notificationsEnabled: true,
+    notificationPosition: 'bottom-right',
   })
 
   const [runtimes, setRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [savedSnapshot, setSavedSnapshot] = useState('')
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: 'idle', message: 'Sem alterações' })
+  const [launcherDiagnostics, setLauncherDiagnostics] = useState<LauncherDiagnostics | null>(null)
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
 
   // Drive UI state
   const [driveFiles, setDriveFiles] = useState<DriveFile[] | null>(null)
@@ -81,11 +118,12 @@ export default function SettingsTab() {
         refreshRuntimes(false)
       }
       try {
-        const res = await (window as any).electronAPI.driveStatus?.()
+        const res = await window.electronAPI.driveStatus()
         if (res && typeof res.connected === 'boolean') setDriveConnected(res.connected)
       } catch {
         // ignore
       }
+      loadLauncherDiagnostics()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -104,23 +142,58 @@ export default function SettingsTab() {
       const res = await window.electronAPI.getSettings()
       if (res.success && res.settings) {
         const raw: any = res.settings
-        setSettings((prev) => ({
-          ...prev,
-          ...raw,
-          gamesPath: typeof raw?.gamesPath === 'string' ? raw.gamesPath : prev.gamesPath,
-          protonDefaultRuntimePath: typeof raw?.protonDefaultRuntimePath === 'string'
-            ? raw.protonDefaultRuntimePath
-            : (typeof raw?.protonPath === 'string' ? raw.protonPath : prev.protonDefaultRuntimePath),
-          protonExtraPaths: Array.isArray(raw?.protonExtraPaths)
-            ? raw.protonExtraPaths.filter((p: any) => typeof p === 'string' && p.trim()).map((p: string) => p.trim())
-            : prev.protonExtraPaths,
-        }))
+        setSettings((prev) => {
+          const next: Settings = {
+            ...prev,
+            ...raw,
+            gamesPath: typeof raw?.gamesPath === 'string' ? raw.gamesPath : prev.gamesPath,
+            notificationsEnabled: raw?.notificationsEnabled !== false,
+            notificationPosition: typeof raw?.notificationPosition === 'string' ? raw.notificationPosition : prev.notificationPosition,
+            protonDefaultRuntimePath: typeof raw?.protonDefaultRuntimePath === 'string'
+              ? raw.protonDefaultRuntimePath
+              : (typeof raw?.protonPath === 'string' ? raw.protonPath : prev.protonDefaultRuntimePath),
+            protonExtraPaths: Array.isArray(raw?.protonExtraPaths)
+              ? raw.protonExtraPaths.filter((p: unknown) => typeof p === 'string' && p.trim()).map((p: string) => p.trim())
+              : prev.protonExtraPaths,
+          }
+          setSavedSnapshot(settingsSnapshot(next))
+          return next
+        })
       }
       const isLinux = Boolean(res?.isLinux || res?.platform === 'linux')
       setPlatformInfo({ platform: String(res?.platform || 'unknown'), isLinux })
       return isLinux
+    } catch (err: any) {
+      setSaveStatus({ state: 'error', message: err?.message || 'Falha ao carregar configurações' })
+      return false
     } finally {
       setLoading(false)
+    }
+  }
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!savedSnapshot) return false
+    return settingsSnapshot(settings) !== savedSnapshot
+  }, [savedSnapshot, settings])
+
+  useEffect(() => {
+    if (hasUnsavedChanges && saveStatus.state !== 'saving' && saveStatus.state !== 'error') {
+      setSaveStatus({ state: 'pending', message: 'Alterações não salvas' })
+    } else if (!hasUnsavedChanges && saveStatus.state === 'pending') {
+      setSaveStatus({ state: 'idle', message: 'Sem alterações' })
+    }
+  }, [hasUnsavedChanges, saveStatus.state])
+
+  const loadLauncherDiagnostics = async () => {
+    setDiagnosticsLoading(true)
+    try {
+      const res = await window.electronAPI.getLauncherDiagnostics()
+      if (res.success) setLauncherDiagnostics(res.diagnostics || null)
+      else setLauncherDiagnostics({ error: res.error || 'Falha ao diagnosticar launcher', checks: [] })
+    } catch (err: any) {
+      setLauncherDiagnostics({ error: err?.message || String(err), checks: [] })
+    } finally {
+      setDiagnosticsLoading(false)
     }
   }
 
@@ -187,16 +260,21 @@ export default function SettingsTab() {
 
   const saveSettings = async () => {
     setSaving(true)
+    setSaveStatus({ state: 'saving', message: 'Salvando configurações...' })
     try {
       const res = await window.electronAPI.saveSettings(settings)
       if (!res.success) {
-        alert(res.error || 'Falha ao salvar configurações')
+        setSaveStatus({ state: 'error', message: res.error || 'Falha ao salvar configurações' })
       } else {
+        await loadSettings()
         if (platformInfo.isLinux) {
           refreshRuntimes()
         }
-        alert('Configurações salvas')
+        loadLauncherDiagnostics()
+        setSaveStatus({ state: 'saved', message: 'Configurações salvas' })
       }
+    } catch (err: any) {
+      setSaveStatus({ state: 'error', message: err?.message || 'Falha ao salvar configurações' })
     } finally {
       setSaving(false)
     }
@@ -280,6 +358,13 @@ export default function SettingsTab() {
   const downloadPathHint = settings.downloadPathDefault
     ? `Padrão: ${settings.downloadPathDefault}`
     : 'Padrão: ~/Downloads'
+  const diagnosticSummary = launcherDiagnostics ? [
+    ['Plataforma', launcherDiagnostics.app?.platform || platformInfo.platform],
+    ['Proton', launcherDiagnostics.linux?.protonRuntime ? 'OK' : platformInfo.isLinux ? 'Pendente' : 'N/A'],
+    ['Torrent agent', launcherDiagnostics.tools?.torrentAgentPath ? 'OK' : 'Fallback'],
+    ['Ludusavi', launcherDiagnostics.tools?.ludusaviPath ? 'OK' : 'Ausente']
+  ] : []
+
   return (
     <div className="settings-page">
       {loading && (
@@ -330,6 +415,55 @@ export default function SettingsTab() {
             </div>
           </div>
 
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Bell size={16} />
+                Notificações
+              </div>
+              <div className="settings-card-description">
+                Exibe avisos de conquistas, downloads e eventos importantes do launcher.
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.notificationsEnabled !== false}
+                  onChange={(e) => setSettings({ ...settings, notificationsEnabled: e.target.checked })}
+                />
+                <span className="settings-toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">Posição das notificações</div>
+              <div className="settings-card-description">
+                Define onde os avisos aparecem na tela.
+              </div>
+            </div>
+            <div className="settings-card-control settings-actions-column">
+              <div className="settings-select-wrapper">
+                <select
+                  className="settings-select settings-select-compact"
+                  value={settings.notificationPosition || 'bottom-right'}
+                  onChange={(e) => setSettings({ ...settings, notificationPosition: e.target.value })}
+                >
+                  <option value="bottom-right">Inferior direita</option>
+                  <option value="bottom-left">Inferior esquerda</option>
+                  <option value="top-right">Superior direita</option>
+                  <option value="top-left">Superior esquerda</option>
+                </select>
+                <ChevronDown size={16} className="settings-select-icon" />
+              </div>
+              <button className="settings-btn ghost" onClick={() => window.electronAPI.testNotification('info')}>
+                <Bell size={14} />
+                Testar
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -364,6 +498,9 @@ export default function SettingsTab() {
                   <Folder size={14} />
                   Selecionar
                 </button>
+                <button className="settings-btn ghost" onClick={() => setSettings({ ...settings, gamesPath: '' })}>
+                  Usar padrão
+                </button>
               </div>
             </div>
           </div>
@@ -390,6 +527,9 @@ export default function SettingsTab() {
                 <button className="settings-btn secondary" onClick={selectDownloadPath}>
                   <Folder size={14} />
                   Selecionar
+                </button>
+                <button className="settings-btn ghost" onClick={() => setSettings({ ...settings, downloadPath: '' })}>
+                  Usar padrão
                 </button>
               </div>
             </div>
@@ -430,7 +570,7 @@ export default function SettingsTab() {
                 value={Number.isFinite(settings.parallelDownloads) ? settings.parallelDownloads : 3}
                 onChange={(e) => {
                   const n = parseInt(e.target.value, 10)
-                  setSettings({ ...settings, parallelDownloads: Number.isFinite(n) && n > 0 ? n : 1 })
+                  setSettings({ ...settings, parallelDownloads: Number.isFinite(n) ? Math.max(1, Math.min(10, n)) : 1 })
                 }}
               />
             </div>
@@ -442,15 +582,15 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <RefreshCw size={18} />
-          <h3>Atualizações & Steam</h3>
+          <h3>Atualizações</h3>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Atualizar jogos automaticamente</div>
+              <div className="settings-card-title">Verificar updates ao abrir a biblioteca</div>
               <div className="settings-card-description">
-                Verifica e baixa atualizações automaticamente
+                Atualiza metadados de versão quando a biblioteca é aberta. Downloads continuam sendo iniciados manualmente.
               </div>
             </div>
             <div className="settings-card-control">
@@ -464,7 +604,16 @@ export default function SettingsTab() {
               </label>
             </div>
           </div>
+        </div>
+      </div>
 
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Key size={18} />
+          <h3>Conquistas / Steam</h3>
+        </div>
+
+        <div className="settings-card">
           <div className="settings-card-item">
             <div className="settings-card-info">
               <div className="settings-card-title">
@@ -525,7 +674,7 @@ export default function SettingsTab() {
                   Proton padrão
                 </div>
                 <div className="settings-card-description">
-                  No Linux, jogos Windows rodam via Proton automaticamente. Usamos os Protons instalados na Steam.
+                  Runtime usado por padrão para jogos Windows no Linux. O launcher também procura Protons da Steam, Heroic e caminhos extras.
                 </div>
               </div>
               <div className="settings-proton-control">
@@ -655,7 +804,7 @@ export default function SettingsTab() {
                 Conecte sua conta Google para salvar/restaurar backups.
               </div>
             </div>
-            <div className="settings-card-control" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+            <div className="settings-card-control settings-actions-column">
               <div className={`settings-status-badge ${driveConnected ? 'connected' : 'disconnected'}`}>
                 {driveConnected ? <Check size={14} /> : <X size={14} />}
                 {driveConnected ? 'Conectado ao Google Drive' : 'Não conectado'}
@@ -672,7 +821,7 @@ export default function SettingsTab() {
                   className="settings-btn ghost"
                   onClick={async () => {
                     try {
-                      const res = await (window as any).electronAPI.driveDisconnect?.()
+                      const res = await window.electronAPI.driveDisconnect()
                       if (res?.success) {
                         setDriveConnected(false)
                         setDriveStatusTimed('Desconectado')
@@ -715,8 +864,8 @@ export default function SettingsTab() {
           </div>
 
           {driveFiles && driveFiles.length > 0 && (
-            <div className="settings-card-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-              <div className="settings-card-info" style={{ marginBottom: '12px' }}>
+            <div className="settings-card-item vertical">
+              <div className="settings-card-info settings-card-info-spaced">
                 <div className="settings-card-title">Backups no Drive</div>
                 <div className="settings-card-description">
                   Lista dos arquivos dentro da pasta <code>OF-Client-Saves</code> no seu Drive.
@@ -753,6 +902,73 @@ export default function SettingsTab() {
         </div>
       </div>
 
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Terminal size={18} />
+          <h3>Diagnóstico do launcher</h3>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-item vertical">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Terminal size={16} />
+                Compatibilidade e ferramentas
+              </div>
+              <div className="settings-card-description">
+                Verifica paths, torrent agent, Cloud Saves, Proton, Steam Overlay, EOS Overlay, Wayland e Gamescope.
+              </div>
+            </div>
+
+            <div className="settings-btn-row">
+              <button className="settings-btn secondary" onClick={loadLauncherDiagnostics} disabled={diagnosticsLoading}>
+                <RefreshCw size={14} className={diagnosticsLoading ? 'of-spin' : ''} />
+                Atualizar diagnóstico
+              </button>
+            </div>
+
+            {launcherDiagnostics?.error ? (
+              <div className="settings-inline-error">
+                <AlertCircle size={14} />
+                <span>{launcherDiagnostics.error}</span>
+              </div>
+            ) : null}
+
+            {launcherDiagnostics ? (
+              <>
+                <div className="diagnostic-summary">
+                  {diagnosticSummary.map(([label, value]) => (
+                    <div className="diagnostic-summary-item" key={label}>
+                      <span>{label}</span>
+                      <strong>{value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="diagnostic-check-list">
+                  {(launcherDiagnostics.checks || []).map((check) => (
+                    <div className={`diagnostic-check diagnostic-check--${check.status}`} key={check.id}>
+                      <div className="diagnostic-check-status">
+                        {check.status === 'ok' ? <Check size={14} /> : check.status === 'error' ? <AlertCircle size={14} /> : <Info size={14} />}
+                      </div>
+                      <div className="diagnostic-check-body">
+                        <strong>{check.label}</strong>
+                        <span>{check.detail || '—'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="settings-empty-state">
+                <Terminal size={32} />
+                <span>Diagnóstico ainda não carregado</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* About Section */}
       <div className="settings-section">
         <div className="settings-section-header">
@@ -775,10 +991,13 @@ export default function SettingsTab() {
 
       {/* Save Button */}
       <div className="settings-footer">
+        <div className="config-save-pill" data-status={saveStatus.state}>
+          {saveStatus.message}
+        </div>
         <button
           className="settings-btn primary lg"
           onClick={saveSettings}
-          disabled={saving}
+          disabled={saving || !hasUnsavedChanges}
         >
           {saving ? (
             <><RefreshCw size={16} className="of-spin" /> Salvando...</>

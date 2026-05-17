@@ -42,7 +42,9 @@ import {
   compactProtonLogParts,
   extractInterestingProtonLog,
   findExecutableInDir,
-  waitMs
+  waitMs,
+  normalizeSteamId,
+  resolveOverlayCompatibility
 } from '../utils'
 import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
 import { ensureLegendaryAvailable } from '../legendary'
@@ -158,6 +160,47 @@ function readProcCmdlineArgs(pid: string): string[] {
   const raw = readProcText(pid, 'cmdline')
   if (!raw) return []
   return raw.split('\0').filter(Boolean)
+}
+
+function readProcParentPid(pid: string): number | null {
+  const stat = readProcText(pid, 'stat')
+  if (!stat) return null
+  const end = stat.lastIndexOf(')')
+  if (end < 0) return null
+  const rest = stat.slice(end + 2).trim().split(/\s+/)
+  const ppid = Number(rest[1])
+  return Number.isFinite(ppid) && ppid > 0 ? ppid : null
+}
+
+function listChildProcessPids(rootPid?: number | null): number[] {
+  if (!rootPid || process.platform !== 'linux') return []
+  let entries: string[] = []
+  try {
+    entries = fs.readdirSync('/proc').filter(p => /^\d+$/.test(p))
+  } catch {
+    return []
+  }
+
+  const children = new Map<number, number[]>()
+  for (const pidText of entries) {
+    const ppid = readProcParentPid(pidText)
+    if (!ppid) continue
+    const pid = Number(pidText)
+    if (!children.has(ppid)) children.set(ppid, [])
+    children.get(ppid)?.push(pid)
+  }
+
+  const out: number[] = []
+  const queue = [rootPid]
+  const seen = new Set<number>()
+  while (queue.length) {
+    const pid = queue.shift() as number
+    if (seen.has(pid)) continue
+    seen.add(pid)
+    if (pid !== rootPid && isPidAlive(pid)) out.push(pid)
+    for (const child of children.get(pid) || []) queue.push(child)
+  }
+  return out
 }
 
 const IGNORED_WINE_EXE_NAMES = new Set([
@@ -406,6 +449,12 @@ function getTrackedGamePids(entry?: RunningGameProc): number[] {
   if (entry?.pid && isPidAlive(entry.pid)) pids.add(entry.pid)
   const childPid = Number(entry?.child?.pid || 0)
   if (childPid && isPidAlive(childPid)) pids.add(childPid)
+  for (const pid of entry?.pidTree || []) {
+    if (pid && isPidAlive(pid)) pids.add(pid)
+  }
+  for (const pid of listChildProcessPids(childPid || entry?.pid)) {
+    if (pid && isPidAlive(pid)) pids.add(pid)
+  }
   if (entry?.installDir) {
     for (const pid of listLinuxHandoffPids({
       installDir: entry.installDir,
@@ -417,6 +466,51 @@ function getTrackedGamePids(entry?: RunningGameProc): number[] {
     }
   }
   return Array.from(pids)
+}
+
+function listPrefixRuntimePids(prefixPath?: string | null): number[] {
+  if (!prefixPath || process.platform !== 'linux') return []
+  const prefixCandidates = [
+    String(prefixPath).toLowerCase(),
+    resolveWinePrefixPath(prefixPath).toLowerCase()
+  ]
+  const out: number[] = []
+  let entries: string[] = []
+  try { entries = fs.readdirSync('/proc') } catch { return out }
+  for (const ent of entries) {
+    if (!/^\d+$/.test(ent)) continue
+    const pid = Number(ent)
+    if (!pid || !isPidAlive(pid)) continue
+    const comm = readProcText(ent, 'comm')?.trim().toLowerCase() || ''
+    if (!['wineserver', 'services.exe', 'winedevice.exe', 'plugplay.exe', 'rpcss.exe'].includes(comm)) continue
+    const envRaw = readProcText(ent, 'environ')
+    const envLower = String(envRaw || '').toLowerCase()
+    if (prefixCandidates.some(p => envLower.includes(`wineprefix=${p}`) || envLower.includes(`steam_compat_data_path=${p}`))) {
+      out.push(pid)
+    }
+  }
+  return out
+}
+
+function getStopTargetPids(entry?: RunningGameProc): number[] {
+  const pids = new Set<number>(getTrackedGamePids(entry))
+  for (const pid of listPrefixRuntimePids(entry?.prefixPath)) {
+    if (pid && isPidAlive(pid)) pids.add(pid)
+  }
+  return Array.from(pids)
+}
+
+function refreshTrackedGameEntry(entry?: RunningGameProc): { pids: number[]; entry?: RunningGameProc } {
+  if (!entry) return { pids: [] }
+  const pids = getTrackedGamePids(entry)
+  const next = {
+    ...entry,
+    pid: pids[0] || entry.pid,
+    pidTree: pids,
+    lastSeenPids: pids.length ? pids : entry.lastSeenPids,
+    lastVerifiedAt: Date.now()
+  }
+  return { pids, entry: next }
 }
 
 function isEosOverlayPathValid(p: string | null): boolean {
@@ -799,20 +893,22 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         activePrefixPath = prefixPath
 
         // Detect OnlineFix overlay IDs (Steam vs Epic)
-        let iniSteamAppId: string | null = null
-        let iniOverlayAppId: string | null = null
-        let iniRealAppId: string | null = null
-        let epicProductId: string | null = null
+        const onlineFixIds: {
+          steamAppId?: string | null
+          fakeAppId?: string | null
+          realAppId?: string | null
+          epicProductId?: string | null
+        } = {}
         try {
           const found = await findAndReadOnlineFixIni(installDir)
           if (found?.content) {
             const ids = extractOnlineFixOverlayIds(found.content)
-            iniSteamAppId = ids.fakeAppId || ids.steamAppId || ids.realAppId || null
-            iniOverlayAppId = ids.fakeAppId || ids.steamAppId || ids.realAppId || null
-            iniRealAppId = ids.realAppId || null
-            epicProductId = ids.epicProductId || null
-            if (iniSteamAppId) {
-              console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', iniSteamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
+            onlineFixIds.steamAppId = ids.steamAppId || null
+            onlineFixIds.fakeAppId = ids.fakeAppId || null
+            onlineFixIds.realAppId = ids.realAppId || null
+            onlineFixIds.epicProductId = ids.epicProductId || null
+            if (onlineFixIds.steamAppId) {
+              console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', onlineFixIds.steamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
             }
             if (ids.fakeAppId) {
               console.log('[Launch] ✅ OnlineFix.ini Fake AppID:', ids.fakeAppId)
@@ -820,33 +916,38 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
             if (ids.realAppId) {
               console.log('[Launch] ✅ OnlineFix.ini Real AppID:', ids.realAppId)
             }
-            if (epicProductId) console.log('[Launch] ✅ OnlineFix.ini Epic Product ID:', epicProductId)
+            if (onlineFixIds.epicProductId) console.log('[Launch] ✅ OnlineFix.ini Epic Product ID:', onlineFixIds.epicProductId)
           }
         } catch (err: any) {
           console.warn('[Launch] Failed to read OnlineFix.ini for overlay IDs:', err?.message || err)
         }
 
-        const normalizeSteamId = (v?: string | null): string | null => {
-          const s = String(v || '').trim()
-          if (!s || !/^\d+$/.test(s) || s === '0') return null
-          return s
-        }
         const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
-        const steamAppId =
-          normalizeSteamId(iniSteamAppId) ||
-          normalizeSteamId(game?.steam_app_id as string | null) ||
-          normalizeSteamId(detectedSteamAppId)
-        const hasSteamIdentity = Boolean(iniOverlayAppId || iniSteamAppId || steamAppId)
-        const overlayGameId = normalizeSteamId(iniOverlayAppId) || steamAppId || (hasSteamIdentity ? '480' : null)
-        const isEpic = Boolean(epicProductId)
-        const enableSteamOverlay = !isEpic && protonOpts.steamOverlay !== false && Boolean(overlayGameId || steamAppId)
-        const enableEosOverlay = isEpic
+        const overlayPolicy = resolveOverlayCompatibility({
+          installPath: installDir,
+          onlineFix: onlineFixIds,
+          configuredSteamAppId: game?.steam_app_id as string | null,
+          detectedSteamAppId,
+          protonOptions: protonOpts
+        })
+        const steamAppId = overlayPolicy.realSteamAppId || overlayPolicy.steamOverlayAppId
+        const overlayGameId = overlayPolicy.steamOverlayAppId
+        const enableSteamOverlay = overlayPolicy.enableSteamOverlay
+        const enableEosOverlay = overlayPolicy.enableEosOverlay
+        console.log('[Launch] 🧭 Overlay policy:', {
+          store: overlayPolicy.store,
+          selectedOverlay: overlayPolicy.selectedOverlay,
+          steamOverlayAppId: overlayPolicy.steamOverlayAppId,
+          realSteamAppId: overlayPolicy.realSteamAppId,
+          reason: overlayPolicy.reason,
+          warnings: overlayPolicy.warnings
+        })
 
         writeGameDesktopEntry({
           gameUrl,
           title: game.title,
           exePath,
-          appId: normalizeSteamId(iniRealAppId) || normalizeSteamId(detectedSteamAppId) || normalizeSteamId(steamAppId),
+          appId: overlayPolicy.realSteamAppId || normalizeSteamId(detectedSteamAppId) || normalizeSteamId(steamAppId),
           icon: game.image_url || null
         })
 
@@ -1003,7 +1104,10 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
             if (handoffPid) {
               console.warn('[Launch] Launcher repassou execução para PID:', handoffPid)
               const existing = runningGames.get(gameUrl)
-              if (existing) runningGames.set(gameUrl, { ...existing, pid: handoffPid })
+              if (existing) {
+                const updated = { ...existing, pid: handoffPid, handoffPid, pidTree: getTrackedGamePids({ ...existing, pid: handoffPid }), lastVerifiedAt: Date.now() }
+                runningGames.set(gameUrl, updated)
+              }
               setCurrentGamePid(handoffPid)
               sendGameLaunchStatus({
                 gameUrl,
@@ -1024,7 +1128,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
             }
           }
 
-          const handoffNoPid = !handoffPid && isEpic && earlyExit
+          const handoffNoPid = !handoffPid && overlayPolicy.store === 'epic' && earlyExit
           const effectiveCode = handoffPid || handoffNoPid ? 0 : code
           const effectiveSignal = handoffPid || handoffNoPid ? null : signal
           if (handoffNoPid) {
@@ -1227,6 +1331,10 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         runningGames.set(gameUrl, {
           pid: child.pid,
           child,
+          pidTree: [child.pid],
+          lastSeenPids: [child.pid],
+          handoffPid: null,
+          lastVerifiedAt: Date.now(),
           protonLogPath,
           startedAt: Date.now(),
           overlaySessionId,
@@ -1285,9 +1393,10 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
               if (NOTIFICATIONS_ENABLED) {
                 try {
                   const notif = notifyAchievementUnlocked(
-                    ev.achievement?.displayName || ev.achievement?.name || 'Achievement Unlocked',
-                    ev.achievement?.description,
-                    ev.achievement?.icon
+                    ev.title || ev.achievement?.displayName || ev.achievement?.name || 'Achievement Unlocked',
+                    ev.description || ev.achievement?.description,
+                    ev.icon || ev.achievement?.icon,
+                    game.title || undefined
                   )
                   
                   // Send to in-game overlay if game is running
@@ -1313,7 +1422,12 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       console.log('[Launch] ✅ Game process started successfully (PID:', child.pid, ')')
       console.log('[Launch] ========================================')
       const entryForStatus = runningGames.get(gameUrl)
-      sendGameLaunchStatus({ gameUrl, status: 'running', pid: entryForStatus?.pid || child.pid, protonLogPath, message: 'Em execução' })
+      if (entryForStatus) {
+        const refreshed = refreshTrackedGameEntry(entryForStatus)
+        if (refreshed.entry) runningGames.set(gameUrl, refreshed.entry)
+      }
+      const verifiedEntry = runningGames.get(gameUrl)
+      sendGameLaunchStatus({ gameUrl, status: 'running', pid: verifiedEntry?.pid || child.pid, protonLogPath, message: 'Em execução' })
 
       return { success: true }
 
@@ -1328,7 +1442,9 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
   ipcMain.handle('stop-game', async (_event, gameUrl: string, force?: boolean) => {
     try {
       const entry = runningGames.get(gameUrl)
-      const initialPids = getTrackedGamePids(entry)
+      const refreshed = refreshTrackedGameEntry(entry)
+      if (refreshed.entry) runningGames.set(gameUrl, refreshed.entry)
+      const initialPids = getStopTargetPids(refreshed.entry || entry)
       if (!entry || initialPids.length === 0) {
         try { runningGames.delete(gameUrl) } catch {}
         try { achievementsManager.stopWatching(gameUrl) } catch {}
@@ -1343,13 +1459,13 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const waitMs = async (ms: number) => await new Promise<void>(r => setTimeout(r, ms))
       await waitMs(2500)
 
-      let remaining = getTrackedGamePids(entry)
+      let remaining = getStopTargetPids(runningGames.get(gameUrl))
       if (force === true || remaining.length > 0) {
         for (const pid of remaining) killProcessTreeBestEffort(pid, 'SIGKILL')
         await waitMs(800)
       }
 
-      remaining = getTrackedGamePids(entry)
+      remaining = getStopTargetPids(runningGames.get(gameUrl))
       if (remaining.length === 0) {
         try { runningGames.delete(gameUrl) } catch {}
         try { achievementsManager.stopWatching(gameUrl) } catch {}
@@ -1385,10 +1501,11 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
   ipcMain.handle('is-game-running', async (_event, gameUrl: string) => {
     try {
       const entry = runningGames.get(gameUrl)
-      const pids = getTrackedGamePids(entry)
+      const refreshed = refreshTrackedGameEntry(entry)
+      const pids = refreshed.pids
       if (!entry || pids.length === 0) return { running: false }
-      if (entry.pid !== pids[0]) runningGames.set(gameUrl, { ...entry, pid: pids[0] })
-      return { running: true, pid: pids[0], startedAt: entry?.startedAt }
+      if (refreshed.entry) runningGames.set(gameUrl, refreshed.entry)
+      return { running: true, pid: pids[0], pids, startedAt: entry?.startedAt, lastVerifiedAt: refreshed.entry?.lastVerifiedAt }
     } catch {
       return { running: false }
     }

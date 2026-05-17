@@ -1,0 +1,15 @@
+{
+  "name": "void-toast-overlay",
+  "version": "0.1.0",
+  "description": "Standalone Steam-like toast notification binary for launchers",
+  "scripts": {
+    "dev": "npx tauri dev -- --title=\"Teste\" --message=\"Notificação de teste\" --game=\"VoidLauncher\" --icon=🏆 --duration=5000",
+    "dev:x11": "WAYLAND_DISPLAY='' GDK_BACKEND=x11 RUST_BACKTRACE=1 npx tauri dev -- --title=\"Teste X11\" --message=\"Notificação via XWayland\" --game=\"VoidLauncher\" --icon=🏆 --duration=5000",
+    "build:linux": "bash scripts/build-standalone.sh linux",
+    "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-standalone.ps1 windows",
+    "build:all": "npm run build:linux && npm run build:windows"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.2"
+  }
+}

@@ -23,6 +23,7 @@ import {
   processUpdateExtraction,
   normalizeGameInstallDir,
   getDownloadQueueStatus,
+  reconcileDownloadState,
   prioritizeDownload,
   removeFromQueue,
   swapActiveDownload
@@ -30,6 +31,7 @@ import {
 import { extractZipWithPassword } from '../zip'
 import { findArchive, findExecutableInDir } from '../utils'
 import { sanitizeVersionText, isKnownUnknownVersion } from '../utils/versionUtils'
+import { notifyDownloadComplete } from '../desktopNotifications'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 // Helper to resolve game version
@@ -134,6 +136,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
 
   ipcMain.handle('get-active-downloads', async () => {
     try {
+      reconcileDownloadState('get-active-downloads')
       const downloads = getActiveDownloads()
       return { success: true, downloads }
     } catch (err: any) {
@@ -225,6 +228,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           infoHash: infoHash || undefined,
           destPath: target
         })
+        try { notifyDownloadComplete(String(record?.title || 'Jogo')) } catch {}
 
         // Update game info
         if (gameUrl) {
@@ -334,6 +338,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         infoHash: infoHash || undefined,
         destPath: destDir
       })
+      try { notifyDownloadComplete(String(record?.title || 'Jogo')) } catch {}
 
       // Add to library after extraction
       if (gameUrl) {
@@ -387,8 +392,18 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
 
   ipcMain.handle('get-download-queue-status', async () => {
     try {
+      reconcileDownloadState('get-download-queue-status')
       const status = getDownloadQueueStatus()
       return { success: true, status }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('reconcile-downloads', async () => {
+    try {
+      const result = reconcileDownloadState('ipc')
+      return { success: true, result }
     } catch (err: any) {
       return { success: false, error: err.message }
     }

@@ -693,6 +693,23 @@ export function getActiveTorrentIds(): string[] {
   return Array.from(new Set([...activeTorrents.values()].flatMap(r => Array.from(r.aliases))))
 }
 
+export function getActiveTorrentSnapshots() {
+  const seen = new Set<ActiveTorrent>()
+  const out: Array<{ aliases: string[]; infoHash?: string; source: string; destPath: string; pausedRequested?: boolean }> = []
+  for (const record of activeTorrents.values()) {
+    if (seen.has(record)) continue
+    seen.add(record)
+    out.push({
+      aliases: Array.from(record.aliases),
+      infoHash: record.infoHash,
+      source: record.source,
+      destPath: record.destPath,
+      pausedRequested: !!record.pausedRequested
+    })
+  }
+  return out
+}
+
 export async function downloadTorrent(
   magnetOrTorrent: string,
   destPath: string,

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 352px;
+      height: 116px;
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #toast-stack {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 8px;
+      width: 352px;
+      height: 116px;
+      padding-bottom: 0;
+      pointer-events: none;
+    }
+
+    .toast-item {
+      opacity: 0;
+      pointer-events: none;
+      flex-shrink: 0;
+    }
+
+    .toast-item.animate-in {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .toast-item.out {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .toast {
+      width: 340px;
+      min-height: 84px;
+      background:
+        radial-gradient(260px 130px at 8% 0%, rgba(59, 130, 246, 0.12), transparent 62%),
+        linear-gradient(135deg, rgba(24, 24, 30, 0.97), rgba(10, 10, 12, 0.99));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-top-color: rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      padding: 12px 12px 14px;
+      gap: 12px;
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+      -webkit-app-region: no-drag;
+      box-shadow:
+        0 8px 22px rgba(0, 0, 0, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .toast::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--accent, #3b82f6), rgba(59, 130, 246, 0.25));
+    }
+
+    .toast--achievement_unlocked { --accent: #f59e0b; --accent-rgb: 245, 158, 11; }
+    .toast--download_complete { --accent: #10b981; --accent-rgb: 16, 185, 129; }
+    .toast--download_error { --accent: #ef4444; --accent-rgb: 239, 68, 68; }
+    .toast--info { --accent: #3b82f6; --accent-rgb: 59, 130, 246; }
+
+    .toast-icon {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1;
+      color: #ffffff;
+      background:
+        linear-gradient(135deg, rgba(var(--accent-rgb, 59, 130, 246), 0.28), rgba(255, 255, 255, 0.06));
+      border: 1px solid rgba(var(--accent-rgb, 59, 130, 246), 0.34);
+      border-radius: 10px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .toast-icon img {
+      width: 100%;
+      height: 100%;
+      border-radius: 9px;
+      object-fit: cover;
+    }
+
+    .void-mark {
+      letter-spacing: 0;
+      text-shadow: 0 0 14px rgba(var(--accent-rgb, 59, 130, 246), 0.45);
+    }
+
+    .toast-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .toast-source {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 10px;
+      font-weight: 800;
+      color: rgba(255, 255, 255, 0.48);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      line-height: 1.3;
+    }
+
+    .toast-title {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toast-message {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.64);
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toast-close {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 14px;
+      line-height: 1;
+      border-radius: 8px;
+      transition: color 0.15s, background 0.15s;
+      margin-left: 2px;
+      align-self: flex-start;
+    }
+
+    .toast-close:hover {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.10);
+    }
+
+    .progress {
+      position: absolute;
+      bottom: 0;
+      left: 3px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent, #3b82f6), rgba(var(--accent-rgb, 59, 130, 246), 0.38));
+      width: calc(100% - 3px);
+      transform-origin: left center;
+    }
+
+    @keyframes shrink {
+      from { width: 100%; }
+      to   { width: 0%;   }
+    }
+
+    .toast:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+      background:
+        radial-gradient(260px 130px at 8% 0%, rgba(var(--accent-rgb, 59, 130, 246), 0.16), transparent 62%),
+        linear-gradient(135deg, rgba(31, 31, 38, 0.98), rgba(13, 13, 16, 0.99));
+    }
+  </style>
+</head>
+<body>
+  <div id="toast-stack"></div>
+
+  <script>
+    const DEFAULT_ICON = `<span class="void-mark">V</span>`
+
+    const stack = document.getElementById('toast-stack')
+    const MAX_VISIBLE = 1
+    let active = [] // { id, el, timer }
+    let queue  = [] // params aguardando
+
+    function buildIcon(icon) {
+      if (!icon) return DEFAULT_ICON
+      const s = String(icon).trim()
+      if (/^(https?:\/\/|data:image\/)/.test(s) || /\.(png|jpg|jpeg|webp|gif|svg)$/i.test(s))
+        return `<img src="${s}" alt="icon" onerror="this.style.display='none'">`
+      return `<span class="void-mark">${escapeHtml(s.slice(0, 3))}</span>`
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+    }
+
+    function normalizeType(type) {
+      const value = String(type || 'info').replace(/[^a-z0-9_-]/gi, '').toLowerCase()
+      return value || 'info'
+    }
+
+    function createToastEl(params, id) {
+      const duration = params.duration || 5000
+      const type = normalizeType(params.type)
+      const el = document.createElement('div')
+      el.className = 'toast-item'
+      el.innerHTML = `
+        <div class="toast toast--${type}">
+          <div class="toast-icon">${buildIcon(params.icon)}</div>
+          <div class="toast-body">
+            <div class="toast-source">${escapeHtml(params.game || 'VoidLauncher')}</div>
+            <div class="toast-title">${escapeHtml(params.title || 'Notificação')}</div>
+            ${params.message ? `<div class="toast-message">${escapeHtml(params.message)}</div>` : ''}
+          </div>
+          <div class="toast-close" title="Fechar">✕</div>
+          <div class="progress" style="animation: shrink ${duration}ms linear forwards"></div>
+        </div>`
+      el.querySelector('.toast-close').addEventListener('click', e => { e.stopPropagation(); dismissById(id) })
+      el.querySelector('.toast').addEventListener('click', () => dismissById(id))
+      return el
+    }
+
+    function addToast(params) {
+      if (active.length >= MAX_VISIBLE) {
+        queue.push(params)
+        return
+      }
+      const id = Date.now() + Math.random()
+      const el = createToastEl(params, id)
+      stack.appendChild(el)
+      // double rAF garante que transição CSS dispara após insert
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('animate-in')))
+      const duration = params.duration || 5000
+      const timer = setTimeout(() => dismissById(id), duration)
+      active.push({ id, el, timer })
+    }
+
+    function dismissById(id) {
+      const idx = active.findIndex(t => t.id === id)
+      if (idx === -1) return
+      const { el, timer } = active[idx]
+      clearTimeout(timer)
+      active.splice(idx, 1)
+      el.classList.remove('animate-in')
+      el.remove()
+      if (active.length === 0 && queue.length === 0) {
+        window.__TAURI__.core.invoke('hide_toast_window').catch(() => {})
+      }
+      if (queue.length > 0) addToast(queue.shift())
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      const { invoke } = window.__TAURI__.core
+      const { listen }  = window.__TAURI__.event
+      // Modo standalone
+      const initial = await invoke('toast_ready').catch(() => null)
+      if (initial) addToast(initial)
+      // Modo controller: Rust emite toast-params via show_toast()
+      listen('toast-params', ({ payload }) => addToast(payload))
+    })
+  </script>
+</body>
+</html>

@@ -4,6 +4,7 @@
 import type { BrowserWindow } from 'electron'
 import type { AchievementsManager } from '../achievements/manager'
 import type { AchievementOverlay } from '../achievements/overlay'
+import type { LauncherTask } from '../taskManager'
 
 // ============================================================================
 // Payload Types
@@ -68,6 +69,10 @@ export type CloudSavesStatusPayload = {
 export type RunningGameProc = {
   pid: number
   child: any
+  pidTree?: number[]
+  lastSeenPids?: number[]
+  handoffPid?: number | null
+  lastVerifiedAt?: number
   protonLogPath?: string
   startedAt?: number
   overlaySessionId?: string
@@ -110,6 +115,7 @@ export interface IpcContext {
 
   // Notification helpers
   sendDownloadProgress: (payload: DownloadProgressPayload) => void
+  sendTaskStatus: (payload: Partial<LauncherTask> & { id: string; kind: LauncherTask['kind']; status: LauncherTask['status'] }) => void
   sendUpdateQueueStatus: () => void
   sendGameLaunchStatus: (payload: GameLaunchStatusPayload) => void
   sendPrefixJobStatus: (payload: PrefixJobStatusPayload) => void

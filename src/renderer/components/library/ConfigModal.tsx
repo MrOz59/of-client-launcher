@@ -149,6 +149,10 @@ export function ConfigModal(props: ConfigModalProps) {
               <Monitor size={14} />
               <span>Proton</span>
             </button>}
+            <button className={configTab === 'diagnostico' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('diagnostico')} type="button">
+              <Terminal size={14} />
+              <span>Diagnóstico</span>
+            </button>
             <button className={configTab === 'lan' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('lan')} type="button">
               <Users size={14} />
               <span>LAN</span>
@@ -158,6 +162,7 @@ export function ConfigModal(props: ConfigModalProps) {
           {configTab === 'geral' && <GeneralTab {...props} />}
           {configTab === 'onlinefix' && <OnlineFixTab {...props} />}
           {isLinux && configTab === 'proton' && <ProtonTab {...props} />}
+          {configTab === 'diagnostico' && <DiagnosticsTab {...props} />}
           {configTab === 'lan' && <LanTab {...props} />}
         </div>
       </div>
@@ -957,6 +962,226 @@ function ProtonTab(props: ConfigModalProps) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function DiagnosticsTab(props: ConfigModalProps) {
+  const { game } = props
+  const [loading, setLoading] = useState(false)
+  const [repairing, setRepairing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [repairResult, setRepairResult] = useState<any[] | null>(null)
+  const [diagnostics, setDiagnostics] = useState<any | null>(null)
+
+  const loadDiagnostics = React.useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await window.electronAPI.getGameDiagnostics(game.url)
+      if (!res.success) {
+        setError(res.error || 'Falha ao gerar diagnóstico')
+        setDiagnostics(null)
+      } else {
+        setDiagnostics(res.diagnostics || null)
+        setRepairResult(null)
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Falha ao gerar diagnóstico')
+      setDiagnostics(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [game.url])
+
+  React.useEffect(() => {
+    loadDiagnostics()
+  }, [loadDiagnostics])
+
+  const copyJson = async () => {
+    if (!diagnostics) return
+    await navigator.clipboard?.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => {})
+  }
+
+  const runRepair = async () => {
+    if (!diagnostics || repairing) return
+    setRepairing(true)
+    setError(null)
+    setRepairResult(null)
+    try {
+      const res = await window.electronAPI.repairGameDiagnostics(game.url)
+      if (!res.success) {
+        setError(res.error || 'Falha ao autocorrigir diagnóstico')
+        setRepairResult(res.actions || null)
+      } else {
+        setDiagnostics(res.diagnostics || null)
+        setRepairResult(res.actions || [])
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Falha ao autocorrigir diagnóstico')
+    } finally {
+      setRepairing(false)
+    }
+  }
+
+  const renderValue = (value: any) => {
+    if (value === null || value === undefined || value === '') return '—'
+    if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
+    return String(value)
+  }
+
+  const summaryItems = diagnostics ? [
+    ['Executável', diagnostics.paths?.executable?.exists ? 'OK' : 'Ausente'],
+    ['Prefixo', diagnostics.paths?.prefix?.exists ? 'OK' : 'Pendente'],
+    ['Loja', diagnostics.overlayCompatibility?.store ? String(diagnostics.overlayCompatibility.store).toUpperCase() : '—'],
+    ['Overlay', diagnostics.overlayCompatibility?.selectedOverlay ? String(diagnostics.overlayCompatibility.selectedOverlay).toUpperCase() : 'Inativo']
+  ] : []
+  const repairActions = diagnostics?.repairActions || []
+
+  return (
+    <div className="modal-section">
+      <div className="config-section">
+        <div className="config-section-header">
+          <Terminal size={18} />
+          <h4>Diagnóstico do jogo</h4>
+          <button className="config-section-action" onClick={loadDiagnostics} disabled={loading} title="Atualizar diagnóstico">
+            <RefreshCw size={14} className={loading ? 'of-spin' : ''} />
+          </button>
+          <button className="config-section-action" onClick={runRepair} disabled={!diagnostics || repairing || repairActions.length === 0} title="Autocorrigir problemas detectados">
+            <Wrench size={14} className={repairing ? 'of-spin' : ''} />
+          </button>
+          <button className="config-section-action" onClick={copyJson} disabled={!diagnostics} title="Copiar diagnóstico em JSON">
+            <Copy size={14} />
+          </button>
+        </div>
+        <div className="config-section-content">
+          {error ? (
+            <div className="config-error">
+              <AlertCircle size={14} />
+              <span>{error}</span>
+            </div>
+          ) : null}
+
+          {!diagnostics && !error ? (
+            <div className="config-progress">
+              <RefreshCw size={14} className="of-spin" />
+              <span>Coletando informações...</span>
+            </div>
+          ) : null}
+
+          {diagnostics ? (
+            <>
+              <div className="diagnostic-summary">
+                {summaryItems.map(([label, value]) => (
+                  <div className="diagnostic-summary-item" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {repairActions.length > 0 ? (
+                <div className="diagnostic-repair-panel">
+                  <div className="diagnostic-repair-header">
+                    <div>
+                      <strong>{repairActions.length} autocorreção{repairActions.length === 1 ? '' : 'ões'} disponível{repairActions.length === 1 ? '' : 'is'}</strong>
+                      <span>O launcher pode aplicar ajustes seguros para este jogo.</span>
+                    </div>
+                    <button className="config-btn primary" onClick={runRepair} disabled={repairing}>
+                      {repairing ? (
+                        <><RefreshCw size={14} className="of-spin" /> Corrigindo...</>
+                      ) : (
+                        <><Wrench size={14} /> Autocorrigir</>
+                      )}
+                    </button>
+                  </div>
+                  <div className="diagnostic-repair-list">
+                    {repairActions.map((action: any) => (
+                      <div key={action.id}>
+                        <span>{action.label}</span>
+                        <code>{action.detail || '—'}</code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="diagnostic-repair-empty">
+                  <Check size={14} />
+                  <span>Nenhuma autocorreção segura pendente.</span>
+                </div>
+              )}
+
+              {repairResult ? (
+                <div className="diagnostic-repair-result">
+                  {repairResult.length === 0 ? (
+                    <div><Check size={14} /><span>Nenhuma alteração necessária.</span></div>
+                  ) : repairResult.map((result: any) => (
+                    <div className={`diagnostic-repair-result--${result.status}`} key={`${result.id}-${result.status}`}>
+                      {result.status === 'done' ? <Check size={14} /> : result.status === 'error' ? <AlertCircle size={14} /> : <Terminal size={14} />}
+                      <span>{result.label}: {result.detail || result.status}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="diagnostic-check-list">
+                {(diagnostics.checks || []).map((check: any) => (
+                  <div className={`diagnostic-check diagnostic-check--${check.status}`} key={check.id}>
+                    <div className="diagnostic-check-status">
+                      {check.status === 'ok' ? <Check size={14} /> : check.status === 'error' ? <AlertCircle size={14} /> : <Terminal size={14} />}
+                    </div>
+                    <div className="diagnostic-check-body">
+                      <strong>{check.label}</strong>
+                      <span>{check.detail || '—'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      {diagnostics ? (
+        <>
+          <div className="config-section">
+            <div className="config-section-header">
+              <Monitor size={18} />
+              <h4>Ambiente</h4>
+            </div>
+            <div className="config-section-content">
+              <div className="diagnostic-grid">
+                <div><span>Game ID</span><strong>{renderValue(diagnostics.game?.gameId)}</strong></div>
+                <div><span>Versão instalada</span><strong>{renderValue(diagnostics.game?.installedVersion)}</strong></div>
+                <div><span>Steam AppID</span><strong>{renderValue(diagnostics.steam?.configuredSteamAppId)}</strong></div>
+                <div><span>Overlay AppID</span><strong>{renderValue(diagnostics.steam?.overlayAppId)}</strong></div>
+                <div><span>OnlineFix.ini</span><strong>{diagnostics.onlineFix?.found ? 'Encontrado' : 'Ausente'}</strong></div>
+                <div><span>Epic/EOS</span><strong>{diagnostics.overlayCompatibility?.store === 'epic' ? 'Detectado' : 'Não'}</strong></div>
+                <div><span>Sessão</span><strong>{renderValue(diagnostics.display?.sessionType || (diagnostics.display?.isWayland ? 'wayland' : 'x11'))}</strong></div>
+                <div><span>EOS Overlay</span><strong>{diagnostics.epic?.overlayValid ? 'Instalado' : 'Ausente'}</strong></div>
+                <div><span>Gamescope</span><strong>{renderValue(diagnostics.tools?.gamescope)}</strong></div>
+                <div><span>GameMode</span><strong>{renderValue(diagnostics.tools?.gamemoderun)}</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="config-section">
+            <div className="config-section-header">
+              <FolderOpen size={18} />
+              <h4>Paths</h4>
+            </div>
+            <div className="config-section-content">
+              <div className="diagnostic-paths">
+                <div><span>Instalação</span><code>{renderValue(diagnostics.paths?.install?.path)}</code></div>
+                <div><span>Executável</span><code>{renderValue(diagnostics.paths?.executable?.path)}</code></div>
+                <div><span>Prefixo</span><code>{renderValue(diagnostics.paths?.prefix?.path)}</code></div>
+                <div><span>Proton</span><code>{renderValue(diagnostics.paths?.protonRunner?.path)}</code></div>
+                <div><span>Steam root</span><code>{renderValue(diagnostics.steam?.selectedRoot)}</code></div>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

@@ -56,6 +56,14 @@ type CloudSavesStatusPayload = {
   conflict?: boolean
 }
 
+type LauncherTaskStatusPayload = {
+  activeCount: number
+  recentCount: number
+  active: any[]
+  recent: any[]
+  updatedAt: number
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   openAuthWindow: () => ipcRenderer.invoke('open-auth-window'),
   checkGameVersion: (url: string) => ipcRenderer.invoke('check-game-version', url),
@@ -87,6 +95,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Download Queue APIs
   getDownloadQueueStatus: () => ipcRenderer.invoke('get-download-queue-status'),
+  getTaskQueueStatus: () => ipcRenderer.invoke('get-task-queue-status'),
+  reconcileDownloads: () => ipcRenderer.invoke('reconcile-downloads'),
   prioritizeDownload: (queueId: string) => ipcRenderer.invoke('prioritize-download', queueId),
   removeFromDownloadQueue: (queueId: string) => ipcRenderer.invoke('remove-from-queue', queueId),
   swapActiveDownload: (queueId: string) => ipcRenderer.invoke('swap-active-download', queueId),
@@ -94,6 +104,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: IpcRendererEvent, data: any) => cb(data)
     ipcRenderer.on('download-queue-status', handler)
     return () => ipcRenderer.removeListener('download-queue-status', handler)
+  },
+  onTaskStatus: (cb: (data: LauncherTaskStatusPayload) => void) => {
+    const handler = (_event: IpcRendererEvent, data: LauncherTaskStatusPayload) => cb(data)
+    ipcRenderer.on('task-status', handler)
+    return () => ipcRenderer.removeListener('task-status', handler)
   },
 
   getOnlineFixIni: (gameUrl: string) => ipcRenderer.invoke('get-onlinefix-ini', gameUrl),
@@ -118,6 +133,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
+  getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
 
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   extractDownload: (downloadId: number | string, path?: string) => ipcRenderer.invoke('extract-download', downloadId, path),
@@ -150,6 +166,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-game-steam-appid', gameUrl, steamAppId),
 
   getGames: () => ipcRenderer.invoke('get-games'),
+  getGameDiagnostics: (gameUrl: string) => ipcRenderer.invoke('get-game-diagnostics', gameUrl),
+  repairGameDiagnostics: (gameUrl: string) => ipcRenderer.invoke('repair-game-diagnostics', gameUrl),
   launchGame: (gameUrl: string) => ipcRenderer.invoke('launch-game', gameUrl),
   stopGame: (gameUrl: string, force?: boolean) => ipcRenderer.invoke('stop-game', gameUrl, force),
   deleteGame: (gameUrl: string) => ipcRenderer.invoke('delete-game', gameUrl),

@@ -27,7 +27,7 @@ export interface Game {
 
 export type LanMode = 'steam' | 'ofvpn'
 
-export type GameConfigTab = 'geral' | 'onlinefix' | 'proton' | 'lan'
+export type GameConfigTab = 'geral' | 'onlinefix' | 'proton' | 'diagnostico' | 'lan'
 
 export interface ProtonOptions {
   esync: boolean

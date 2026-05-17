@@ -83,7 +83,7 @@ import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo } from './scraper
 import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
 import { shouldBlockRequest } from './easylist-filters.js'
-import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir } from './downloadManager.js'
+import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir, reconcileDownloadState } from './downloadManager.js'
 import axios from 'axios'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResolver.js'
 // fs is already imported at the top for early sandbox configuration
@@ -98,6 +98,7 @@ import { NOTIFICATIONS_ENABLED } from './desktopNotifications.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { registerAllIpcHandlers } from './ipc/index.js'
 import type { IpcContext } from './ipc/types.js'
+import { taskId, upsertTask, type LauncherTask } from './taskManager.js'
 import {
   isPidAlive,
   killProcessTreeBestEffort,
@@ -229,6 +230,20 @@ function sendDownloadProgress(payload: any) {
       const last = downloadProgressThrottle.get(key) || 0
       if (now - last < 200) return
       downloadProgressThrottle.set(key, now)
+    }
+    if (key) {
+      const isExtract = payload?.stage === 'extract' || payload?.extractProgress !== undefined
+      const progress = isExtract ? (payload?.extractProgress ?? payload?.progress) : payload?.progress
+      upsertTask({
+        id: taskId(isExtract ? 'extract' : 'download', key),
+        kind: isExtract ? 'extract' : 'download',
+        title: isExtract ? 'Extraindo jogo' : 'Baixando jogo',
+        status: progress >= 100 ? 'done' : 'running',
+        progress,
+        message: payload?.statusMessage,
+        targetPath: payload?.destPath,
+        impact: isExtract ? 'disk' : 'network'
+      })
     }
     mainWindow?.webContents.send('download-progress', payload)
   } catch {
@@ -490,6 +505,19 @@ function sendGameLaunchStatus(payload: GameLaunchStatusPayload) {
 }
 
 function sendPrefixJobStatus(payload: PrefixJobStatusPayload) {
+  const message = payload.message || ''
+  const isRedist = /redist|directx|vcredist|winetricks|protontricks|componente/i.test(message)
+  upsertTask({
+    id: taskId(isRedist ? 'redist' : 'prefix', payload.gameUrl),
+    kind: isRedist ? 'redist' : 'prefix',
+    title: isRedist ? 'Instalando redists/componentes' : 'Preparando prefixo Proton',
+    status: payload.status === 'done' ? 'done' : payload.status === 'error' ? 'error' : 'running',
+    progress: payload.status === 'done' ? 100 : undefined,
+    message,
+    gameUrl: payload.gameUrl,
+    targetPath: payload.prefix,
+    impact: 'compat'
+  })
   try {
     mainWindow?.webContents.send('prefix-job-status', payload)
   } catch {
@@ -508,6 +536,17 @@ type CloudSavesStatusPayload = {
 }
 
 function sendCloudSavesStatus(payload: CloudSavesStatusPayload) {
+  upsertTask({
+    id: taskId('cloud-save', `${payload.gameUrl || payload.gameKey || 'global'}:${payload.stage}`),
+    kind: 'cloud-save',
+    title: payload.stage === 'backup' ? 'Backup de saves' : 'Restauração de saves',
+    status: payload.level === 'success' ? 'done' : payload.level === 'error' ? 'error' : 'running',
+    progress: payload.level === 'success' ? 100 : undefined,
+    message: payload.message,
+    gameUrl: payload.gameUrl,
+    gameKey: payload.gameKey,
+    impact: 'cloud'
+  })
   try {
     mainWindow?.webContents.send('cloud-saves-status', payload)
   } catch {
@@ -959,6 +998,20 @@ const ipcContext: IpcContext = {
   achievementsManager,
   achievementOverlay,
   sendDownloadProgress,
+  sendTaskStatus: (payload: Partial<LauncherTask> & { id: string; kind: LauncherTask['kind']; status: LauncherTask['status'] }) => {
+    upsertTask({
+      id: payload.id,
+      kind: payload.kind,
+      title: payload.title,
+      status: payload.status,
+      progress: payload.progress,
+      message: payload.message,
+      gameUrl: payload.gameUrl,
+      gameKey: payload.gameKey,
+      targetPath: payload.targetPath,
+      impact: payload.impact
+    })
+  },
   sendUpdateQueueStatus,
   sendGameLaunchStatus,
   sendPrefixJobStatus,
@@ -969,6 +1022,13 @@ const ipcContext: IpcContext = {
 
 // Register all modular IPC handlers
 registerAllIpcHandlers(ipcContext)
+
+try {
+  setTimeout(() => reconcileDownloadState('startup'), 3000).unref()
+  setInterval(() => reconcileDownloadState('interval'), 30_000).unref()
+} catch {
+  // ignore reconciler setup failures
+}
 
 // Sandbox configuration moved to top of file (before Chromium initialization)
 
@@ -1269,7 +1329,9 @@ app.whenReady().then(async () => {
 
   // Network-level blocking - only for popup/redirect domains
   webviewSession.webRequest.onBeforeRequest(filter, (details, callback) => {
-    const shouldBlock = shouldBlockRequest(details.url)
+    const shouldBlock = shouldBlockRequest(details.url, {
+      resourceType: details.resourceType
+    })
     if (shouldBlock) {
       blockedCount++
       console.log(`[PopupBlocker] Network Block #${blockedCount}:`, details.url.substring(0, 80))

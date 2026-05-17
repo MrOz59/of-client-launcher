@@ -296,11 +296,12 @@ function extractUnlockedFromJsonValue(value: any, filePath: string, kind: GameAc
   if (Array.isArray(value)) {
     for (const it of value) {
       const id = String(it?.id || it?.name || it?.key || '').trim()
-      const unlocked = it?.unlocked ?? it?.earned ?? it?.achieved
+      const unlocked = it?.unlocked ?? it?.earned ?? it?.achieved ?? it?.value
       if (!id) continue
-      if (unlocked == null || unlocked === true || unlocked === 1 || unlocked === '1') {
-        const t = Number(it?.time ?? it?.timestamp ?? it?.unlockedAt)
-        const unlockedAt = Number.isFinite(t) ? (t < 2_000_000_000 ? t * 1000 : t) : undefined
+      const t = Number(it?.time ?? it?.timestamp ?? it?.unlockedAt)
+      const hasUnlockTime = Number.isFinite(t) && t > 0
+      if (unlocked === true || unlocked === 1 || unlocked === '1' || (unlocked == null && hasUnlockTime)) {
+        const unlockedAt = hasUnlockTime ? (t < 2_000_000_000 ? t * 1000 : t) : undefined
         out.push({ id, name: it?.displayName || it?.title, description: it?.description, unlockedAt, sourcePath: filePath, sourceKind: kind })
       }
     }
@@ -317,9 +318,10 @@ function extractUnlockedFromJsonValue(value: any, filePath: string, kind: GameAc
       if (!id) continue
       if (v && typeof v === 'object') {
         const unlocked = (v as any).unlocked ?? (v as any).earned ?? (v as any).achieved ?? (v as any).value
-        if (unlocked === true || unlocked === 1 || unlocked === '1') {
-          const t = Number((v as any).time ?? (v as any).timestamp ?? (v as any).unlockedAt)
-          const unlockedAt = Number.isFinite(t) ? (t < 2_000_000_000 ? t * 1000 : t) : undefined
+        const t = Number((v as any).time ?? (v as any).timestamp ?? (v as any).unlockedAt)
+        const hasUnlockTime = Number.isFinite(t) && t > 0
+        if (unlocked === true || unlocked === 1 || unlocked === '1' || (unlocked == null && hasUnlockTime)) {
+          const unlockedAt = hasUnlockTime ? (t < 2_000_000_000 ? t * 1000 : t) : undefined
           out.push({ id, unlockedAt, sourcePath: filePath, sourceKind: kind })
         }
       } else {

@@ -17,6 +17,7 @@ export type AchievementSchemaItem = {
 type CachedSchema = {
   steamAppId: string
   fetchedAt: number
+  parserVersion?: number
   items: AchievementSchemaItem[]
 }
 
@@ -29,6 +30,8 @@ type CachedCustomSchema = {
 // ========================================
 // Utility helpers
 // ========================================
+
+const SCHEMA_CACHE_VERSION = 2
 
 function schemasDir(): string {
   return path.join(app.getPath('userData'), 'achievement-schemas')
@@ -168,28 +171,38 @@ async function fetchSteamWebApiSchemaForLanguage(
   }
 }
 
-async function fetchGlobalAchievementPercentages(steamAppId: string): Promise<Map<string, number>> {
+type GlobalAchievementPercent = {
+  name: string
+  percent: number
+}
+
+async function fetchGlobalAchievementPercentagesList(steamAppId: string): Promise<GlobalAchievementPercent[]> {
   const url = `https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=${encodeURIComponent(steamAppId)}`
 
   try {
     const res = await fetchWithTimeout(url, 10000)
-    if (!res.ok) return new Map()
+    if (!res.ok) return []
     const json: any = await res.json()
     const arr = json?.achievementpercentages?.achievements
-    if (!Array.isArray(arr)) return new Map()
+    if (!Array.isArray(arr)) return []
 
-    const out = new Map<string, number>()
+    const out: GlobalAchievementPercent[] = []
     for (const it of arr) {
       const name = String(it?.name || '').trim()
       const percent = Number(it?.percent)
       if (name && Number.isFinite(percent)) {
-        out.set(name, percent)
+        out.push({ name, percent })
       }
     }
     return out
   } catch {
-    return new Map()
+    return []
   }
+}
+
+async function fetchGlobalAchievementPercentages(steamAppId: string): Promise<Map<string, number>> {
+  const items = await fetchGlobalAchievementPercentagesList(steamAppId)
+  return new Map(items.map((it) => [it.name, it.percent]))
 }
 
 async function fetchSteamWebApiSchema(steamAppId: string, apiKey: string): Promise<AchievementSchemaItem[]> {
@@ -255,7 +268,10 @@ async function fetchSteamCommunitySchema(steamAppId: string): Promise<Achievemen
   console.log(`[Schema] Scraping Steam Community for appid=${steamAppId}`)
 
   try {
-    const res = await fetchWithTimeout(url, 15000)
+    const [res, globalPercentages] = await Promise.all([
+      fetchWithTimeout(url, 15000),
+      fetchGlobalAchievementPercentagesList(steamAppId)
+    ])
     if (!res.ok) {
       console.warn(`[Schema] Steam Community returned ${res.status}`)
       return []
@@ -265,20 +281,20 @@ async function fetchSteamCommunitySchema(steamAppId: string): Promise<Achievemen
     const $ = load(html)
     const items: AchievementSchemaItem[] = []
 
-    $('.achieveRow').each((_, row) => {
+    $('.achieveRow').each((idx, row) => {
       const img = $(row).find('.achieveImgHolder img').attr('src') || $(row).find('img').attr('src')
       const title = $(row).find('.achieveTxt h3').first().text().trim() || $(row).find('h3').first().text().trim()
       const desc = $(row).find('.achieveTxt h5').first().text().trim() || $(row).find('h5').first().text().trim()
+      const percentText = $(row).find('.achievePercent').first().text().trim().replace('%', '').replace(',', '.')
+      const percentFromHtml = Number(percentText)
 
-      let id = ''
-      if (img) {
-        try {
-          const u = new URL(img)
-          id = path.posix.parse(u.pathname).name
-        } catch {
-          id = path.parse(img).name
-        }
-      }
+      const apiName = globalPercentages[idx]?.name
+      const percent = Number.isFinite(percentFromHtml) ? percentFromHtml : globalPercentages[idx]?.percent
+      const id = String(apiName || title)
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]+/g, '_')
+        .replace(/^_+|_+$/g, '')
 
       if (!id || !title) return
 
@@ -286,14 +302,16 @@ async function fetchSteamCommunitySchema(steamAppId: string): Promise<Achievemen
         id,
         name: title,
         description: desc || undefined,
-        iconUrl: img || undefined
+        iconUrl: img || undefined,
+        percent: Number.isFinite(percent) ? percent : undefined,
+        hidden: desc ? undefined : true
       })
     })
 
     // Dedupe
     const seen = new Set<string>()
     const dedupe = items.filter((it) => {
-      const key = normalizeId(it.id)
+      const key = normalizeId(it.id) || String(it.name || '').trim().toLowerCase()
       if (!key || seen.has(key)) return false
       seen.add(key)
       return true
@@ -344,6 +362,18 @@ export async function getAchievementSchema(
     try {
       const cached = safeReadJson(p) as CachedSchema | null
       if (cached?.steamAppId === clean && Array.isArray(cached.items) && cached.items.length > 0) {
+        if (cached.parserVersion !== SCHEMA_CACHE_VERSION) {
+          console.log(`[Schema] Cached schema parser version is old; refetching for appid=${clean}`)
+        } else {
+        if (cached.items.length < 10) {
+          const globalCount = (await fetchGlobalAchievementPercentagesList(clean)).length
+          if (globalCount > cached.items.length) {
+            console.log(`[Schema] Cached schema is partial (${cached.items.length}/${globalCount}); refetching for appid=${clean}`)
+          } else if (Date.now() - (cached.fetchedAt || 0) <= maxAgeMs) {
+            console.log(`[Schema] Using cached schema for appid=${clean} (${cached.items.length} items)`)
+            return cached.items
+          }
+        } else {
         // If we currently have an API key, but the cached schema looks like a low-fidelity scrape
         // (often missing descriptions/percent/hidden), bypass cache and refetch via Web API.
         if (apiKeyNow) {
@@ -362,6 +392,8 @@ export async function getAchievementSchema(
         if (Date.now() - (cached.fetchedAt || 0) <= maxAgeMs) {
           console.log(`[Schema] Using cached schema for appid=${clean} (${cached.items.length} items)`)
           return cached.items
+        }
+        }
         }
         }
       }
@@ -394,6 +426,7 @@ export async function getAchievementSchema(
       const payload: CachedSchema = {
         steamAppId: clean,
         fetchedAt: Date.now(),
+        parserVersion: SCHEMA_CACHE_VERSION,
         items
       }
       fs.writeFileSync(p, JSON.stringify(payload, null, 2), 'utf8')

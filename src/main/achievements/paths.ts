@@ -55,6 +55,30 @@ export function getWineUserRoots(prefixPath: string): string[] {
   return users
 }
 
+export function winePrefixCandidates(prefixPath: string): string[] {
+  const raw = expandHome(String(prefixPath || '').trim())
+  if (!raw) return []
+
+  const candidates: string[] = []
+  const add = (p: string) => {
+    if (!p) return
+    if (!candidates.includes(p)) candidates.push(p)
+  }
+
+  // The DB can store either the real Wine prefix (.../pfx) or its parent
+  // launcher folder (.../game_xxx). Check both before building Windows paths.
+  add(raw)
+  add(path.join(raw, 'pfx'))
+
+  return candidates.filter((p) => {
+    try {
+      return fs.existsSync(path.join(p, 'drive_c', 'users'))
+    } catch {
+      return false
+    }
+  })
+}
+
 export function wineUserPaths(prefixPath: string): Array<{
   documents: string
   appDataRoaming: string
@@ -62,10 +86,6 @@ export function wineUserPaths(prefixPath: string): Array<{
   publicDocuments: string
   programData: string
 }> {
-  const roots = getWineUserRoots(prefixPath)
-  const prefix = expandHome(prefixPath)
-  const programData = path.join(prefix, 'drive_c', 'ProgramData')
-
   const out: Array<{
     documents: string
     appDataRoaming: string
@@ -74,14 +94,19 @@ export function wineUserPaths(prefixPath: string): Array<{
     programData: string
   }> = []
 
-  for (const userRoot of roots) {
-    out.push({
-      documents: path.join(userRoot, 'Documents'),
-      appDataRoaming: path.join(userRoot, 'AppData', 'Roaming'),
-      localAppData: path.join(userRoot, 'AppData', 'Local'),
-      publicDocuments: path.join(path.dirname(userRoot), 'Public', 'Documents'),
-      programData
-    })
+  for (const prefix of winePrefixCandidates(prefixPath)) {
+    const roots = getWineUserRoots(prefix)
+    const programData = path.join(prefix, 'drive_c', 'ProgramData')
+
+    for (const userRoot of roots) {
+      out.push({
+        documents: path.join(userRoot, 'Documents'),
+        appDataRoaming: path.join(userRoot, 'AppData', 'Roaming'),
+        localAppData: path.join(userRoot, 'AppData', 'Local'),
+        publicDocuments: path.join(path.dirname(userRoot), 'Public', 'Documents'),
+        programData
+      })
+    }
   }
 
   return out

@@ -40,6 +40,28 @@ interface DownloadQueueStatus {
   updatedAt: number
 }
 
+interface LauncherTask {
+  id: string
+  kind: 'download' | 'extract' | 'prefix' | 'redist' | 'cloud-save'
+  title: string
+  status: 'queued' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
+  progress?: number
+  message?: string
+  gameUrl?: string
+  gameKey?: string
+  targetPath?: string
+  impact?: 'network' | 'disk' | 'compat' | 'cloud' | 'background'
+  updatedAt: number
+}
+
+interface LauncherTaskStatus {
+  activeCount: number
+  recentCount: number
+  active: LauncherTask[]
+  recent: LauncherTask[]
+  updatedAt: number
+}
+
 interface DownloadsTabProps {
   onActivityChange?: (active: boolean) => void
 }
@@ -49,6 +71,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   const [hasActive, setHasActive] = useState(false)
   const [historyTick, setHistoryTick] = useState(0)
   const [queueStatus, setQueueStatus] = useState<DownloadQueueStatus | null>(null)
+  const [taskStatus, setTaskStatus] = useState<LauncherTaskStatus | null>(null)
   const throttleTimerRef = useRef<NodeJS.Timeout | null>(null)
   const pendingUpdatesRef = useRef<Map<string, any>>(new Map())
   const downloadsRef = useRef<DownloadItem[]>([])
@@ -911,12 +934,22 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       setQueueStatus(data)
     })
 
+    const taskSub = window.electronAPI.onTaskStatus?.((data) => {
+      setTaskStatus(data)
+    })
+
     // Initial fetch of queue status
     window.electronAPI.getDownloadQueueStatus?.().then(res => {
       if (res.success && res.status) {
         setQueueStatus(res.status)
       }
     }).catch(() => {})
+    window.electronAPI.getTaskQueueStatus?.().then(res => {
+      if (res.success && res.status) {
+        setTaskStatus(res.status)
+      }
+    }).catch(() => {})
+    window.electronAPI.reconcileDownloads?.().catch(() => {})
 
     return () => {
       // Cleanup subscriptions
@@ -924,6 +957,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       if (typeof completeSub === 'function') completeSub()
       if (typeof deleteSub === 'function') deleteSub()
       if (typeof queueSub === 'function') queueSub()
+      if (typeof taskSub === 'function') taskSub()
 
       clearInterval(poll)
 
@@ -1214,12 +1248,93 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     )
   }
 
+  const taskKindText = (kind: LauncherTask['kind']) => {
+    switch (kind) {
+      case 'download': return 'Download'
+      case 'extract': return 'Extração'
+      case 'prefix': return 'PFX'
+      case 'redist': return 'Redists'
+      case 'cloud-save': return 'Saves'
+      default: return 'Tarefa'
+    }
+  }
+
+  const taskImpactText = (impact?: LauncherTask['impact']) => {
+    switch (impact) {
+      case 'network': return 'Rede'
+      case 'disk': return 'Disco'
+      case 'compat': return 'Compatibilidade'
+      case 'cloud': return 'Nuvem'
+      default: return 'Background'
+    }
+  }
+
+  const taskStatusText = (status: LauncherTask['status']) => {
+    switch (status) {
+      case 'queued': return 'Na fila'
+      case 'running': return 'Rodando'
+      case 'paused': return 'Pausado'
+      case 'done': return 'Concluído'
+      case 'error': return 'Erro'
+      case 'cancelled': return 'Cancelado'
+      default: return status
+    }
+  }
+
+  const TaskPanel = () => {
+    const activeTasks = taskStatus?.active || []
+    const recentTasks = (taskStatus?.recent || []).slice(0, 4)
+    const visible = [...activeTasks, ...recentTasks].slice(0, 8)
+    if (!visible.length) return null
+
+    return (
+      <div className="downloads-section downloads-section--tasks">
+        <div className="downloads-section-header">
+          <div className="downloads-section-title">Tarefas</div>
+          <div className="downloads-section-meta">
+            <span className="downloads-pill">{activeTasks.length} ativa(s)</span>
+            {recentTasks.length ? <span className="downloads-pill">{recentTasks.length} recente(s)</span> : null}
+          </div>
+        </div>
+        <div className="task-list">
+          {visible.map(task => {
+            const progress = clampPercent(task.progress ?? (task.status === 'done' ? 100 : 0))
+            return (
+              <div className={`task-row task-row--${task.status}`} key={task.id}>
+                <div className="task-row-icon">
+                  {task.kind === 'download' ? <Download size={14} /> : task.kind === 'extract' ? <Archive size={14} /> : <RefreshCw size={14} className={task.status === 'running' ? 'of-spin' : ''} />}
+                </div>
+                <div className="task-row-body">
+                  <div className="task-row-top">
+                    <strong>{task.title || taskKindText(task.kind)}</strong>
+                    <span>{taskKindText(task.kind)} • {taskImpactText(task.impact)} • {taskStatusText(task.status)}</span>
+                  </div>
+                  {task.message || task.targetPath ? (
+                    <div className="task-row-message" title={task.targetPath || task.message}>
+                      {task.message || task.targetPath}
+                    </div>
+                  ) : null}
+                  <div className="task-progress">
+                    <div className={`task-progress-bar task-progress-bar--${task.status}`} style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   if (downloads.length === 0) {
     return (
-      <div className="empty-state">
-        <Download size={64} />
-        <h3>Nenhum download ativo</h3>
-        <p>Seus downloads aparecerão aqui</p>
+      <div className="downloads-page">
+        <TaskPanel />
+        <div className="empty-state">
+          <Download size={64} />
+          <h3>Nenhum download ativo</h3>
+          <p>Downloads e tarefas aparecerão aqui</p>
+        </div>
       </div>
     )
   }
@@ -1244,6 +1359,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
           <span className="downloads-summary-value">{summary.errors}</span>
         </div>
       </div>
+
+      <TaskPanel />
 
       {primary ? (
         <div className="downloads-section downloads-section--active">

@@ -12,6 +12,7 @@ export { registerAchievementsHandlers, detectSteamAppIdFromInstall } from './ach
 export { registerAuthHandlers } from './authHandlers'
 export { registerTorrentHandlers } from './torrentHandlers'
 export { registerLaunchHandlers } from './launchHandlers'
+export { registerTaskHandlers } from './taskHandlers'
 
 import type { IpcContext } from './types'
 import { registerDriveHandlers } from './driveHandlers'
@@ -24,6 +25,7 @@ import { registerAchievementsHandlers } from './achievementsHandlers'
 import { registerAuthHandlers } from './authHandlers'
 import { registerTorrentHandlers } from './torrentHandlers'
 import { registerLaunchHandlers } from './launchHandlers'
+import { registerTaskHandlers } from './taskHandlers'
 
 /**
  * Register all IPC handlers
@@ -40,4 +42,5 @@ export function registerAllIpcHandlers(context: IpcContext): void {
   registerAuthHandlers(context)
   registerTorrentHandlers(context)
   registerLaunchHandlers(context)
+  registerTaskHandlers(context)
 }
