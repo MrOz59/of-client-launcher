@@ -129,6 +129,13 @@
         "filter": [
           "void-toast-*"
         ]
+      },
+      {
+        "from": "resources/notifications",
+        "to": "notifications",
+        "filter": [
+          "*.wav"
+        ]
       }
     ],
     "asar": true,

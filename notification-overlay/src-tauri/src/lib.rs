@@ -1,13 +1,11 @@
 use std::io::{self, Read};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{
-    AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 // ── Configuração visual da janela toast ───────────────────────────────────────
 
@@ -50,6 +48,9 @@ pub struct ToastParams {
     pub icon: Option<String>,
 
     #[serde(default)]
+    pub sound: Option<String>,
+
+    #[serde(default)]
     pub duration: Option<u64>,
 }
 
@@ -66,10 +67,10 @@ fn print_help() {
         r#"void-toast
 
 Uso:
-  void-toast --title="Título" --message="Mensagem" --game="VoidLauncher" --icon="🏆" --duration=5000
+  void-toast --title="Título" --message="Mensagem" --game="VoidLauncher" --icon="🏆" --sound="/caminho/som.wav" --duration=5000
 
 Também aceita JSON:
-  void-toast --json '{{"title":"Download concluído","message":"Jogo pronto","game":"VoidLauncher","icon":"🏆","duration":5000}}'
+  void-toast --json '{{"title":"Download concluído","message":"Jogo pronto","game":"VoidLauncher","icon":"🏆","sound":"/caminho/som.wav","duration":5000}}'
 
 Também aceita JSON via stdin:
   echo '{{"title":"Download concluído","message":"Jogo pronto"}}' | void-toast --stdin
@@ -79,6 +80,7 @@ Argumentos:
   --message      Mensagem opcional
   --game         Fonte/app/jogo exibido no topo
   --icon         Emoji, URL ou caminho de imagem
+  --sound        URL ou caminho do áudio a tocar
   --duration     Duração em ms. Mínimo: 1000. Máximo: 60000
   --json         Recebe todos os dados como JSON
   --stdin        Lê JSON do stdin
@@ -119,6 +121,11 @@ fn normalize_params(mut params: ToastParams) -> ToastParams {
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
 
+    params.sound = params
+        .sound
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
     let duration = params.duration.unwrap_or(DEFAULT_DURATION_MS);
     params.duration = Some(duration.clamp(MIN_DURATION_MS, MAX_DURATION_MS));
 
@@ -126,8 +133,8 @@ fn normalize_params(mut params: ToastParams) -> ToastParams {
 }
 
 fn parse_json_params(json: &str) -> Result<ToastParams, String> {
-    let params: ToastParams = serde_json::from_str(json)
-        .map_err(|err| format!("JSON inválido para toast: {}", err))?;
+    let params: ToastParams =
+        serde_json::from_str(json).map_err(|err| format!("JSON inválido para toast: {}", err))?;
 
     Ok(normalize_params(params))
 }
@@ -153,6 +160,7 @@ fn parse_cli_params(args: &[String]) -> Result<ToastParams, String> {
         message: None,
         game: None,
         icon: None,
+        sound: None,
         duration: Some(DEFAULT_DURATION_MS),
     };
 
@@ -199,6 +207,7 @@ fn parse_cli_params(args: &[String]) -> Result<ToastParams, String> {
                     "message" => params.message = Some(val),
                     "game" => params.game = Some(val),
                     "icon" => params.icon = Some(val),
+                    "sound" => params.sound = Some(val),
                     "duration" => {
                         params.duration = Some(
                             val.parse::<u64>()
@@ -217,7 +226,7 @@ fn parse_cli_params(args: &[String]) -> Result<ToastParams, String> {
             let key = rest;
 
             match key {
-                "title" | "message" | "game" | "icon" | "duration" => {
+                "title" | "message" | "game" | "icon" | "sound" | "duration" => {
                     let val = args
                         .get(i + 1)
                         .ok_or_else(|| format!("--{} precisa receber um valor", key))?
@@ -228,6 +237,7 @@ fn parse_cli_params(args: &[String]) -> Result<ToastParams, String> {
                         "message" => params.message = Some(val),
                         "game" => params.game = Some(val),
                         "icon" => params.icon = Some(val),
+                        "sound" => params.sound = Some(val),
                         "duration" => {
                             params.duration = Some(
                                 val.parse::<u64>()
@@ -253,6 +263,122 @@ fn parse_cli_params(args: &[String]) -> Result<ToastParams, String> {
     }
 
     Ok(normalize_params(params))
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    out.push(decoded);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+
+        out.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn sound_source_to_path(sound: &str) -> Option<String> {
+    let value = sound.trim();
+    if value.is_empty()
+        || value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("data:")
+    {
+        return None;
+    }
+
+    if let Some(rest) = value.strip_prefix("file://") {
+        let without_host = rest
+            .strip_prefix("localhost/")
+            .map(|v| format!("/{}", v))
+            .unwrap_or_else(|| rest.to_string());
+
+        #[cfg(target_os = "windows")]
+        {
+            let path = without_host.trim_start_matches('/');
+            return Some(percent_decode(path));
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Some(percent_decode(&without_host));
+        }
+    }
+
+    Some(value.to_string())
+}
+
+fn spawn_sound_command(command: &str, args: &[&str]) -> bool {
+    Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(target_os = "linux")]
+fn play_sound_path(path: &str) -> bool {
+    spawn_sound_command("pw-play", &[path])
+        || spawn_sound_command("paplay", &[path])
+        || spawn_sound_command("aplay", &["-q", path])
+        || spawn_sound_command("gst-play-1.0", &["--no-interactive", path])
+}
+
+#[cfg(target_os = "windows")]
+fn play_sound_path(path: &str) -> bool {
+    Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms; $p = $env:VOID_TOAST_SOUND; $player = New-Object System.Media.SoundPlayer $p; $player.PlaySync()",
+        ])
+        .env("VOID_TOAST_SOUND", path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn play_sound_path(path: &str) -> bool {
+    spawn_sound_command("afplay", &[path])
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn play_sound_path(_path: &str) -> bool {
+    false
+}
+
+fn play_sound_async(sound: Option<String>) {
+    let Some(sound) = sound else { return };
+    let Some(path) = sound_source_to_path(&sound) else {
+        return;
+    };
+
+    thread::spawn(move || {
+        if !play_sound_path(&path) {
+            eprintln!(
+                "[void-toast] nenhum player de áudio disponível para: {}",
+                path
+            );
+        }
+    });
 }
 
 // ── Parse simples de geometria do xrandr ──────────────────────────────────────
@@ -343,9 +469,9 @@ fn calculate_toast_position() -> (i32, i32) {
 fn position_toast_window(win: &WebviewWindow) {
     let (x, y) = calculate_toast_position();
 
-    match win.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition::new(x, y),
-    )) {
+    match win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+        x, y,
+    ))) {
         Ok(_) => eprintln!("[void-toast] toast posicionado em ({}, {})", x, y),
         Err(err) => eprintln!("[void-toast] erro ao posicionar toast: {:?}", err),
     }
@@ -355,7 +481,10 @@ fn position_toast_window(win: &WebviewWindow) {
     }
 
     if let Err(err) = win.set_visible_on_all_workspaces(true) {
-        eprintln!("[void-toast] erro em set_visible_on_all_workspaces: {:?}", err);
+        eprintln!(
+            "[void-toast] erro em set_visible_on_all_workspaces: {:?}",
+            err
+        );
     }
 }
 
@@ -392,6 +521,7 @@ fn toast_ready(app: AppHandle, state: State<'_, Mutex<AppState>>) -> Option<Toas
     eprintln!("[void-toast] toast_ready chamado");
 
     let params = state.lock().unwrap().params.clone();
+    play_sound_async(params.sound.clone());
 
     if let Some(win) = app.get_webview_window("toast") {
         position_toast_window(&win);

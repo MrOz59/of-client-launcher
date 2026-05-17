@@ -11,8 +11,11 @@ export type AchievementUnlockedEvent = {
   gameUrl: string
   title: string
   description?: string
+  icon?: string
+  iconUrl?: string
   unlockedAt?: number
   id: string
+  achievement?: AchievementListItem
 }
 
 function gameKey(meta: GameMetaForAchievements): string {
@@ -136,6 +139,30 @@ function readLocalAchievementSnapshot(meta: GameMetaForAchievements): {
   }
 }
 
+function findSchemaItemForUnlock(schema: AchievementSchemaItem[], id: string): AchievementSchemaItem | undefined {
+  return schema.find((item) => matchAchievementId(id, item.id))
+}
+
+function cleanText(value: unknown): string | undefined {
+  const text = String(value || '').trim()
+  return text || undefined
+}
+
+function isIdLike(value: string | undefined, id: string): boolean {
+  if (!value) return false
+  return matchAchievementId(value, id)
+}
+
+function pickAchievementTitle(unlocked: UnlockedAchievement, schemaItem?: AchievementSchemaItem): string {
+  const id = String(unlocked.id || '').trim()
+  const schemaName = cleanText(schemaItem?.name)
+  const unlockedName = cleanText(unlocked.name)
+
+  if (schemaName && !isIdLike(schemaName, schemaItem?.id || id)) return schemaName
+  if (unlockedName && !isIdLike(unlockedName, id)) return unlockedName
+  return schemaName || unlockedName || id || 'Achievement Unlocked'
+}
+
 export class AchievementsManager {
   private watcherByGameUrl = new Map<string, AchievementsWatcher>()
 
@@ -149,22 +176,31 @@ export class AchievementsManager {
     this.watcherByGameUrl.set(gameUrl, watcher)
 
     const key = gameKey(meta)
+    let notificationSchemaPromise: Promise<AchievementSchemaItem[]> | null = null
+    const getNotificationSchema = () => {
+      if (!notificationSchemaPromise) {
+        notificationSchemaPromise = this.getNotificationSchema(meta)
+      }
+      return notificationSchemaPromise
+    }
 
     watcher.start(({ unlocks, baseline }) => {
       if (!unlocks?.length) return
       const { changed } = mergeUnlockedAchievements(key, unlocks)
       if (baseline) return
 
-      for (const u of changed) {
-        const title = u.name || u.id
-        onUnlocked({
-          gameUrl,
-          id: u.id,
-          title,
-          description: u.description,
-          unlockedAt: u.unlockedAt
-        })
-      }
+      void (async () => {
+        let schema: AchievementSchemaItem[] = []
+        try {
+          schema = await getNotificationSchema()
+        } catch (err) {
+          console.warn('[AchievementsManager] Failed to enrich achievement unlock notification:', err)
+        }
+
+        for (const u of changed) {
+          onUnlocked(this.buildUnlockedEvent(gameUrl, u, schema))
+        }
+      })()
     })
   }
 
@@ -178,6 +214,59 @@ export class AchievementsManager {
 
   getSources(meta: GameMetaForAchievements) {
     return discoverAchievementSources(meta)
+  }
+
+  private async getNotificationSchema(meta: GameMetaForAchievements): Promise<AchievementSchemaItem[]> {
+    const customSchema = getCustomAchievementSchemaForGame(meta.gameUrl)
+    if (customSchema?.length) return customSchema
+
+    let steamAppId = String(meta.schemaSteamAppId || meta.steamAppId || '').trim()
+    if (!steamAppId && meta.title) {
+      try {
+        const resolved = await resolveSteamAppIdByTitle({ gameUrl: meta.gameUrl, title: meta.title })
+        if (resolved) steamAppId = String(resolved).trim()
+      } catch (err) {
+        console.warn('[AchievementsManager] Failed to resolve AppID for achievement notification:', err)
+      }
+    }
+
+    if (steamAppId) {
+      const schema = await getAchievementSchema(steamAppId)
+      if (schema.length) return schema
+    }
+
+    return readLocalAchievementSnapshot(meta).schema
+  }
+
+  private buildUnlockedEvent(
+    gameUrl: string,
+    unlocked: UnlockedAchievement,
+    schema: AchievementSchemaItem[]
+  ): AchievementUnlockedEvent {
+    const schemaItem = findSchemaItemForUnlock(schema, unlocked.id)
+    const title = pickAchievementTitle(unlocked, schemaItem)
+    const description = cleanText(schemaItem?.description) || cleanText(unlocked.description)
+    const iconUrl = cleanText(schemaItem?.iconUrl)
+
+    return {
+      gameUrl,
+      id: unlocked.id,
+      title,
+      description,
+      icon: iconUrl,
+      iconUrl,
+      unlockedAt: unlocked.unlockedAt,
+      achievement: {
+        id: schemaItem?.id || unlocked.id,
+        name: title,
+        description,
+        iconUrl,
+        hidden: schemaItem?.hidden,
+        percent: schemaItem?.percent,
+        unlocked: true,
+        unlockedAt: unlocked.unlockedAt
+      }
+    }
   }
 
   /**

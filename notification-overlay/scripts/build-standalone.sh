@@ -40,6 +40,7 @@ build_linux() {
   if [[ ! -f "$FRONTEND_DIR/toast.html" ]] || ! cmp -s "$ROOT_DIR/toast.html" "$FRONTEND_DIR/toast.html"; then
     cp "$ROOT_DIR/toast.html" "$FRONTEND_DIR/toast.html"
   fi
+  rm -f "$FRONTEND_DIR/notification.wav" "$FRONTEND_DIR/achievement.wav"
 
   (
     cd "$SRC_TAURI_DIR"

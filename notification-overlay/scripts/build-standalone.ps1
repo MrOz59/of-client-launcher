@@ -30,6 +30,13 @@ function Sync-Frontend {
     if ($ShouldCopy) {
         Copy-Item $Source $Target -Force
     }
+    
+    foreach ($Asset in @("notification.wav", "achievement.wav")) {
+        $AssetTarget = Join-Path $FrontendDir $Asset
+        if (Test-Path $AssetTarget) {
+            Remove-Item $AssetTarget -Force
+        }
+    }
 }
 
 function Build-Windows {

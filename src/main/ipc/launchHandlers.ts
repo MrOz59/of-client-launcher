@@ -95,6 +95,18 @@ function appendLiveLogChunk(record: RunningGameProc | undefined, chunk: string) 
   record.liveLogUpdatedAt = Date.now()
 }
 
+function filterBenignLauncherStderr(text: string): string {
+  const raw = String(text || '')
+  if (!raw) return ''
+  const lines = raw.split(/\n/)
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim()
+    if (!trimmed) return true
+    return !/^ERROR: ld\.so: object '.*\/gameoverlayrenderer\.so' from LD_PRELOAD cannot be preloaded \(wrong ELF class: ELFCLASS(?:32|64)\): ignored\.$/.test(trimmed)
+  })
+  return kept.join('\n')
+}
+
 function buildProtonLogSnapshot(record?: RunningGameProc, logPath?: string | null, maxChars = LIVE_LOG_MAX_CHARS) {
   const effectivePath = String(logPath || record?.protonLogPath || '').trim() || null
   const processHead = String(record?.liveLogHeadBuffer || record?.liveLogBuffer || '')
@@ -1075,7 +1087,8 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         })
 
         child.stderr?.on('data', (data: Buffer) => {
-          const text = data.toString()
+          const text = filterBenignLauncherStderr(data.toString())
+          if (!text) return
           console.error('[Game stderr]', text)
           pushLiveLog('stderr', text)
           stderrTail = (stderrTail + text).slice(-8192)
@@ -1253,7 +1266,8 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         })
 
         child.stderr?.on('data', (data: Buffer) => {
-          const text = data.toString()
+          const text = filterBenignLauncherStderr(data.toString())
+          if (!text) return
           console.error('[Game stderr]', text)
           pushLiveLog('stderr', text)
           stderrTail = (stderrTail + text).slice(-8192)
@@ -1395,7 +1409,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
                   const notif = notifyAchievementUnlocked(
                     ev.title || ev.achievement?.displayName || ev.achievement?.name || 'Achievement Unlocked',
                     ev.description || ev.achievement?.description,
-                    ev.icon || ev.achievement?.icon,
+                    ev.icon || ev.iconUrl || ev.achievement?.iconUrl || ev.achievement?.icon,
                     game.title || undefined
                   )
                   

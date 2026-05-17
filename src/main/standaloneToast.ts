@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import { pathToFileURL } from 'url'
 import type { NotificationMessage } from './overlayIPC'
 
 interface ToastPayload {
@@ -10,6 +11,7 @@ interface ToastPayload {
   message?: string
   game?: string
   icon?: string
+  sound?: string
   duration?: number
 }
 
@@ -68,6 +70,60 @@ function normalizeIcon(icon?: string): string | undefined {
   return value
 }
 
+function normalizeSound(sound?: string): string | undefined {
+  const value = String(sound || '').trim()
+  if (!value) return undefined
+
+  if (
+    value.startsWith('data:audio/') ||
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('file://')
+  ) {
+    return value
+  }
+
+  if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)) {
+    return pathToFileURL(value).toString()
+  }
+
+  return value
+}
+
+function resolveBundledSound(fileName: string, envValue?: string): string | undefined {
+  const explicit = normalizeSound(envValue)
+  if (explicit) return explicit
+
+  const candidates = [
+    path.join(process.resourcesPath || '', 'notifications', fileName),
+    path.join(app.getAppPath(), 'resources', 'notifications', fileName),
+    path.join(process.cwd(), 'resources', 'notifications', fileName),
+  ]
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return normalizeSound(candidate)
+      }
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return undefined
+}
+
+function soundFor(notification: NotificationMessage): string | undefined {
+  const explicit = normalizeSound(notification.sound)
+  if (explicit) return explicit
+
+  if (notification.type === 'achievement_unlocked') {
+    return resolveBundledSound('achievement.wav', process.env.VOIDLAUNCHER_TOAST_ACHIEVEMENT_SOUND)
+  }
+
+  return resolveBundledSound('notification.wav', process.env.VOIDLAUNCHER_TOAST_NOTIFICATION_SOUND)
+}
+
 function sourceFor(notification: NotificationMessage): string {
   const explicit = String(notification.game || notification.source || '').trim()
   if (explicit) return explicit
@@ -91,6 +147,7 @@ function toToastPayload(notification: NotificationMessage): ToastPayload {
     message: notification.description,
     game: sourceFor(notification),
     icon: normalizeIcon(notification.icon),
+    sound: soundFor(notification),
     duration: notification.duration_ms || 5000,
   }
 }

@@ -8,6 +8,7 @@ export interface NotificationMessage {
   title: string
   description?: string
   icon?: string // base64 encoded image
+  sound?: string
   source?: string
   game?: string
   duration_ms?: number

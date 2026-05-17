@@ -56,6 +56,9 @@ function flattenSingleSubdir(basePath: string) {
 
     if (entries.length !== 1 || !entries[0].isDirectory()) return
 
+    // Never flatten Unity _Data folders - they must stay next to the executable
+    if (entries[0].name.endsWith('_Data')) return
+
     const subDir = path.join(basePath, entries[0].name)
     const subEntries = fs.readdirSync(subDir, { withFileTypes: true })
 
@@ -122,6 +125,12 @@ function flattenDominantSubdir(basePath: string) {
     if (!bestDir) return
 
     if (bestCount < Math.max(5, filesAtRoot * 2)) return
+
+    // Never flatten Unity _Data folders - they must stay next to the executable
+    if (path.basename(bestDir).endsWith('_Data')) {
+      console.log('[flattenDominantSubdir] Skipping Unity _Data folder:', bestDir)
+      return
+    }
 
     console.log('[flattenDominantSubdir] Flattening dominant folder:', bestDir, 'files:', bestCount, 'rootFiles:', filesAtRoot)
 

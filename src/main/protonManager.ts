@@ -81,24 +81,26 @@ function getSteamRootCandidates(): string[] {
 }
 
 function findSteamOverlayPreloadEntries(preferArch?: 'x86' | 'x64' | null): string[] {
-  const entries: string[] = []
-  const add = (p: string) => {
-    if (p && fs.existsSync(p) && !entries.includes(p)) entries.push(p)
+  const entries: Partial<Record<'x86' | 'x64', string>> = {}
+  const seen = new Set<string>()
+  const add = (arch: 'x86' | 'x64', p: string) => {
+    if (!p || entries[arch] || !fs.existsSync(p)) return
+    let key = p
+    try { key = fs.realpathSync.native(p) } catch {}
+    if (seen.has(key)) return
+    seen.add(key)
+    entries[arch] = p
   }
 
   for (const root of getSteamRootCandidates()) {
     const lib32 = path.join(root, 'ubuntu12_32', 'gameoverlayrenderer.so')
     const lib64 = path.join(root, 'ubuntu12_64', 'gameoverlayrenderer.so')
-    if (preferArch === 'x86') {
-      add(lib32)
-      add(lib64)
-    } else {
-      add(lib64)
-      add(lib32)
-    }
+    add('x64', lib64)
+    add('x86', lib32)
   }
 
-  return entries
+  if (preferArch === 'x86') return entries.x86 ? [entries.x86] : entries.x64 ? [entries.x64] : []
+  return entries.x64 ? [entries.x64] : entries.x86 ? [entries.x86] : []
 }
 
 function findSteamOverlayVulkanDirs(): string[] {

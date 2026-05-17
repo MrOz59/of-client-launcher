@@ -2081,8 +2081,17 @@ async function scanInstalledGamesFromDisk(): Promise<{ scanned: number; added: n
       continue
     }
 
-    // Best-effort normalize for nested-folder releases.
-    try { normalizeGameInstallDir(installPath) } catch {}
+    // Skip normalization if the folder already has a completed-install marker on disk.
+    // This prevents re-running flatten heuristics on already-correct installs (e.g. Unity _Data folders)
+    // even when the game isn't in the DB yet (fresh dev session, DB path mismatch, etc.)
+    const preMarker = readLauncherMarker(installPath)
+    const preMarkerStatus = String(preMarker?.status || '').toLowerCase()
+    const alreadyInstalled = preMarkerStatus === 'installed' || fs.existsSync(path.join(installPath, '.of_extracted')) || fs.existsSync(path.join(installPath, '.of_update_extracted'))
+
+    // Best-effort normalize for nested-folder releases (only if not already properly installed).
+    if (!alreadyInstalled) {
+      try { normalizeGameInstallDir(installPath) } catch {}
+    }
 
     const marker = readLauncherMarker(installPath)
     if (marker) {

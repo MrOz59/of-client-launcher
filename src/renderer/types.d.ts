@@ -207,7 +207,7 @@ declare global {
       saveAchievementSchema: (gameUrl: string, rawJson: string) => Promise<{ success: boolean; count?: number; error?: string }>
       clearAchievementSchema: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       forceRefreshAchievementSchema: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
-      onAchievementUnlocked: (cb: (data: { gameUrl: string; id: string; title: string; description?: string; unlockedAt?: number }) => void) => (() => void)
+      onAchievementUnlocked: (cb: (data: { gameUrl: string; id: string; title: string; description?: string; icon?: string; iconUrl?: string; unlockedAt?: number }) => void) => (() => void)
 
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>
       getOnlineFixIni: (gameUrl: string) => Promise<{ success: boolean; path?: string; content?: string; exists?: boolean; error?: string }>
