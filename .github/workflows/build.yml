@@ -191,7 +191,11 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel pyenv rust libarchive libxcrypt-compat zlib xz tk meson ninja webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg
+          pacman -S --noconfirm --needed git base-devel pyenv rust libarchive libxcrypt-compat zlib xz tk meson ninja webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
       - name: Setup Python 3.12 via pyenv
         run: |
           export PYENV_ROOT="/root/.pyenv"
@@ -201,6 +205,10 @@ jobs:
           pyenv global 3.12
           echo "PYENV_ROOT=/root/.pyenv" >> $GITHUB_ENV
           echo "/root/.pyenv/shims:/root/.pyenv/bin" >> $GITHUB_PATH
+      - name: Verify Node runtime
+        run: |
+          node -v
+          npm -v
       - run: npm ci
       - name: Install Python dependencies
         run: |

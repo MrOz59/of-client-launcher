@@ -126,7 +126,15 @@ jobs:
       - name: Install deps (pacman)
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed nodejs npm git base-devel python rust libarchive libxcrypt-compat webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg
+          pacman -S --noconfirm --needed git base-devel python rust libarchive libxcrypt-compat webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Verify Node runtime
+        run: |
+          node -v
+          npm -v
       - run: npm ci
       - name: Build bundled torrent-agent binary
         run: npm run bundle:torrent-agent
