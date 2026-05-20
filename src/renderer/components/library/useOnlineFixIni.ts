@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Game, IniField } from './types'
+import { useI18n } from '../../i18n'
 
 export function useOnlineFixIni() {
+  const { t } = useI18n()
   const [iniContent, setIniContent] = useState('')
   const [iniPath, setIniPath] = useState<string | null>(null)
   const [iniLoading, setIniLoading] = useState(false)
@@ -142,7 +144,7 @@ export function useOnlineFixIni() {
 
   const loadIni = useCallback(async (game: Game) => {
     if (!game.install_path) {
-      setIniError('Jogo precisa estar instalado para editar o OnlineFix.ini')
+      setIniError(t('library.onlineFixIni.installRequired'))
       setIniContent('')
       setIniOriginalContent('')
       iniOriginalContentRef.current = ''
@@ -156,7 +158,7 @@ export function useOnlineFixIni() {
     try {
       const res = await window.electronAPI.getOnlineFixIni(game.url)
       if (!res.success) {
-        setIniError(res.error || 'Falha ao carregar OnlineFix.ini')
+        setIniError(res.error || t('library.onlineFixIni.loadFailed'))
         setIniContent('')
         setIniOriginalContent('')
         iniOriginalContentRef.current = ''
@@ -175,7 +177,7 @@ export function useOnlineFixIni() {
       setIniFields(fields)
       iniFieldsRef.current = fields
     } catch (e: any) {
-      setIniError(e?.message || 'Falha ao carregar OnlineFix.ini')
+      setIniError(e?.message || t('library.onlineFixIni.loadFailed'))
       setIniContent('')
       setIniOriginalContent('')
       iniOriginalContentRef.current = ''
@@ -185,7 +187,7 @@ export function useOnlineFixIni() {
     } finally {
       setIniLoading(false)
     }
-  }, [parseIniFields])
+  }, [parseIniFields, t])
 
   const saveIni = useCallback(async (game: Game) => {
     if (!game.install_path) return
@@ -194,7 +196,7 @@ export function useOnlineFixIni() {
     try {
       const textToSave = buildCurrentIniText()
       const res = await window.electronAPI.saveOnlineFixIni(game.url, textToSave)
-      if (!res.success) throw new Error(res.error || 'Falha ao salvar')
+      if (!res.success) throw new Error(res.error || t('library.onlineFixIni.saveFailedShort'))
       setIniContent(textToSave)
       setIniOriginalContent(textToSave)
       iniOriginalContentRef.current = textToSave
@@ -202,11 +204,11 @@ export function useOnlineFixIni() {
       setIniLastSavedAt(Date.now())
       if (res.path) setIniPath(res.path)
     } catch (e: any) {
-      setIniError(e?.message || 'Falha ao salvar OnlineFix.ini')
+      setIniError(e?.message || t('library.onlineFixIni.saveFailed'))
     } finally {
       setIniSaving(false)
     }
-  }, [buildCurrentIniText])
+  }, [buildCurrentIniText, t])
 
   // Cleanup autosave timer
   const clearAutosaveTimer = useCallback(() => {

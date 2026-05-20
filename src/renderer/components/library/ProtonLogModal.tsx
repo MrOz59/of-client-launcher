@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { ArrowDown, ArrowUp, Copy, RefreshCw, Terminal } from 'lucide-react'
+import { useI18n } from '../../i18n'
 
 export interface ProtonLogModalProps {
   title: string
@@ -26,6 +27,7 @@ export function ProtonLogModal({
   onCopy,
   onClose
 }: ProtonLogModalProps) {
+  const { t } = useI18n()
   const bodyRef = useRef<HTMLPreElement | null>(null)
   const stickToBottomRef = useRef(false)
   const hasRenderedTextRef = useRef(false)
@@ -49,18 +51,18 @@ export function ProtonLogModal({
         <div className="config-modal-body">
           <div className="modal-header" style={{ alignItems: 'flex-start' }}>
             <div>
-              <p className="eyebrow">Logs do Proton</p>
+              <p className="eyebrow">{t('library.logs.title')}</p>
               <h3>{title}</h3>
               <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12, opacity: 0.82 }}>
                 <span style={{ padding: '4px 8px', borderRadius: 999, background: live ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.08)', border: live ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.08)' }}>
-                  {live ? 'Ao vivo' : 'Parado'}
+                  {live ? t('library.logs.live') : t('library.logs.stopped')}
                 </span>
-                {updatedAt ? <span>Atualizado: {new Date(updatedAt).toLocaleTimeString()}</span> : null}
-                {logPath ? <span title={logPath}>Arquivo: {logPath}</span> : <span>Sem arquivo `steam-*.log` detectado</span>}
+                {updatedAt ? <span>{t('library.logs.updated', { time: new Date(updatedAt).toLocaleTimeString() })}</span> : null}
+                {logPath ? <span title={logPath}>{t('library.logs.file', { path: logPath })}</span> : <span>{t('library.logs.noFile')}</span>}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button className="btn ghost" onClick={onRefresh} disabled={loading} title="Atualizar agora">
+              <button className="btn ghost" onClick={onRefresh} disabled={loading} title={t('library.logs.refreshNow')}>
                 <RefreshCw size={14} className={loading ? 'of-spin' : undefined} />
               </button>
               <button
@@ -71,7 +73,7 @@ export function ProtonLogModal({
                   stickToBottomRef.current = false
                   el.scrollTop = 0
                 }}
-                title="Ir para o início preservado"
+                title={t('library.logs.goTop')}
               >
                 <ArrowUp size={14} />
               </button>
@@ -83,14 +85,14 @@ export function ProtonLogModal({
                   stickToBottomRef.current = true
                   el.scrollTop = el.scrollHeight
                 }}
-                title="Ir para o fim"
+                title={t('library.logs.goBottom')}
               >
                 <ArrowDown size={14} />
               </button>
-              <button className="btn ghost" onClick={onCopy} title="Copiar logs">
+              <button className="btn ghost" onClick={onCopy} title={t('library.logs.copy')}>
                 <Copy size={14} />
               </button>
-              <button className="btn ghost" onClick={onClose} title="Fechar">
+              <button className="btn ghost" onClick={onClose} title={t('login.close')}>
                 ✕
               </button>
             </div>
@@ -105,7 +107,7 @@ export function ProtonLogModal({
           <div style={{ marginTop: 12, borderRadius: 14, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(7,10,15,0.94)', overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', fontSize: 12, opacity: 0.85 }}>
               <Terminal size={14} />
-              <span>Início preservado + eventos recentes filtrados + tail</span>
+              <span>{t('library.logs.filteredTail')}</span>
             </div>
 
             <pre
@@ -130,7 +132,7 @@ export function ProtonLogModal({
                 color: '#d7dee9'
               }}
             >
-              {text || (loading ? 'Carregando logs...' : 'Nenhum log disponível ainda. Inicie o jogo com Proton log ativo ou aguarde saída do processo.')}
+              {text || (loading ? t('library.logs.loading') : t('library.logs.empty'))}
             </pre>
           </div>
         </div>

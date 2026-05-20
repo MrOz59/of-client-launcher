@@ -198,7 +198,7 @@ export async function vpnConnectFromConfig(params: { configText: string; userDat
   if (process.platform === 'win32') {
     const exe = findWireGuardExeWindows()
     if (!exe) return { success: false, error: 'WireGuard não instalado', needsInstall: true, configPath }
-    // Instala como serviço (precisa admin). Sem auto-UAC aqui; tentativa direta.
+    // Install as a service. This requires admin privileges; no automatic UAC flow here.
     const r = await run(exe, ['/installtunnelservice', configPath], { timeoutMs: 30000 })
     if (!r.ok) {
       const combined = `${r.stderr || ''}\n${r.stdout || ''}`

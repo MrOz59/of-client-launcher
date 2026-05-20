@@ -15,7 +15,7 @@ export function parseIniKeyValues(text: string): OnlineFixKV[] {
   const out: OnlineFixKV[] = []
   const lines = String(text || '').split(/\r?\n/)
 
-  // aceita key=value, ignora seções [..] e comentários de linha
+  // Accept key=value, ignore [..] sections and line comments.
   const kvRegex = /^\s*([^=;\[#]+?)\s*=\s*(.*)$/
 
   for (const line of lines) {
@@ -147,8 +147,8 @@ export async function readFileIfExists(filePath: string): Promise<string | null>
 }
 
 /**
- * Tenta localizar o OnlineFix.ini em paths comuns.
- * Ajuste/adicione paths aqui conforme o padrão do teu instalador.
+ * Try to locate OnlineFix.ini in common paths.
+ * Adjust or add paths here to match installer-specific layouts.
  */
 export async function findAndReadOnlineFixIni(installPath: string): Promise<{ path: string; content: string } | null> {
   const root = String(installPath || '').trim()
@@ -177,7 +177,7 @@ export async function findAndReadOnlineFixIni(installPath: string): Promise<{ pa
     if (txt != null) return { path: p, content: txt }
   }
 
-  // fallback leve: busca por OnlineFix.ini até depth 3 (evita varrer jogo inteiro)
+  // Lightweight fallback: search for OnlineFix.ini up to depth 3 to avoid scanning the whole game.
   const maxDepth = 3
   const maxEntries = 4000
   let seen = 0
@@ -205,7 +205,7 @@ export async function findAndReadOnlineFixIni(installPath: string): Promise<{ pa
       }
 
       if (ent.isDirectory()) {
-        // evita pastas enormes comuns
+        // Avoid common huge folders.
         const dn = ent.name.toLowerCase()
         if (dn === 'movies' || dn === 'videos' || dn === 'redist' || dn === 'directx' || dn === 'vcredist') continue
 

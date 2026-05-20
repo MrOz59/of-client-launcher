@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { Archive, Download, FolderOpen, Pause, Play, RefreshCw, X, ArrowUp } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 interface DownloadItem {
   id: string
@@ -67,6 +68,7 @@ interface DownloadsTabProps {
 }
 
 export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
+  const { t } = useI18n()
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [hasActive, setHasActive] = useState(false)
   const [historyTick, setHistoryTick] = useState(0)
@@ -149,14 +151,15 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     const width = 240
     const height = 64
     const padding = 6
+    const stageLabel = stage === 'download' ? 'download' : t('downloads.graph.extraction')
 
     if (!samples.length) {
       return (
         <div className="downloads-graph">
           <div className="downloads-graph-header">
-            <div className="downloads-graph-title">Taxa de {stage === 'download' ? 'download' : 'extração'}</div>
+            <div className="downloads-graph-title">{t('downloads.graph.rateOf', { stage: stageLabel })}</div>
           </div>
-          <div className="downloads-graph-empty">Aguardando dados…</div>
+          <div className="downloads-graph-empty">{t('downloads.graph.waiting')}</div>
         </div>
       )
     }
@@ -179,8 +182,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     return (
       <div className="downloads-graph">
         <div className="downloads-graph-header">
-          <div className="downloads-graph-title">Taxa de {stage === 'download' ? 'download' : 'extração'}</div>
-          <div className="downloads-graph-meta">Atual {formatRate(last)} • Pico {formatRate(peak)}</div>
+          <div className="downloads-graph-title">{t('downloads.graph.rateOf', { stage: stageLabel })}</div>
+          <div className="downloads-graph-meta">{t('downloads.graph.current', { value: formatRate(last) })} / {t('downloads.graph.peak', { value: formatRate(peak) })}</div>
         </div>
         <svg className="downloads-graph-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
           <g>
@@ -1006,21 +1009,21 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
   const getStatusText = (status: string) => {
     switch (status) {
       case 'pending':
-        return 'Pendente'
+        return t('downloads.status.pending')
       case 'downloading':
-        return 'Baixando'
+        return t('downloads.status.downloading')
       case 'extracting':
-        return 'Extraindo'
+        return t('downloads.status.extracting')
       case 'prefixing':
-        return 'Preparando prefixo'
+        return t('downloads.status.prefixing')
       case 'paused':
-        return 'Pausado'
+        return t('downloads.status.paused')
       case 'completed':
-        return 'Concluído'
+        return t('downloads.status.completed')
       case 'error':
-        return 'Erro'
+        return t('downloads.status.error')
       case 'queued':
-        return 'Na fila'
+        return t('downloads.status.queued')
       default:
         return status
     }
@@ -1125,10 +1128,10 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               {item.status !== 'extracting' && item.status !== 'queued' && item.type === 'http' && ' • HTTP'}
             </div>
             {variant === 'primary' && item.status === 'prefixing' && item.gameUrl ? (
-              <div className="download-dest" title={item.gameUrl}>Jogo: {item.gameUrl}</div>
+              <div className="download-dest" title={item.gameUrl}>{t('downloads.game')}: {item.gameUrl}</div>
             ) : null}
             {variant === 'primary' && item.destPath ? (
-              <div className="download-dest" title={item.destPath}>Destino: {item.destPath}</div>
+              <div className="download-dest" title={item.destPath}>{t('downloads.destination')}: {item.destPath}</div>
             ) : null}
           </div>
 
@@ -1139,7 +1142,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                 <button
                   onClick={() => handlePrioritize(item)}
                   className="btn primary btn-icon"
-                  title="Mover para frente da fila"
+                  title={t('downloads.actions.prioritize')}
                 >
                   <ArrowUp size={16} />
                 </button>
@@ -1147,22 +1150,22 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
             )}
 
             {isTorrent && item.status === 'downloading' && (
-              <button onClick={() => handlePause(item)} className="btn warning btn-icon" title="Pausar">
+              <button onClick={() => handlePause(item)} className="btn warning btn-icon" title={t('downloads.actions.pause')}>
                 <Pause size={16} />
               </button>
             )}
             {isTorrent && item.status === 'paused' && (
-              <button onClick={() => handleResume(item)} className="btn accent btn-icon" title="Continuar">
+              <button onClick={() => handleResume(item)} className="btn accent btn-icon" title={t('downloads.actions.resume')}>
                 <Play size={16} />
               </button>
             )}
             {isTorrent && item.status === 'error' && (
-              <button onClick={() => handleResume(item)} className="btn accent btn-icon" title="Tentar novamente">
+              <button onClick={() => handleResume(item)} className="btn accent btn-icon" title={t('downloads.actions.retry')}>
                 <RefreshCw size={16} />
               </button>
             )}
             {showCancel && (
-              <button onClick={() => handleCancel(item)} className="btn danger btn-icon" title="Cancelar">
+              <button onClick={() => handleCancel(item)} className="btn danger btn-icon" title={t('downloads.actions.cancel')}>
                 <X size={16} />
               </button>
             )}
@@ -1172,7 +1175,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
               <button
                 onClick={() => handleRemoveFromQueue(item)}
                 className="btn danger btn-icon"
-                title="Remover da fila"
+                title={t('downloads.actions.removeFromQueue')}
               >
                 <X size={16} />
               </button>
@@ -1184,10 +1187,10 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   onClick={() => handleExtract(item)}
                   disabled={!item.destPath}
                   className="btn accent"
-                  title={item.destPath ? 'Extrair' : 'Caminho indisponível'}
+                  title={item.destPath ? t('downloads.actions.extract') : t('downloads.pathUnavailable')}
                 >
                   <Archive size={15} />
-                  Extrair
+                  {t('downloads.actions.extract')}
                 </button>
                 <button
                   onClick={() => {
@@ -1195,10 +1198,10 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   }}
                   disabled={!item.destPath}
                   className="btn primary"
-                  title={item.destPath ? 'Abrir pasta' : 'Caminho indisponível'}
+                  title={item.destPath ? t('downloads.actions.openFolder') : t('downloads.pathUnavailable')}
                 >
                   <FolderOpen size={15} />
-                  Abrir pasta
+                  {t('downloads.actions.openFolder')}
                 </button>
               </>
             )}
@@ -1215,9 +1218,9 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         <div className={`download-info ${variant === 'primary' ? 'download-info--primary' : ''}`}>
           <span>
             {item.status === 'prefixing'
-              ? `Prefixo ${(item.progress ?? 0).toFixed(1)}%`
+              ? `${t('downloads.prefix')} ${(item.progress ?? 0).toFixed(1)}%`
               : item.status === 'extracting'
-              ? `Extraindo ${item.extractProgress?.toFixed(1) ?? item.progress.toFixed(1)}%`
+              ? `${t('downloads.extracting')} ${item.extractProgress?.toFixed(1) ?? item.progress.toFixed(1)}%`
               : `${item.progress.toFixed(1)}%`}
           </span>
 
@@ -1229,7 +1232,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
           {item.status === 'prefixing' ? (
             <>
-              {item.prefixMessage ? <span title={item.prefixMessage}>• {item.prefixMessage}</span> : <span>• Preparando…</span>}
+              {item.prefixMessage ? <span title={item.prefixMessage}>• {item.prefixMessage}</span> : <span>• {t('downloads.preparing')}</span>}
             </>
           ) : item.status === 'extracting' ? (
             <>
@@ -1250,33 +1253,33 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   const taskKindText = (kind: LauncherTask['kind']) => {
     switch (kind) {
-      case 'download': return 'Download'
-      case 'extract': return 'Extração'
-      case 'prefix': return 'PFX'
-      case 'redist': return 'Redists'
-      case 'cloud-save': return 'Saves'
-      default: return 'Tarefa'
+      case 'download': return t('downloads.task.download')
+      case 'extract': return t('downloads.task.extract')
+      case 'prefix': return t('downloads.task.prefix')
+      case 'redist': return t('downloads.task.redist')
+      case 'cloud-save': return t('downloads.task.cloudSave')
+      default: return t('downloads.task.default')
     }
   }
 
   const taskImpactText = (impact?: LauncherTask['impact']) => {
     switch (impact) {
-      case 'network': return 'Rede'
-      case 'disk': return 'Disco'
-      case 'compat': return 'Compatibilidade'
-      case 'cloud': return 'Nuvem'
-      default: return 'Background'
+      case 'network': return t('downloads.impact.network')
+      case 'disk': return t('downloads.impact.disk')
+      case 'compat': return t('downloads.impact.compat')
+      case 'cloud': return t('downloads.impact.cloud')
+      default: return t('downloads.impact.background')
     }
   }
 
   const taskStatusText = (status: LauncherTask['status']) => {
     switch (status) {
-      case 'queued': return 'Na fila'
-      case 'running': return 'Rodando'
-      case 'paused': return 'Pausado'
-      case 'done': return 'Concluído'
-      case 'error': return 'Erro'
-      case 'cancelled': return 'Cancelado'
+      case 'queued': return t('downloads.taskStatus.queued')
+      case 'running': return t('downloads.taskStatus.running')
+      case 'paused': return t('downloads.taskStatus.paused')
+      case 'done': return t('downloads.taskStatus.done')
+      case 'error': return t('downloads.taskStatus.error')
+      case 'cancelled': return t('downloads.taskStatus.cancelled')
       default: return status
     }
   }
@@ -1291,10 +1294,10 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
     return (
       <div className="downloads-section downloads-section--tasks">
         <div className="downloads-section-header">
-          <div className="downloads-section-title">Tarefas</div>
+          <div className="downloads-section-title">{t('downloads.tasks.title')}</div>
           <div className="downloads-section-meta">
-            <span className="downloads-pill">{activeTasks.length} ativa(s)</span>
-            {recentTasks.length ? <span className="downloads-pill">{recentTasks.length} recente(s)</span> : null}
+            <span className="downloads-pill">{t('downloads.tasks.active', { count: activeTasks.length })}</span>
+            {recentTasks.length ? <span className="downloads-pill">{t('downloads.tasks.recent', { count: recentTasks.length })}</span> : null}
           </div>
         </div>
         <div className="task-list">
@@ -1333,8 +1336,8 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
         <TaskPanel />
         <div className="empty-state">
           <Download size={64} />
-          <h3>Nenhum download ativo</h3>
-          <p>Downloads e tarefas aparecerão aqui</p>
+          <h3>{t('downloads.empty.title')}</h3>
+          <p>{t('downloads.empty.description')}</p>
         </div>
       </div>
     )
@@ -1342,21 +1345,21 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
 
   return (
     <div className="downloads-page">
-      <div className="downloads-summary" aria-label="Resumo dos downloads">
+      <div className="downloads-summary" aria-label={t('downloads.summary.label')}>
         <div className="downloads-summary-item">
-          <span className="downloads-summary-label">Ativos</span>
+          <span className="downloads-summary-label">{t('downloads.summary.active')}</span>
           <span className="downloads-summary-value">{summary.active}</span>
         </div>
         <div className="downloads-summary-item">
-          <span className="downloads-summary-label">Fila</span>
+          <span className="downloads-summary-label">{t('downloads.summary.queue')}</span>
           <span className="downloads-summary-value">{summary.queued}</span>
         </div>
         <div className="downloads-summary-item">
-          <span className="downloads-summary-label">Pausados</span>
+          <span className="downloads-summary-label">{t('downloads.summary.paused')}</span>
           <span className="downloads-summary-value">{summary.paused}</span>
         </div>
         <div className={`downloads-summary-item ${summary.errors > 0 ? 'downloads-summary-item--error' : ''}`}>
-          <span className="downloads-summary-label">Erros</span>
+          <span className="downloads-summary-label">{t('downloads.summary.errors')}</span>
           <span className="downloads-summary-value">{summary.errors}</span>
         </div>
       </div>
@@ -1368,30 +1371,30 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
           <div className="downloads-hero">
             <div className="downloads-hero-top">
               <div className="downloads-hero-heading">
-                <div className="downloads-hero-kicker">Download ativo</div>
+                <div className="downloads-hero-kicker">{t('downloads.hero.active')}</div>
                 <div className="downloads-hero-title" title={primary.status === 'prefixing' ? (primary.gameUrl || primary.title) : primary.title}>
-                  {primary.status === 'prefixing' ? 'Preparando prefixo' : primary.title}
+                  {primary.status === 'prefixing' ? t('downloads.status.prefixing') : primary.title}
                 </div>
                 {primary.status === 'prefixing' && primary.gameUrl ? (
-                  <div className="downloads-hero-sub" title={primary.gameUrl}>Jogo: {primary.gameUrl}</div>
+                  <div className="downloads-hero-sub" title={primary.gameUrl}>{t('downloads.game')}: {primary.gameUrl}</div>
                 ) : primary.destPath ? (
-                  <div className="downloads-hero-sub" title={primary.destPath}>Destino: {primary.destPath}</div>
+                  <div className="downloads-hero-sub" title={primary.destPath}>{t('downloads.destination')}: {primary.destPath}</div>
                 ) : null}
               </div>
 
               <div className="downloads-hero-actions">
                 {primaryIsTorrent && primary.status === 'downloading' && (
-                  <button onClick={() => handlePause(primary)} className="btn warning btn-icon" title="Pausar">
+                  <button onClick={() => handlePause(primary)} className="btn warning btn-icon" title={t('downloads.actions.pause')}>
                     <Pause size={16} />
                   </button>
                 )}
                 {primaryIsTorrent && primary.status === 'paused' && (
-                  <button onClick={() => handleResume(primary)} className="btn accent btn-icon" title="Continuar">
+                  <button onClick={() => handleResume(primary)} className="btn accent btn-icon" title={t('downloads.actions.resume')}>
                     <Play size={16} />
                   </button>
                 )}
                 {primaryIsTorrent && primary.status === 'error' && (
-                  <button onClick={() => handleResume(primary)} className="btn accent btn-icon" title="Tentar novamente">
+                  <button onClick={() => handleResume(primary)} className="btn accent btn-icon" title={t('downloads.actions.retry')}>
                     <RefreshCw size={16} />
                   </button>
                 )}
@@ -1401,7 +1404,7 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   primary.status === 'extracting' ||
                   primary.status === 'error')) ||
                   (!primaryIsTorrent && primary.status === 'error')) && (
-                  <button onClick={() => handleCancel(primary)} className="btn danger btn-icon" title="Cancelar">
+                  <button onClick={() => handleCancel(primary)} className="btn danger btn-icon" title={t('downloads.actions.cancel')}>
                     <X size={16} />
                   </button>
                 )}
@@ -1462,14 +1465,14 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
                   <div className="downloads-hero-progress-top">
                     <div className="downloads-hero-progress-main">
                       {primary.status === 'prefixing'
-                        ? `Prefixo ${(primaryUiProgress ?? 0).toFixed(1)}%`
+                        ? `${t('downloads.prefix')} ${(primaryUiProgress ?? 0).toFixed(1)}%`
                         : primary.status === 'extracting'
-                        ? `Extraindo ${(primaryUiProgress ?? 0).toFixed(1)}%`
+                        ? `${t('downloads.extracting')} ${(primaryUiProgress ?? 0).toFixed(1)}%`
                         : `${(primary.progress ?? 0).toFixed(1)}%`}
                     </div>
                     <div className="downloads-hero-progress-sub">
                       {primary.status === 'prefixing'
-                        ? <span>{primary.prefixMessage ? primary.prefixMessage : 'Preparando…'}</span>
+                        ? <span>{primary.prefixMessage ? primary.prefixMessage : t('downloads.preparing')}</span>
                         : primary.status === 'extracting'
                         ? <span>ETA: {formatEta(primary.extractEta)}</span>
                         : primary.type === 'torrent' && primary.agentMessage
@@ -1502,12 +1505,12 @@ export default function DownloadsTab({ onActivityChange }: DownloadsTabProps) {
       {queue.length > 0 ? (
         <div className="downloads-section downloads-section--queue">
           <div className="downloads-section-header">
-            <div className="downloads-section-title">Fila</div>
+            <div className="downloads-section-title">{t('downloads.queue.title')}</div>
             <div className="downloads-section-meta">
-              <span className="downloads-pill">{queue.length} item(s)</span>
+              <span className="downloads-pill">{t('downloads.queue.items', { count: queue.length })}</span>
               {queueStatus && (
-                <span className="downloads-pill" title="Downloads ativos / Máximo paralelos">
-                  {queueStatus.activeCount}/{queueStatus.maxParallel} ativos
+                <span className="downloads-pill" title={t('downloads.queue.activeParallelTitle')}>
+                  {t('downloads.queue.activeParallel', { active: queueStatus.activeCount, max: queueStatus.maxParallel })}
                 </span>
               )}
             </div>

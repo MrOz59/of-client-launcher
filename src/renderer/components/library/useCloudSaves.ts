@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { CloudSavesBannerState, SaveSyncJobState } from './types'
+import { useI18n } from '../../i18n'
 
 export function useCloudSaves() {
+  const { t } = useI18n()
   const [cloudSavesBanner, setCloudSavesBanner] = useState<CloudSavesBannerState | null>(null)
   const cloudBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -13,11 +15,11 @@ export function useCloudSaves() {
       if (!cloudSavesBanner?.gameUrl) return
       const api: any = (window as any).electronAPI
       const res = await api?.cloudSavesOpenBackups?.(cloudSavesBanner.gameUrl)
-      if (res && res.success === false) alert(res.error || 'Falha ao abrir pasta de backups')
+      if (res && res.success === false) alert(res.error || t('library.cloudSaves.openBackupsFailed'))
     } catch (e: any) {
-      alert(e?.message || 'Falha ao abrir pasta de backups')
+      alert(e?.message || t('library.cloudSaves.openBackupsFailed'))
     }
-  }, [cloudSavesBanner?.gameUrl])
+  }, [cloudSavesBanner?.gameUrl, t])
 
   const runSaveSync = useCallback(async (gameUrl: string, reason: 'manual' | 'game_exited') => {
     if (!gameUrl) return
@@ -26,22 +28,22 @@ export function useCloudSaves() {
     saveSyncLockRef.current[gameUrl] = true
     setSaveSyncJobs(prev => ({
       ...prev,
-      [gameUrl]: { status: 'syncing', message: reason === 'manual' ? 'Sincronizando...' : 'Backup de saves (ao fechar)...', updatedAt: Date.now() }
+      [gameUrl]: { status: 'syncing', message: reason === 'manual' ? t('library.cloudSaves.syncing') : t('library.cloudSaves.backupOnExit'), updatedAt: Date.now() }
     }))
 
     try {
       const fn = window.electronAPI?.syncGameSaves
-      if (typeof fn !== 'function') throw new Error('API de sincronização de saves não existe no preload (syncGameSaves).')
+      if (typeof fn !== 'function') throw new Error(t('library.cloudSaves.apiMissing'))
 
       const res: any = await fn(gameUrl)
 
       if (!res?.success) {
-        throw new Error(res?.error || 'Falha ao sincronizar saves')
+        throw new Error(res?.error || t('library.cloudSaves.syncFailed'))
       }
 
       setSaveSyncJobs(prev => ({
         ...prev,
-        [gameUrl]: { status: 'done', message: 'Saves sincronizados', updatedAt: Date.now() }
+        [gameUrl]: { status: 'done', message: t('library.cloudSaves.synced'), updatedAt: Date.now() }
       }))
 
       // Clear badge after a while
@@ -57,12 +59,12 @@ export function useCloudSaves() {
     } catch (err: any) {
       setSaveSyncJobs(prev => ({
         ...prev,
-        [gameUrl]: { status: 'error', message: err?.message || 'Erro ao sincronizar saves', updatedAt: Date.now() }
+        [gameUrl]: { status: 'error', message: err?.message || t('library.cloudSaves.syncError'), updatedAt: Date.now() }
       }))
     } finally {
       saveSyncLockRef.current[gameUrl] = false
     }
-  }, [])
+  }, [t])
 
   const closeBanner = useCallback(() => {
     setCloudSavesBanner(null)

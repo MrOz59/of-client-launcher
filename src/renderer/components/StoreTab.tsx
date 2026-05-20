@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { useI18n } from '../i18n'
 
 interface StoreTabProps {
   isLoggedIn: boolean
@@ -202,13 +203,14 @@ const adBlockCSS = `
 `
 
 // Advanced DOM cleanup script - function to generate with installed games data
-function getAdBlockScript(installedGames: InstalledGame[]) {
+function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string, string>) {
   return `
 (function() {
   'use strict';
   console.log('[AdBlock Pro] Client-side protection initializing...');
 
   const rules = ${JSON.stringify(cssRules)};
+  const labels = ${JSON.stringify(labels).replace(/</g, '\\u003c')};
 
   // Installed games data from launcher
   const installedGames = ${JSON.stringify(installedGames)};
@@ -360,6 +362,83 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
     return null;
   }
 
+  function isMicrosoftStoreMarker(value) {
+    const text = String(value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+    if (!text) return false;
+    return text.includes('microsoft store') ||
+      text.includes('ms store') ||
+      text.includes('windows store') ||
+      text.includes('xbox app') ||
+      text.includes('xbox store') ||
+      text.includes('apps.microsoft.com') ||
+      text.includes('microsoft.com/store') ||
+      text.includes('xbox.com');
+  }
+
+  function getPageStoreInfo() {
+    const exactXPath = '/html/body/div[3]/div[1]/div/div[2]/div/article/div[2]/div[3]/a[1]';
+    try {
+      const exact = document.evaluate(exactXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      if (exact) {
+        const text = exact.textContent || '';
+        const href = exact.href || (exact.getAttribute && exact.getAttribute('href')) || '';
+        if (isMicrosoftStoreMarker(text + ' ' + href)) {
+          return { id: 'microsoft', label: text.trim() || 'Microsoft Store', href, element: exact };
+        }
+      }
+    } catch (e) {}
+
+    const article = document.querySelector('#dle-content > div > article') || document.querySelector('article');
+    if (!article) return { id: 'unknown', label: null, href: null };
+    const links = Array.from(article.querySelectorAll('a'));
+    for (const link of links) {
+      const text = link.textContent || '';
+      const href = link.href || link.getAttribute('href') || '';
+      if (isMicrosoftStoreMarker(text + ' ' + href)) {
+        return { id: 'microsoft', label: text.trim() || 'Microsoft Store', href, element: link };
+      }
+    }
+    return { id: 'unknown', label: null, href: null };
+  }
+
+  function renderUnsupportedStoreNotice(article, storeInfo, torrentLinks, downloadContainer) {
+    article.querySelectorAll('.of-launcher-torrent-button, .of-launcher-msstore-block').forEach(el => el.remove());
+    torrentLinks.forEach(link => link.remove());
+
+    const notice = document.createElement('div');
+    notice.className = 'of-launcher-msstore-block';
+    notice.textContent = labels.downloadBlockedMicrosoft;
+    notice.style.cssText = [
+      'display: flex',
+      'align-items: center',
+      'width: calc(100% - 8px)',
+      'box-sizing: border-box',
+      'padding: 12px 16px',
+      'margin: 12px 4px 16px',
+      'background: #3f1d1d',
+      'color: #fecaca',
+      'border: 1px solid #7f1d1d',
+      'border-radius: 10px',
+      'font-weight: 700',
+      'line-height: 1.35',
+      'position: relative',
+      'z-index: 10'
+    ].join('; ');
+
+    const storeRow = storeInfo && storeInfo.element && storeInfo.element.closest ? storeInfo.element.closest('div') : null;
+    if (storeRow && storeRow.parentElement && article.contains(storeRow)) {
+      storeRow.parentElement.insertBefore(notice, storeRow.nextSibling);
+      return;
+    }
+
+    const content = article.querySelector('.full-story-content') || downloadContainer || article;
+    if (content.firstChild) {
+      content.insertBefore(notice, content.firstChild);
+    } else {
+      content.appendChild(notice);
+    }
+  }
+
   // Check if current page game is installed
   function getInstalledGameForCurrentPage() {
     const currentUrl = window.location.href;
@@ -388,9 +467,9 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
         button.setAttribute('data-variant', variant);
         button.disabled = isBusy;
 
-        const label = variant === 'update' ? 'Atualizar via Torrent' : 'Baixar via Torrent';
-        const startingLabel = variant === 'update' ? 'Iniciando atualização... Aguarde' : 'Iniciando download... Aguarde';
-        const activeLabel = variant === 'update' ? 'Atualização em andamento...' : 'Download em andamento...';
+        const label = variant === 'update' ? labels.updateTorrent : labels.downloadTorrent;
+        const startingLabel = variant === 'update' ? labels.startingUpdate : labels.startingDownload;
+        const activeLabel = variant === 'update' ? labels.updateActive : labels.downloadActive;
         if (state === 'ready') {
           button.textContent = label;
           button.style.cssText = baseButtonStyle;
@@ -473,6 +552,9 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
         // Find the download section in the article
         const article = document.querySelector('#dle-content > div > article');
         if (article) {
+          const storeInfo = getPageStoreInfo();
+          const isMicrosoftStoreGame = storeInfo && storeInfo.id === 'microsoft';
+
           // Find all download links
           const allLinks = article.querySelectorAll('a');
           const torrentLinks = [];
@@ -517,6 +599,12 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
             }
           });
 
+          if (isMicrosoftStoreGame) {
+            console.warn('[OF Store] Blocking Microsoft Store/Xbox game download:', storeInfo);
+            renderUnsupportedStoreNotice(article, storeInfo, torrentLinks, downloadContainer);
+            return;
+          }
+
           // Replace torrent links with our own button so we can reliably detect clicks
           const processedTorrentHrefs = new Set();
           article.querySelectorAll('.of-launcher-torrent-button').forEach(btn => {
@@ -539,7 +627,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
             button.type = 'button';
             button.className = 'of-launcher-torrent-button';
             button.setAttribute('data-torrent-href', href);
-            const initialLabel = (link.textContent || '').trim() || 'Baixar via Torrent';
+            const initialLabel = (link.textContent || '').trim() || labels.downloadTorrent;
             button.textContent = initialLabel;
             button.title = href;
             button.style.cssText = baseButtonStyle;
@@ -650,7 +738,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
               const updateBadge = document.createElement('div');
               updateBadge.className = 'of-launcher-status-badge';
               updateBadge.style.cssText = 'display: block; margin-top: 8px; padding: 6px 12px; background: linear-gradient(135deg, #f59e0b, #d97706); color: white; border-radius: 6px; font-size: 13px; font-weight: 500; text-align: center;';
-              updateBadge.innerHTML = '⬆️ Atualização disponível! (Instalado: ' + installedGame.installed_version + ')';
+              updateBadge.textContent = '↑ ' + labels.updateAvailableInstalled.replace('{version}', installedGame.installed_version || '');
 
               if (versionContainer) {
                 versionContainer.appendChild(updateBadge);
@@ -676,7 +764,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
               const installedBadge = document.createElement('div');
               installedBadge.className = 'of-launcher-status-badge';
               installedBadge.style.cssText = 'display: block; margin-top: 8px; padding: 6px 12px; background: linear-gradient(135deg, #10b981, #059669); color: white; border-radius: 6px; font-size: 13px; font-weight: 500; text-align: center;';
-              installedBadge.innerHTML = '✅ Jogo já instalado!';
+              installedBadge.textContent = '✓ ' + labels.installed;
 
               if (versionContainer) {
                 versionContainer.appendChild(installedBadge);
@@ -693,7 +781,7 @@ function getAdBlockScript(installedGames: InstalledGame[]) {
               const warn = document.createElement('div');
               warn.className = 'of-launcher-download-warning of-launcher-badge';
               warn.style.cssText = 'display: block; padding: 12px 16px; margin: 10px 0; background: linear-gradient(135deg, #ef4444, #dc2626); color: white; border-radius: 8px; text-align: center; font-weight: 500;';
-              warn.textContent = 'Ainda não é possível baixar este jogo pelo launcher.';
+              warn.textContent = labels.unavailable;
               downloadContainer.appendChild(warn);
             }
           }
@@ -870,9 +958,10 @@ const launcherCSS = `
   }
 `
 
-const launcherScript = `
+const getLauncherScript = (labels: Record<string, string>) => `
 (function() {
   console.log('[OF-Launcher] Active');
+  const labels = ${JSON.stringify(labels).replace(/</g, '\\u003c')};
   let games = new Map();
   let scheduled = false;
   function findCards() {
@@ -915,7 +1004,7 @@ const launcherScript = `
       }
       const hasUpdate = !!st.hasUpdate;
       const versionLabel = st.version || st.installedVersion || '--';
-      const latestLabel = st.latestVersion || 'Atualizar';
+      const latestLabel = st.latestVersion || labels.update;
       badge.className = 'of-launcher-badge ' + (hasUpdate ? 'update-available' : 'installed');
       badge.textContent = hasUpdate ? '↑ ' + latestLabel : '✓ v' + versionLabel;
     });
@@ -933,6 +1022,7 @@ const launcherScript = `
 `
 
 export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: StoreTabProps) {
+  const { t } = useI18n()
   const webviewRef = useRef<HTMLDivElement>(null)
   const webviewInstance = useRef<any>(null)
   const targetUrlRef = useRef<string | null>(null)
@@ -1147,7 +1237,18 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
         .catch((err: unknown) => console.warn('[StoreTab] Failed to inject AdBlock CSS', err))
 
       // Generate script with installed games data
-      const adBlockScript = getAdBlockScript(currentInstalledGames)
+      const adBlockScript = getAdBlockScript(currentInstalledGames, {
+        downloadBlockedMicrosoft: t('store.downloadBlockedMicrosoft'),
+        downloadTorrent: t('store.downloadTorrent'),
+        updateTorrent: t('store.updateTorrent'),
+        startingDownload: t('store.startingDownload'),
+        startingUpdate: t('store.startingUpdate'),
+        downloadActive: t('store.downloadActive'),
+        updateActive: t('store.updateActive'),
+        updateAvailableInstalled: t('store.updateAvailableInstalled'),
+        installed: t('store.installed'),
+        unavailable: t('store.unavailable')
+      })
       wv.executeJavaScript(adBlockScript)
         .then(() => {
           console.log('[StoreTab] AdBlock script injected with', currentInstalledGames.length, 'installed games')
@@ -1156,7 +1257,7 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
 
       // Then launcher features
       wv.insertCSS(launcherCSS).catch(() => {})
-      wv.executeJavaScript(launcherScript)
+      wv.executeJavaScript(getLauncherScript({ update: t('library.card.update') }))
         .then(() => {
           postLauncherGames(launcherGames)
         })

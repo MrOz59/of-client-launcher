@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AchievementProgress } from './types'
+import { useI18n } from '../../i18n'
 
 export interface AchievementsState {
   // Modal state
@@ -23,6 +24,8 @@ export interface AchievementsState {
 }
 
 export function useAchievements() {
+  const { t } = useI18n()
+
   // Modal state
   const [modalGameUrl, setModalGameUrl] = useState<string | null>(null)
   const [modalTitle, setModalTitle] = useState<string>('')
@@ -64,7 +67,7 @@ export function useAchievements() {
     try {
       const res: any = await window.electronAPI.getGameAchievements(gameUrl)
       if (!res?.success) {
-        setModalError(res?.error || 'Falha ao carregar conquistas')
+        setModalError(res?.error || t('library.achievements.loadFailed'))
         setModalSources([])
         setModalItems([])
         return
@@ -74,13 +77,13 @@ export function useAchievements() {
       setModalItems(items)
       updateProgress(gameUrl, items)
     } catch (e: any) {
-      setModalError(e?.message || 'Falha ao carregar conquistas')
+      setModalError(e?.message || t('library.achievements.loadFailed'))
       setModalSources([])
       setModalItems([])
     } finally {
       setModalLoading(false)
     }
-  }, [updateProgress])
+  }, [updateProgress, t])
 
   const closeModal = useCallback(() => {
     setModalGameUrl(null)
@@ -95,11 +98,11 @@ export function useAchievements() {
 
   const openModal = useCallback((gameUrl: string, gameTitle: string) => {
     setModalGameUrl(gameUrl)
-    setModalTitle(gameTitle || 'Jogo')
+    setModalTitle(gameTitle || t('library.cloudSaves.gameFallback'))
     setRevealedHiddenIds({})
     setSchemaRefreshedOnce(false)
     void loadAchievementsForGameUrl(gameUrl)
-  }, [loadAchievementsForGameUrl])
+  }, [loadAchievementsForGameUrl, t])
 
   const buildSchemaTemplate = useCallback((items: any[]) => {
     const list = Array.isArray(items) ? items : []

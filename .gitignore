@@ -107,3 +107,6 @@ __pycache__/
 sys
 json
 sys,json,re
+
+# Local Tauri migration sandbox
+tauri-migration/

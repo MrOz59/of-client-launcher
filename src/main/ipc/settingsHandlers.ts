@@ -29,6 +29,23 @@ import { resolveLegendaryBinary } from '../legendary'
 import { resolveLudusaviBinary } from '../ludusavi'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
+const LANGUAGE_PACK_MAX_BYTES = 1024 * 1024
+const LANGUAGE_PACK_FILE_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*\.json$/
+
+type LanguagePack = {
+  code: string
+  label?: string
+  nativeLabel?: string
+  source: string
+  translations: Record<string, string>
+}
+
+function resolveXdgDataHome(): string | null {
+  const env = String(process.env.XDG_DATA_HOME || '').trim()
+  if (env) return env
+  const home = os.homedir()
+  return home ? path.join(home, '.local', 'share') : null
+}
 
 function defaultGamesPath(): string {
   if (process.platform === 'linux') {
@@ -70,6 +87,114 @@ function normalizeOptionalHttpUrl(value: any, fallback = ''): string {
     return url.toString().replace(/\/$/, '')
   } catch (err: any) {
     throw new Error(err?.message || `URL invalida: ${raw}`)
+  }
+}
+
+function normalizeLanguageCode(fileName: string): string | null {
+  const base = path.basename(fileName)
+  if (!LANGUAGE_PACK_FILE_RE.test(base)) return null
+  return base.replace(/\.json$/i, '').replace(/_/g, '-')
+}
+
+function getLanguagePackDirs(): Array<{ dir: string; source: string }> {
+  const dirs: Array<{ dir: string; source: string }> = []
+
+  const add = (dir: string, source: string) => {
+    if (!dir) return
+    if (dirs.some(item => item.dir === dir)) return
+    dirs.push({ dir, source })
+  }
+
+  add(path.join(process.cwd(), 'src', 'renderer', 'i18n', 'translations'), 'source')
+
+  if (process.resourcesPath) {
+    add(path.join(process.resourcesPath, 'i18n', 'translations'), 'resources')
+  }
+
+  const userDataDir = app.getPath('userData')
+  add(path.join(userDataDir, 'i18n', 'translations'), 'user-data')
+  add(path.join(userDataDir, 'languages'), 'user-data')
+
+  const xdgDataHome = resolveXdgDataHome()
+  if (xdgDataHome) {
+    add(path.join(xdgDataHome, 'VoidLauncher', 'i18n', 'translations'), 'xdg-data')
+    add(path.join(xdgDataHome, 'VoidLauncher', 'languages'), 'xdg-data')
+    add(path.join(xdgDataHome, 'voidlauncher', 'i18n', 'translations'), 'xdg-data')
+    add(path.join(xdgDataHome, 'voidlauncher', 'languages'), 'xdg-data')
+    add(path.join(xdgDataHome, 'of-launcher', 'i18n', 'translations'), 'legacy')
+  }
+
+  return dirs
+}
+
+function readLanguagePacksFromDir(dir: string, source: string): LanguagePack[] {
+  try {
+    if (!fs.existsSync(dir)) return []
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    const packs: LanguagePack[] = []
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const code = normalizeLanguageCode(entry.name)
+      if (!code) continue
+
+      const filePath = path.join(dir, entry.name)
+      let stat: fs.Stats
+      try {
+        stat = fs.statSync(filePath)
+      } catch {
+        continue
+      }
+      if (!stat.isFile() || stat.size <= 0 || stat.size > LANGUAGE_PACK_MAX_BYTES) continue
+
+      try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+
+        const translations: Record<string, string> = {}
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof key === 'string' && typeof value === 'string') translations[key] = value
+        }
+
+        if (!Object.keys(translations).length) continue
+        packs.push({
+          code,
+          label: translations['language.label'],
+          nativeLabel: translations['language.nativeLabel'],
+          source,
+          translations
+        })
+      } catch (err: any) {
+        console.warn(`[i18n] Ignoring invalid language pack ${filePath}:`, err?.message || err)
+      }
+    }
+
+    return packs
+  } catch (err: any) {
+    console.warn(`[i18n] Failed to read language pack directory ${dir}:`, err?.message || err)
+    return []
+  }
+}
+
+function collectLanguagePacks(): { languages: LanguagePack[]; directory: string; directories: string[] } {
+  const userDir = path.join(app.getPath('userData'), 'languages')
+  try {
+    fs.mkdirSync(userDir, { recursive: true })
+  } catch (err: any) {
+    console.warn('[i18n] Failed to create user language directory:', err?.message || err)
+  }
+
+  const byCode = new Map<string, LanguagePack>()
+  for (const { dir, source } of getLanguagePackDirs()) {
+    for (const pack of readLanguagePacksFromDir(dir, source)) {
+      byCode.set(pack.code, pack)
+    }
+  }
+
+  return {
+    languages: Array.from(byCode.values()).sort((a, b) => a.code.localeCompare(b.code)),
+    directory: userDir,
+    directories: getLanguagePackDirs().map(item => item.dir)
   }
 }
 
@@ -273,6 +398,15 @@ async function collectLauncherDiagnostics(settings: any) {
 }
 
 export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
+  ipcMain.handle('i18n-list-language-packs', async () => {
+    try {
+      const { languages, directory, directories } = collectLanguagePacks()
+      return { success: true, languages, directory, directories }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
   ipcMain.handle('get-settings', async () => {
     try {
       const downloadPath = getSetting('download_path') || app.getPath('downloads')
@@ -353,7 +487,7 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         setSetting('achievement_schema_base_url', normalizeOptionalHttpUrl(settings.achievementSchemaBaseUrl, ''))
       }
       if (process.platform === 'linux') {
-        // Proton é comportamento padrão no Linux (não faz sentido desativar).
+        // Proton is the default behavior on Linux, so disabling it does not make sense.
         setSetting('use_proton', 'true')
 
         if (typeof settings.protonDefaultRuntimePath === 'string') {

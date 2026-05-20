@@ -25,13 +25,14 @@ import { AchievementsModal } from './library/AchievementsModal'
 import { ProtonLogModal } from './library/ProtonLogModal'
 import { SchemaEditorModal } from './library/SchemaEditorModal'
 import { ConfigModal } from './library/ConfigModal'
+import { useI18n } from '../i18n'
 
 // Spinner and achievement styles
 const spinnerStyles = `
   @keyframes of-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .of-spin { animation: of-spin 0.9s linear infinite; }
 
-  /* Achievements 100%: mantém o SVG nítido (sem scale) e anima um "ring" no botão */
+  /* 100% achievements: keep the SVG sharp without scaling and animate a button ring */
   .action-btn.achievements { position: relative; }
   .action-btn.achievements svg { shape-rendering: geometricPrecision; }
 
@@ -117,6 +118,7 @@ const tabFixStyles = `
 `
 
 export default function LibraryTab() {
+  const { t } = useI18n()
   // Core state
   const [games, setGames] = useState<Game[]>([])
   const [loading, setLoading] = useState(true)
@@ -222,15 +224,15 @@ export default function LibraryTab() {
         setGames(list)
         refreshActiveUpdates(list)
       } else {
-        setError(result.error || 'Falha ao carregar jogos')
+        setError(result.error || t('library.error.loadGames'))
       }
     } catch (error: any) {
       console.error('Failed to load games:', error)
-      setError(error?.message || 'Erro ao carregar biblioteca')
+      setError(error?.message || t('library.error.loadLibrary'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   // Refresh active updates
   const refreshActiveUpdates = useCallback(async (gameList?: Game[]) => {
@@ -253,40 +255,40 @@ export default function LibraryTab() {
   const toggleFavorite = useCallback(async (gameUrl: string) => {
     try {
       const fn = (window.electronAPI as any)?.toggleGameFavorite
-      if (typeof fn !== 'function') throw new Error('API toggleGameFavorite não existe no preload')
+      if (typeof fn !== 'function') throw new Error(t('library.error.favoriteApiMissing'))
       const res: any = await fn(gameUrl)
-      if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar favorito')
+      if (!res?.success) throw new Error(res?.error || t('library.error.favorite'))
       setGames((prev) => (prev || []).map((g) => (g.url === gameUrl ? { ...g, is_favorite: res.isFavorite ? 1 : 0 } : g)))
     } catch (e: any) {
-      alert(e?.message || 'Falha ao atualizar favorito')
+      alert(e?.message || t('library.error.favorite'))
     }
-  }, [])
+  }, [t])
 
   // Play game
   const playGame = useCallback(async (game: Game) => {
     try {
       setLaunchingGames(prev => ({
         ...prev,
-        [game.url]: { status: 'starting', message: 'Iniciando...', updatedAt: Date.now() }
+        [game.url]: { status: 'starting', message: t('library.launch.starting'), updatedAt: Date.now() }
       }))
 
       const launch = await window.electronAPI.launchGame(game.url)
 
       if (!launch.success && launch.error === 'missing_exe') {
-        setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: 'Executável não configurado', updatedAt: Date.now() } }))
-        alert('Executável não configurado. Configure o jogo para jogar.')
+        setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: t('library.launch.missingExe'), updatedAt: Date.now() } }))
+        alert(t('library.launch.missingExe'))
         return
       }
       if (!launch.success) {
-        setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: launch.error || 'Falha ao iniciar', updatedAt: Date.now() } }))
-        alert(launch.error || 'Falha ao iniciar o jogo')
+        setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: launch.error || t('library.launch.failed'), updatedAt: Date.now() } }))
+        alert(launch.error || t('library.launch.failedGame'))
       }
     } catch (err: any) {
       console.error('[Library] Falha ao iniciar jogo', err)
-      setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: err?.message || 'Falha ao iniciar', updatedAt: Date.now() } }))
-      alert(err?.message || 'Falha ao iniciar o jogo')
+      setLaunchingGames(prev => ({ ...prev, [game.url]: { status: 'error', message: err?.message || t('library.launch.failed'), updatedAt: Date.now() } }))
+      alert(err?.message || t('library.launch.failedGame'))
     }
-  }, [])
+  }, [t])
 
   // Stop game
   const stopGame = useCallback(async (game: Game) => {
@@ -295,23 +297,23 @@ export default function LibraryTab() {
       [game.url]: {
         ...(prev[game.url] || { status: 'starting', updatedAt: Date.now() }),
         status: 'starting',
-        message: 'Parando jogo...',
+        message: t('library.card.stopping'),
         updatedAt: Date.now()
       }
     }))
     const res = await window.electronAPI.stopGame?.(game.url, true)
-    if (!res?.success) alert(res?.error || 'Falha ao parar o jogo')
-  }, [])
+    if (!res?.success) alert(res?.error || t('library.stop.failed'))
+  }, [t])
 
   // Update game
   const updateGame = useCallback(async (game: Game) => {
     if (updateQueue.running) {
-      alert('A fila de updates está em andamento. Aguarde terminar ou cancele a fila para atualizar manualmente.')
+      alert(t('library.update.queueRunning'))
       return
     }
     if (updatingGames[game.url]) return
     if (!hasUpdate(game)) {
-      alert('Nenhuma atualização disponível.')
+      alert(t('library.update.noneAvailable'))
       return
     }
 
@@ -319,7 +321,7 @@ export default function LibraryTab() {
     try {
       let torrentUrl = ''
       const info = await window.electronAPI.fetchGameUpdateInfo(game.url)
-      if (!info.success) throw new Error(info.error || 'Falha ao obter dados da atualização')
+      if (!info.success) throw new Error(info.error || t('library.update.fetchFailed'))
       if (info.latest) setGames(prev => prev.map(g => g.url === game.url ? { ...g, latest_version: info.latest ?? g.latest_version } : g))
       if (info.torrentUrl) {
         torrentUrl = info.torrentUrl
@@ -327,14 +329,14 @@ export default function LibraryTab() {
       }
 
       if (!torrentUrl) {
-        alert('Link do torrent não encontrado. Verifique se está logado e tente novamente.')
+        alert(t('library.update.torrentMissing'))
         setUpdatingGames(prev => { const next = { ...prev }; delete next[game.url]; return next })
         return
       }
 
       const res = await window.electronAPI.startTorrentDownload(torrentUrl, game.url)
       if (!res.success) {
-        alert(res.error || 'Falha ao iniciar a atualização')
+        alert(res.error || t('library.update.startFailed'))
         setUpdatingGames(prev => { const next = { ...prev }; delete next[game.url]; return next })
       } else {
         setUpdatingGames(prev => ({ ...prev, [game.url]: { status: 'downloading', id: torrentUrl } }))
@@ -342,10 +344,10 @@ export default function LibraryTab() {
       }
     } catch (err: any) {
       console.error('[UpdateGame] Failed to start update', err)
-      alert(err?.message || 'Falha ao iniciar a atualização')
+      alert(err?.message || t('library.update.startFailed'))
       setUpdatingGames(prev => { const next = { ...prev }; delete next[game.url]; return next })
     }
-  }, [updateQueue.running, updatingGames, loadGames])
+  }, [updateQueue.running, updatingGames, loadGames, t])
 
   // Scan installed games
   const scanInstalledGames = useCallback(async () => {
@@ -353,31 +355,31 @@ export default function LibraryTab() {
     setScanningInstalled(true)
     try {
       const res = await window.electronAPI.scanInstalledGames()
-      if (!res.success) throw new Error(res.error || 'Falha ao escanear jogos instalados')
+      if (!res.success) throw new Error(res.error || t('library.scan.failed'))
       await loadGames()
-      alert(`Scan concluído: ${res.added || 0} jogo(s) adicionado(s) (${res.scanned || 0} pastas analisadas).`)
+      alert(t('library.scan.completed', { added: res.added || 0, scanned: res.scanned || 0 }))
     } catch (err: any) {
-      alert(err?.message || 'Falha ao escanear jogos instalados')
+      alert(err?.message || t('library.scan.failed'))
     } finally {
       setScanningInstalled(false)
     }
-  }, [scanningInstalled, loadGames])
+  }, [scanningInstalled, loadGames, t])
 
   // Delete game
   const deleteGame = useCallback(async (game: Game) => {
-    if (confirm(`Deseja realmente desinstalar ${game.title}?`)) {
+    if (confirm(t('library.delete.confirm', { title: game.title }))) {
       const res = await window.electronAPI.deleteGame(game.url)
       if (res.success) setGames(prev => prev.filter(g => g.url !== game.url))
-      else alert(res.error || 'Erro ao remover jogo')
+      else alert(res.error || t('library.delete.failed'))
     }
-  }, [])
+  }, [t])
 
   // Open game folder
   const openGameFolder = useCallback(async (game: Game) => {
-    if (!game.install_path) { alert('Pasta do jogo não encontrada'); return }
+    if (!game.install_path) { alert(t('library.folder.missing')); return }
     const res = await window.electronAPI.openGameFolder(game.install_path)
-    if (!res.success) alert(res.error || 'Não foi possível abrir a pasta')
-  }, [])
+    if (!res.success) alert(res.error || t('library.folder.openFailed'))
+  }, [t])
 
   // Configure exe
   const configureExe = useCallback(async (game: Game) => {
@@ -385,8 +387,8 @@ export default function LibraryTab() {
     const res = await window.electronAPI.configureGameExe(game.url)
     setConfiguring(null)
     if (res.success && res.exePath) setGames(prev => prev.map(g => g.url === game.url ? { ...g, executable_path: res.exePath } : g))
-    else alert(res.error || 'Nenhum executável configurado')
-  }, [])
+    else alert(res.error || t('library.exe.noneConfigured'))
+  }, [t])
 
   // Open proton log modal
   const openProtonLog = useCallback((game: Game) => {
@@ -418,7 +420,7 @@ export default function LibraryTab() {
           ...prev,
           loading: false,
           live: false,
-          error: res?.error || 'Falha ao carregar logs.'
+          error: res?.error || t('library.logs.loadFailed')
         }))
         return
       }
@@ -439,24 +441,24 @@ export default function LibraryTab() {
         ...prev,
         loading: false,
         live: false,
-        error: err?.message || 'Falha ao carregar logs.'
+        error: err?.message || t('library.logs.loadFailed')
       }))
     }
-  }, [protonLogViewer])
+  }, [protonLogViewer, t])
 
   // Create proton prefix
   const createProtonPrefix = useCallback(async (game: Game) => {
     setPrefixJobs(prev => ({
       ...prev,
-      [game.url]: { status: 'starting', message: 'Preparando prefixo...', updatedAt: Date.now() }
+      [game.url]: { status: 'starting', message: t('library.prefix.preparing'), updatedAt: Date.now() }
     }))
     const res = await window.electronAPI.protonCreateGamePrefix(game.url, game.title)
     if (res.success && res.prefix) {
       gameConfig.setProtonPrefix(res.prefix)
     } else {
-      alert(res.error || 'Falha ao criar prefixo')
+      alert(res.error || t('library.prefix.createFailed'))
     }
-  }, [gameConfig])
+  }, [gameConfig, t])
 
   // Open config modal
   const openConfigModal = useCallback((game: Game) => {
@@ -732,7 +734,7 @@ export default function LibraryTab() {
     return (
       <div className="loading-container">
         <div className="loading-spinner" />
-        <p>Carregando biblioteca...</p>
+        <p>{t('library.loading')}</p>
       </div>
     )
   }
@@ -815,7 +817,7 @@ export default function LibraryTab() {
               if (!achievements.modalGameUrl) return
               const res: any = await window.electronAPI.importAchievementSchema?.(achievements.modalGameUrl)
               if (!res?.success) {
-                alert(res?.error || 'Falha ao importar schema')
+                alert(res?.error || t('library.schema.importFailed'))
                 return
               }
               await achievements.loadAchievementsForGameUrl(achievements.modalGameUrl)
@@ -823,11 +825,11 @@ export default function LibraryTab() {
             onCreateSchema={() => achievements.openSchemaEditor(true)}
             onRemoveSchema={async () => {
               if (!achievements.modalGameUrl) return
-              const ok = confirm('Remover schema importado deste jogo?')
+              const ok = confirm(t('library.schema.removeConfirm'))
               if (!ok) return
               const res: any = await window.electronAPI.clearAchievementSchema?.(achievements.modalGameUrl)
               if (!res?.success) {
-                alert(res?.error || 'Falha ao remover schema')
+                alert(res?.error || t('library.schema.removeFailed'))
                 return
               }
               await achievements.loadAchievementsForGameUrl(achievements.modalGameUrl)
@@ -872,13 +874,13 @@ export default function LibraryTab() {
                 try {
                   const res: any = await window.electronAPI.saveAchievementSchema?.(achievements.modalGameUrl, achievements.schemaEditorValue)
                   if (!res?.success) {
-                    achievements.setSchemaEditorError(res?.error || 'Falha ao salvar schema')
+                    achievements.setSchemaEditorError(res?.error || t('library.schema.saveFailed'))
                     return
                   }
                   achievements.setSchemaEditorOpen(false)
                   await achievements.loadAchievementsForGameUrl(achievements.modalGameUrl)
                 } catch (e: any) {
-                  achievements.setSchemaEditorError(e?.message || 'Falha ao salvar schema')
+                  achievements.setSchemaEditorError(e?.message || t('library.schema.saveFailed'))
                 } finally {
                   achievements.setSchemaEditorBusy(false)
                 }

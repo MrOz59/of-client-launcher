@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { VpnStatusState, VpnPeer, LanMode, PublicRoom } from './types'
+import { useI18n } from '../../i18n'
 
 type CreateRoomOptions = {
   roomName?: string
@@ -9,6 +10,7 @@ type CreateRoomOptions = {
 }
 
 export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode, lanNetworkId: string) {
+  const { t } = useI18n()
   const [vpnLoading, setVpnLoading] = useState(false)
   const [vpnHasLoaded, setVpnHasLoaded] = useState(false)
   const vpnHasLoadedRef = useRef(false)
@@ -69,7 +71,7 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     setLanRoomBusy(true)
     setVpnActionBusy(true)
     try {
-      const roomName = String(options?.roomName || createRoomName || '').trim() || `${gameName || 'Sala'}`
+      const roomName = String(options?.roomName || createRoomName || '').trim() || `${gameName || t('library.vpn.roomFallback')}`
       const maxPlayers = Math.min(Math.max(Number(options?.maxPlayers || 8), 2), 32)
       const res = await window.electronAPI.vpnRoomCreate?.({ 
         name: `OF ${gameName || ''}`.trim(),
@@ -79,11 +81,11 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         public: options?.isPublic ?? createRoomPublic,
         maxPlayers
       })
-      if (!res?.success) throw new Error(res?.error || 'Falha ao criar sala')
+      if (!res?.success) throw new Error(res?.error || t('library.vpn.createFailed'))
       const code = String(res.code || '').trim()
       const cfg = String(res.config || '').trim()
       const peerId = String(res.peerId || '').trim()
-      if (!code || !cfg) throw new Error('Resposta inválida do servidor')
+      if (!code || !cfg) throw new Error(t('library.vpn.invalidResponse'))
       setLanRoomLastCode(code)
       setLanRoomCode(code)
       onNetworkUpdate(code)
@@ -107,20 +109,20 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         setVpnPeerId('')
         setCurrentRoomName('')
         setCurrentRoomIsHost(false)
-        if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em "Instalar VPN")')
-        if (conn?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para conectar a VPN. Aceite o UAC e tente novamente.')
-        throw new Error(conn?.error || 'Falha ao conectar')
+        if (conn?.needsInstall) throw new Error(t('library.vpn.wireguardMissing'))
+        if (conn?.needsAdmin) throw new Error(t('library.vpn.adminConnect'))
+        throw new Error(conn?.error || t('library.vpn.connectFailed'))
       }
       setVpnConnected(true)
     } catch (err: any) {
-      const msg = err?.message || 'Falha ao criar sala'
+      const msg = err?.message || t('library.vpn.createFailed')
       setVpnError(msg)
       alert(msg)
     } finally {
       setLanRoomBusy(false)
       setVpnActionBusy(false)
     }
-  }, [createRoomName, createRoomPassword, createRoomPublic])
+  }, [createRoomName, createRoomPassword, createRoomPublic, t])
 
   const joinRoom = useCallback(async (code: string, gameName: string, onNetworkUpdate: (code: string) => void, password?: string) => {
     const cleanCode = code.trim().toUpperCase()
@@ -131,10 +133,10 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         name: `OF ${gameName || ''}`.trim(),
         password 
       })
-      if (!res?.success) throw new Error(res?.error || 'Falha ao entrar na sala')
+      if (!res?.success) throw new Error(res?.error || t('library.vpn.joinFailed'))
       const cfg = String(res.config || '').trim()
       const peerId = String(res.peerId || '').trim()
-      if (!cfg) throw new Error('Resposta inválida do servidor')
+      if (!cfg) throw new Error(t('library.vpn.invalidResponse'))
       setLanRoomLastCode(cleanCode)
       onNetworkUpdate(cleanCode)
       setVpnConfig(cfg)
@@ -156,74 +158,74 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         setVpnPeerId('')
         setCurrentRoomName('')
         setCurrentRoomIsHost(false)
-        if (conn?.needsInstall) throw new Error('WireGuard não instalado (clique em "Instalar VPN")')
-        if (conn?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para conectar a VPN. Aceite o UAC e tente novamente.')
-        throw new Error(conn?.error || 'Falha ao conectar')
+        if (conn?.needsInstall) throw new Error(t('library.vpn.wireguardMissing'))
+        if (conn?.needsAdmin) throw new Error(t('library.vpn.adminConnect'))
+        throw new Error(conn?.error || t('library.vpn.connectFailed'))
       }
       setVpnConnected(true)
     } catch (err: any) {
-      const msg = err?.message || 'Falha ao entrar na sala'
+      const msg = err?.message || t('library.vpn.joinFailed')
       setVpnError(msg)
       alert(msg)
     } finally {
       setLanRoomBusy(false)
       setVpnActionBusy(false)
     }
-  }, [])
+  }, [t])
 
   const installVpn = useCallback(async () => {
-    if (!confirm('Instalar/configurar WireGuard agora? (pode pedir senha/admin)')) return
+    if (!confirm(t('library.vpn.installConfirm'))) return
     setVpnActionBusy(true)
     try {
       const res = await window.electronAPI.vpnInstall?.()
       if (!res?.success) {
         const url = (res as any)?.url
         if (url) {
-          const open = confirm((res?.error || 'Falha ao instalar') + '\n\nAbrir página de instalação do WireGuard?')
+          const open = confirm(t('library.vpn.installOpenPageConfirm', { error: res?.error || t('library.vpn.installFailed') }))
           if (open) await window.electronAPI.openExternal?.(String(url))
         }
-        throw new Error(res?.error || 'Falha ao instalar')
+        throw new Error(res?.error || t('library.vpn.installFailed'))
       }
-      alert('VPN instalada/configurada. Tente criar/entrar na sala novamente.')
+      alert(t('library.vpn.installed'))
     } catch (err: any) {
-      alert(err?.message || 'Falha ao instalar')
+      alert(err?.message || t('library.vpn.installFailed'))
     } finally {
       setVpnActionBusy(false)
     }
-  }, [])
+  }, [t])
 
   const connect = useCallback(async () => {
     setVpnActionBusy(true)
     try {
       const res = await window.electronAPI.vpnConnect?.(vpnConfig)
       if (!res?.success) {
-        if (res?.needsInstall) throw new Error('WireGuard não instalado (clique em "Instalar VPN")')
-        if (res?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para conectar a VPN. Aceite o UAC e tente novamente.')
-        throw new Error(res?.error || 'Falha ao conectar')
+        if (res?.needsInstall) throw new Error(t('library.vpn.wireguardMissing'))
+        if (res?.needsAdmin) throw new Error(t('library.vpn.adminConnect'))
+        throw new Error(res?.error || t('library.vpn.connectFailed'))
       }
       setVpnConnected(true)
     } catch (err: any) {
-      alert(err?.message || 'Falha ao conectar')
+      alert(err?.message || t('library.vpn.connectFailed'))
     } finally {
       setVpnActionBusy(false)
     }
-  }, [vpnConfig])
+  }, [vpnConfig, t])
 
   const disconnect = useCallback(async () => {
     setVpnActionBusy(true)
     try {
       const res = await window.electronAPI.vpnDisconnect?.()
       if (!res?.success) {
-        if (res?.needsAdmin) throw new Error('O Windows pediu permissão de administrador para desconectar a VPN. Aceite o UAC e tente novamente.')
-        throw new Error(res?.error || 'Falha ao desconectar')
+        if (res?.needsAdmin) throw new Error(t('library.vpn.adminDisconnect'))
+        throw new Error(res?.error || t('library.vpn.disconnectFailed'))
       }
       setVpnConnected(false)
     } catch (err: any) {
-      alert(err?.message || 'Falha ao desconectar')
+      alert(err?.message || t('library.vpn.disconnectFailed'))
     } finally {
       setVpnActionBusy(false)
     }
-  }, [])
+  }, [t])
 
   const leaveRoom = useCallback(async (onNetworkUpdate: (code: string) => void) => {
     setLanRoomBusy(true)
@@ -250,12 +252,12 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
       setCurrentRoomName('')
       setCurrentRoomIsHost(false)
     } catch (err: any) {
-      alert(err?.message || 'Falha ao sair da sala')
+      alert(err?.message || t('library.vpn.leaveFailed'))
     } finally {
       setLanRoomBusy(false)
       setVpnActionBusy(false)
     }
-  }, [vpnPeerId])
+  }, [vpnPeerId, t])
 
   const loadPublicRooms = useCallback(async (gameName?: string) => {
     setPublicRoomsLoading(true)
@@ -289,9 +291,9 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     try {
       await navigator.clipboard.writeText(text)
     } catch {
-      alert('Não foi possível copiar')
+      alert(t('library.vpn.copyFailed'))
     }
-  }, [])
+  }, [t])
 
   // Refresh VPN status when LAN tab is open
   useEffect(() => {
@@ -310,7 +312,7 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
       try {
         const st = await window.electronAPI.vpnStatus?.()
         if (cancelled) return
-        if (!st?.success) { setVpnError(st?.error || 'Falha ao consultar VPN'); return }
+        if (!st?.success) { setVpnError(st?.error || t('library.vpn.statusFailed')); return }
 
         setVpnError(null)
         const nextStatus = { controller: st.controller || null, installed: !!st.installed, installError: st.installError || null }
@@ -328,12 +330,12 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
             const peersJson = JSON.stringify(nextPeers)
             if (peersJson !== lastPeersJson) { lastPeersJson = peersJson; setVpnPeers(nextPeers) }
           } else if (vpnConnected && vpnPeerId) {
-            setVpnError(peersRes?.error || 'Conexão VPN sem heartbeat')
+            setVpnError(peersRes?.error || t('library.vpn.heartbeatMissing'))
           }
         }
       } catch (err: any) {
         if (cancelled) return
-        setVpnError(err?.message || 'Falha ao consultar VPN')
+        setVpnError(err?.message || t('library.vpn.statusFailed'))
       } finally {
         if (!cancelled) {
           setVpnLoading(false)
@@ -345,7 +347,7 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     void refresh()
     timer = setInterval(refresh, 4000)
     return () => { cancelled = true; if (timer) clearInterval(timer) }
-  }, [configOpen, configTab, lanMode, lanNetworkId, vpnConnected, vpnPeerId])
+  }, [configOpen, configTab, lanMode, lanNetworkId, vpnConnected, vpnPeerId, t])
 
   return {
     // State

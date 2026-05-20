@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X } from 'lucide-react'
 import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom } from './types'
+import { useI18n } from '../../i18n'
 
 export interface ConfigModalProps {
   game: Game
@@ -95,6 +96,7 @@ export interface ConfigModalProps {
 
 export function ConfigModal(props: ConfigModalProps) {
   const { game, isLinux, configTab, onTabChange, configSaveState, onClose } = props
+  const { t } = useI18n()
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -106,7 +108,7 @@ export function ConfigModal(props: ConfigModalProps) {
                 <Settings2 size={20} />
               </div>
               <div>
-                <p className="eyebrow">Configurações</p>
+                <p className="eyebrow">{t('library.card.settings')}</p>
                 <h3>{game.title}</h3>
               </div>
             </div>
@@ -114,23 +116,23 @@ export function ConfigModal(props: ConfigModalProps) {
               <div className="config-save-pill" data-status={configTab === 'onlinefix' ? (props.iniSaving ? 'saving' : props.iniDirty ? 'pending' : 'saved') : configSaveState.status}>
                 {configTab === 'onlinefix'
                   ? (props.iniSaving
-                    ? 'Salvando...'
+                    ? t('common.saving')
                     : props.iniDirty
-                      ? 'Alterações pendentes'
+                      ? t('settings.save.pending')
                       : props.iniLastSavedAt
-                        ? 'Salvo'
-                        : 'Sem alterações')
+                        ? t('library.configModal.save.saved')
+                        : t('settings.save.idle'))
                   : (configSaveState.status === 'saving'
-                    ? 'Salvando...'
+                    ? t('common.saving')
                     : configSaveState.status === 'pending'
-                      ? 'Pendente'
+                      ? t('library.configModal.save.pending')
                       : configSaveState.status === 'saved'
-                        ? 'Salvo'
+                        ? t('library.configModal.save.saved')
                         : configSaveState.status === 'error'
-                          ? 'Erro'
-                          : 'Sem alterações')}
+                          ? t('downloads.status.error')
+                          : t('settings.save.idle'))}
               </div>
-              <button className="config-close-btn" onClick={onClose} title="Fechar">
+              <button className="config-close-btn" onClick={onClose} title={t('login.close')}>
                 <X size={18} />
               </button>
             </div>
@@ -139,7 +141,7 @@ export function ConfigModal(props: ConfigModalProps) {
           <div className="config-tabs">
             <button className={configTab === 'geral' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('geral')} type="button">
               <Gamepad2 size={14} />
-              <span>Geral</span>
+              <span>{t('library.configModal.tabs.general')}</span>
             </button>
             <button className={configTab === 'onlinefix' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('onlinefix')} type="button">
               <FileText size={14} />
@@ -151,7 +153,7 @@ export function ConfigModal(props: ConfigModalProps) {
             </button>}
             <button className={configTab === 'diagnostico' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('diagnostico')} type="button">
               <Terminal size={14} />
-              <span>Diagnóstico</span>
+              <span>{t('library.configModal.tabs.diagnostics')}</span>
             </button>
             <button className={configTab === 'lan' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('lan')} type="button">
               <Users size={14} />
@@ -172,6 +174,7 @@ export function ConfigModal(props: ConfigModalProps) {
 
 function GeneralTab(props: ConfigModalProps) {
   const { game, titleValue, onTitleChange, versionValue, onVersionChange, bannerLoading, bannerManualUrl, onBannerManualUrlChange, bannerManualBusy, onFetchBanner, onApplyBannerUrl, onPickBannerFile, onClearBanner, configuring, onConfigureExe, onDelete } = props
+  const { t } = useI18n()
 
   const [showBannerUrl, setShowBannerUrl] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -182,23 +185,23 @@ function GeneralTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Gamepad2 size={18} />
-          <h4>Informações do Jogo</h4>
+          <h4>{t('library.configModal.general.gameInfo')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-form-group">
-            <label>Nome do jogo</label>
+            <label>{t('library.configModal.general.gameName')}</label>
             <input
               value={titleValue}
               onChange={(e) => onTitleChange(e.target.value)}
-              placeholder="Digite o título do jogo"
+              placeholder={t('library.configModal.general.gameNamePlaceholder')}
               className="config-input"
             />
-            <span className="config-hint">Este nome será exibido na sua biblioteca</span>
+            <span className="config-hint">{t('library.configModal.general.gameNameHint')}</span>
           </div>
 
           <div className="config-form-row">
             <div className="config-form-group">
-              <label>Versão instalada</label>
+              <label>{t('library.configModal.general.installedVersion')}</label>
               <input
                 value={versionValue}
                 onChange={(e) => onVersionChange(e.target.value)}
@@ -207,10 +210,10 @@ function GeneralTab(props: ConfigModalProps) {
               />
             </div>
             <div className="config-form-group">
-              <label>Caminho do jogo</label>
+              <label>{t('library.configModal.general.gamePath')}</label>
               <div className="config-path-display">
                 <FolderOpen size={14} />
-                <span title={game.install_path || 'Não definido'}>{game.install_path || 'Não definido'}</span>
+                <span title={game.install_path || t('common.notSet')}>{game.install_path || t('common.notSet')}</span>
               </div>
             </div>
           </div>
@@ -221,7 +224,7 @@ function GeneralTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Image size={18} />
-          <h4>Banner do Jogo</h4>
+          <h4>{t('library.configModal.general.banner')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-banner-preview">
@@ -230,7 +233,7 @@ function GeneralTab(props: ConfigModalProps) {
             ) : (
               <div className="config-banner-placeholder">
                 <Image size={32} />
-                <span>Sem banner</span>
+                <span>{t('library.configModal.general.noBanner')}</span>
               </div>
             )}
           </div>
@@ -242,9 +245,9 @@ function GeneralTab(props: ConfigModalProps) {
               disabled={bannerLoading === game.url || bannerManualBusy}
             >
               {bannerLoading === game.url ? (
-                <><RefreshCw size={14} className="of-spin" /> Buscando...</>
+                <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.general.fetching')}</>
               ) : (
-                <>Buscar automático</>
+                <>{t('library.configModal.general.autoFetch')}</>
               )}
             </button>
             <button
@@ -252,13 +255,13 @@ function GeneralTab(props: ConfigModalProps) {
               onClick={onPickBannerFile}
               disabled={bannerLoading === game.url || bannerManualBusy}
             >
-              Escolher arquivo
+              {t('library.configModal.general.pickFile')}
             </button>
             <button
               className="config-btn secondary"
               onClick={() => setShowBannerUrl(!showBannerUrl)}
             >
-              URL manual
+              {t('library.configModal.general.manualUrl')}
             </button>
             {game.image_url && (
               <button
@@ -266,14 +269,14 @@ function GeneralTab(props: ConfigModalProps) {
                 onClick={onClearBanner}
                 disabled={bannerLoading === game.url || bannerManualBusy}
               >
-                Limpar
+                {t('common.clear')}
               </button>
             )}
           </div>
 
           {showBannerUrl && (
             <div className="config-form-group" style={{ marginTop: 12 }}>
-              <label>URL do banner</label>
+              <label>{t('library.configModal.general.bannerUrl')}</label>
               <div className="config-input-action">
                 <input
                   value={bannerManualUrl}
@@ -286,7 +289,7 @@ function GeneralTab(props: ConfigModalProps) {
                   onClick={onApplyBannerUrl}
                   disabled={bannerLoading === game.url || bannerManualBusy || !bannerManualUrl}
                 >
-                  Aplicar
+                  {t('library.configModal.general.apply')}
                 </button>
               </div>
             </div>
@@ -298,7 +301,7 @@ function GeneralTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Play size={18} />
-          <h4>Executável</h4>
+          <h4>{t('library.configModal.general.executable')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-exe-card">
@@ -308,10 +311,10 @@ function GeneralTab(props: ConfigModalProps) {
               </div>
               <div className="config-exe-details">
                 <span className="config-exe-label">
-                  {game.executable_path ? 'Executável configurado' : 'Executável não configurado'}
+                  {game.executable_path ? t('library.configModal.general.exeConfigured') : t('library.configModal.general.exeMissing')}
                 </span>
                 <span className="config-exe-path" title={game.executable_path || ''}>
-                  {game.executable_path || 'Clique em selecionar para definir o .exe do jogo'}
+                  {game.executable_path || t('library.configModal.general.exeHint')}
                 </span>
               </div>
             </div>
@@ -320,13 +323,13 @@ function GeneralTab(props: ConfigModalProps) {
               onClick={onConfigureExe}
               disabled={configuring === game.url}
             >
-              {configuring === game.url ? 'Selecionando...' : 'Selecionar'}
+              {configuring === game.url ? t('library.configModal.general.selecting') : t('common.select')}
             </button>
           </div>
           {!game.executable_path && (
             <div className="config-warning">
               <AlertCircle size={14} />
-              <span>Defina o executável para poder jogar</span>
+              <span>{t('library.configModal.general.exeWarning')}</span>
             </div>
           )}
         </div>
@@ -336,28 +339,28 @@ function GeneralTab(props: ConfigModalProps) {
       <div className="config-section danger">
         <div className="config-section-header">
           <Trash2 size={18} />
-          <h4>Zona de Perigo</h4>
+          <h4>{t('library.configModal.general.dangerZone')}</h4>
         </div>
         <div className="config-section-content">
           {!confirmDelete ? (
             <div className="config-danger-card">
               <div className="config-danger-info">
-                <span className="config-danger-title">Desinstalar jogo</span>
-                <span className="config-danger-desc">Remove o jogo da biblioteca e apaga os arquivos</span>
+                <span className="config-danger-title">{t('library.configModal.general.uninstallGame')}</span>
+                <span className="config-danger-desc">{t('library.configModal.general.uninstallDesc')}</span>
               </div>
               <button className="config-btn danger" onClick={() => setConfirmDelete(true)}>
                 <Trash2 size={14} />
-                Desinstalar
+                {t('library.card.uninstall')}
               </button>
             </div>
           ) : (
             <div className="config-confirm-delete">
               <AlertCircle size={20} />
-              <p>Tem certeza que deseja desinstalar <strong>{game.title}</strong>?</p>
-              <p className="config-hint">Esta ação não pode ser desfeita.</p>
+              <p>{t('library.configModal.general.uninstallConfirm', { title: game.title })}</p>
+              <p className="config-hint">{t('library.configModal.general.irreversible')}</p>
               <div className="config-btn-group">
-                <button className="config-btn ghost" onClick={() => setConfirmDelete(false)}>Cancelar</button>
-                <button className="config-btn danger" onClick={onDelete}>Confirmar exclusão</button>
+                <button className="config-btn ghost" onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</button>
+                <button className="config-btn danger" onClick={onDelete}>{t('library.configModal.general.confirmDelete')}</button>
               </div>
             </div>
           )}
@@ -369,14 +372,15 @@ function GeneralTab(props: ConfigModalProps) {
 
 function OnlineFixTab(props: ConfigModalProps) {
   const { game, iniPath, iniError, iniLoading, iniFields, onReloadIni, onUpdateIniField, onUpdateIniFieldKey, onAddIniField, onRemoveIniField, onReprocessIni } = props
+  const { t } = useI18n()
 
   return (
     <div className="modal-section">
       {!game.install_path ? (
         <div className="config-empty-state">
           <FileText size={40} />
-          <h4>Jogo não instalado</h4>
-          <p>Instale o jogo para editar as configurações do OnlineFix.ini</p>
+          <h4>{t('library.configModal.onlineFix.notInstalled')}</h4>
+          <p>{t('library.configModal.onlineFix.installToEdit')}</p>
         </div>
       ) : (
         <>
@@ -384,12 +388,12 @@ function OnlineFixTab(props: ConfigModalProps) {
           <div className="config-section">
             <div className="config-section-header">
               <FileText size={18} />
-              <h4>Arquivo de Configuração</h4>
+              <h4>{t('library.configModal.onlineFix.configFile')}</h4>
               <button 
                 className="config-section-action"
                 onClick={onReloadIni}
                 disabled={iniLoading}
-                title="Recarregar arquivo"
+                title={t('library.configModal.onlineFix.reloadFile')}
               >
                 <RefreshCw size={14} className={iniLoading ? 'of-spin' : ''} />
               </button>
@@ -402,11 +406,11 @@ function OnlineFixTab(props: ConfigModalProps) {
                 <div className="config-file-info">
                   <span className="config-file-name">OnlineFix.ini</span>
                   <span className="config-file-path" title={iniPath || ''}>
-                    {iniPath || 'Arquivo será criado ao salvar'}
+                    {iniPath || t('library.configModal.onlineFix.createdOnSave')}
                   </span>
                 </div>
                 <div className={`config-file-status ${iniPath ? 'exists' : 'new'}`}>
-                  {iniPath ? 'Encontrado' : 'Novo'}
+                  {iniPath ? t('library.configModal.onlineFix.found') : t('library.configModal.onlineFix.new')}
                 </div>
               </div>
 
@@ -423,15 +427,15 @@ function OnlineFixTab(props: ConfigModalProps) {
           <div className="config-section">
             <div className="config-section-header">
               <Settings2 size={18} />
-              <h4>Configurações</h4>
+              <h4>{t('library.configModal.onlineFix.settings')}</h4>
             </div>
             <div className="config-section-content">
               {iniFields.length === 0 ? (
                 <div className="config-ini-empty">
-                  <p>Nenhuma configuração encontrada no arquivo.</p>
+                  <p>{t('library.configModal.onlineFix.empty')}</p>
                   <button className="config-btn secondary" onClick={onAddIniField}>
                     <Plus size={14} />
-                    Adicionar campo
+                    {t('library.configModal.onlineFix.addField')}
                   </button>
                 </div>
               ) : (
@@ -442,18 +446,18 @@ function OnlineFixTab(props: ConfigModalProps) {
                         <button
                           className="config-ini-remove"
                           onClick={() => onRemoveIniField(idx)}
-                          title="Remover campo"
+                          title={t('library.configModal.onlineFix.removeField')}
                         >
                           <X size={12} />
                         </button>
                         <label className="config-ini-label">
-                          {field.key || 'Nova chave'}
+                          {field.key || t('library.configModal.onlineFix.newKey')}
                         </label>
                         {!field.key && (
                           <input
                             value={field.key}
                             onChange={(e) => onUpdateIniFieldKey(idx, e.target.value)}
-                            placeholder="Nome da chave (ex: language)"
+                            placeholder={t('library.configModal.onlineFix.keyPlaceholder')}
                             className="config-input"
                           />
                         )}
@@ -476,7 +480,7 @@ function OnlineFixTab(props: ConfigModalProps) {
                           <input
                             value={field.value}
                             onChange={(e) => onUpdateIniField(idx, e.target.value)}
-                            placeholder="Valor (ex: English)"
+                            placeholder={t('library.configModal.onlineFix.valuePlaceholder')}
                             className="config-input"
                           />
                         )}
@@ -486,11 +490,11 @@ function OnlineFixTab(props: ConfigModalProps) {
                   <div className="config-btn-group" style={{ marginTop: 14 }}>
                     <button className="config-btn secondary" onClick={onAddIniField}>
                       <Plus size={14} />
-                      Adicionar campo
+                      {t('library.configModal.onlineFix.addField')}
                     </button>
-                    <button className="config-btn ghost" onClick={onReprocessIni} title="Reprocessar arquivo">
+                    <button className="config-btn ghost" onClick={onReprocessIni} title={t('library.configModal.onlineFix.reprocessFile')}>
                       <RefreshCw size={14} />
-                      Reprocessar
+                      {t('library.configModal.onlineFix.reprocess')}
                     </button>
                   </div>
                 </>
@@ -502,13 +506,13 @@ function OnlineFixTab(props: ConfigModalProps) {
           <div className="config-section">
             <div className="config-section-header">
               <AlertCircle size={18} />
-              <h4>Dicas</h4>
+              <h4>{t('library.configModal.onlineFix.tips')}</h4>
             </div>
             <div className="config-section-content">
               <div className="config-tips">
-                <p><strong>language</strong> — Define o idioma do jogo (ex: Portuguese, English, Spanish)</p>
-                <p><strong>nickname</strong> — Nome exibido para outros jogadores online</p>
-                <p><strong>steamid</strong> — ID Steam personalizado para identificação</p>
+                <p><strong>language</strong> - {t('library.configModal.onlineFix.tipLanguage')}</p>
+                <p><strong>nickname</strong> - {t('library.configModal.onlineFix.tipNickname')}</p>
+                <p><strong>steamid</strong> - {t('library.configModal.onlineFix.tipSteamId')}</p>
               </div>
             </div>
           </div>
@@ -520,6 +524,7 @@ function OnlineFixTab(props: ConfigModalProps) {
 
 function ProtonTab(props: ConfigModalProps) {
   const { game, protonPrefix, prefixJobs, onCreatePrefix, protonVersion, onProtonVersionChange, protonRuntimes, protonRootInput, onProtonRootInputChange, onAddProtonRoot, steamAppId, onSteamAppIdChange, protonOptions, onProtonOptionsChange } = props
+  const { t } = useI18n()
 
   const prefixJob = prefixJobs[game.url]
   const isPrefixBusy = prefixJob?.status === 'starting' || prefixJob?.status === 'progress'
@@ -554,20 +559,20 @@ function ProtonTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <FolderOpen size={18} />
-          <h4>Prefixo Wine</h4>
+          <h4>{t('library.configModal.proton.prefix')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-prefix-card">
             <div className="config-prefix-info">
               <div className={`config-prefix-status ${protonPrefix ? 'ready' : 'none'}`}>
                 {protonPrefix ? (
-                  <><Check size={16} /> Configurado</>
+                  <><Check size={16} /> {t('common.configured')}</>
                 ) : (
-                  <><AlertCircle size={16} /> Não configurado</>
+                  <><AlertCircle size={16} /> {t('common.notConfigured')}</>
                 )}
               </div>
               <span className="config-prefix-path" title={protonPrefix || ''}>
-                {protonPrefix || 'Nenhum prefixo dedicado criado'}
+                {protonPrefix || t('library.configModal.proton.noDedicatedPrefix')}
               </span>
             </div>
             <button
@@ -576,11 +581,11 @@ function ProtonTab(props: ConfigModalProps) {
               disabled={isPrefixBusy}
             >
               {isPrefixBusy ? (
-                <><RefreshCw size={14} className="of-spin" /> Preparando...</>
+                <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.proton.creating')}</>
               ) : protonPrefix ? (
-                'Atualizar'
+                t('library.card.update')
               ) : (
-                'Criar prefixo'
+                t('library.configModal.proton.createPrefix')
               )}
             </button>
           </div>
@@ -588,19 +593,19 @@ function ProtonTab(props: ConfigModalProps) {
           {(prefixJob?.status === 'starting' || prefixJob?.status === 'progress') && (
             <div className="config-progress">
               <RefreshCw size={14} className="of-spin" />
-              <span>{prefixJob?.message || 'Preparando prefixo...'}</span>
+              <span>{prefixJob?.message || t('library.prefix.preparing')}</span>
             </div>
           )}
           
           {prefixJob?.status === 'error' && (
             <div className="config-error">
               <AlertCircle size={14} />
-              <span>{prefixJob?.message || 'Falha ao preparar prefixo'}</span>
+              <span>{prefixJob?.message || t('library.configModal.proton.prefixFailed')}</span>
             </div>
           )}
           
           <div className="config-hint">
-            Um prefixo dedicado por jogo evita conflitos de DLLs e configurações.
+            {t('library.configModal.proton.prefixHint')}
           </div>
         </div>
       </div>
@@ -614,7 +619,7 @@ function ProtonTab(props: ConfigModalProps) {
           </div>
           <div className="config-section-content">
             <div className="config-form-group">
-              <label>Ferramenta</label>
+              <label>{t('library.configModal.proton.tool')}</label>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <label className="config-toggle-item" style={{ flex: 1 }}>
                   <input
@@ -627,7 +632,7 @@ function ProtonTab(props: ConfigModalProps) {
                   <div className="config-toggle-info">
                     <span className="config-toggle-name">winetricks</span>
                     <span className="config-toggle-desc">
-                      {tricksToolStatus?.winetricks === false ? '⚠ Não instalado' : 'Disponível'}
+                      {tricksToolStatus?.winetricks === false ? t('common.notInstalled') : t('common.available')}
                     </span>
                   </div>
                 </label>
@@ -642,7 +647,7 @@ function ProtonTab(props: ConfigModalProps) {
                   <div className="config-toggle-info">
                     <span className="config-toggle-name">protontricks</span>
                     <span className="config-toggle-desc">
-                      {tricksToolStatus?.protontricks === false ? '⚠ Não instalado' : 'Disponível'}
+                      {tricksToolStatus?.protontricks === false ? t('common.notInstalled') : t('common.available')}
                     </span>
                   </div>
                 </label>
@@ -650,7 +655,7 @@ function ProtonTab(props: ConfigModalProps) {
             </div>
 
             <div className="config-form-group">
-              <label>Componentes</label>
+              <label>{t('library.configModal.proton.components')}</label>
               <div className="config-input-action">
                 <input
                   value={tricksInput}
@@ -667,35 +672,35 @@ function ProtonTab(props: ConfigModalProps) {
                   disabled={isPrefixBusy || tricksRunning || !tricksInput.trim()}
                 >
                   {tricksRunning ? (
-                    <><RefreshCw size={14} className="of-spin" /> Executando...</>
+                    <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.proton.running')}</>
                   ) : (
-                    <><Play size={14} /> Executar</>
+                    <><Play size={14} /> {t('library.configModal.proton.run')}</>
                   )}
                 </button>
               </div>
               <span className="config-hint">
-                Separe os componentes por espaço. Ex: vcrun2019 d3dx9 dotnet48 dxvk
+                {t('library.configModal.proton.componentsHint')}
               </span>
             </div>
 
             {(prefixJob?.status === 'starting' || prefixJob?.status === 'progress') && tricksRunning && (
               <div className="config-progress">
                 <RefreshCw size={14} className="of-spin" />
-                <span>{prefixJob?.message || 'Executando...'}</span>
+                <span>{prefixJob?.message || t('library.configModal.proton.running')}</span>
               </div>
             )}
 
             <div className="config-form-group" style={{ marginTop: 12 }}>
-              <label>Ferramentas Wine</label>
+              <label>{t('library.configModal.proton.wineTools')}</label>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenTricksGui(game.url)
-                    if (!res.success) alert(res.error || 'Erro ao abrir winetricks')
+                    if (!res.success) alert(res.error || t('library.configModal.proton.openWinetricksFailed'))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
-                  title="Abrir interface completa do winetricks"
+                  title={t('library.configModal.proton.openWinetricks')}
                 >
                   <Settings2 size={14} /> Winetricks GUI
                 </button>
@@ -703,10 +708,10 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenWinecfg(game.url)
-                    if (!res.success) alert(res.error || 'Erro ao abrir winecfg')
+                    if (!res.success) alert(res.error || t('library.configModal.proton.openWinecfgFailed'))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
-                  title="Abrir configuração do Wine (winecfg)"
+                  title={t('library.configModal.proton.openWinecfg')}
                 >
                   <Wrench size={14} /> Winecfg
                 </button>
@@ -714,10 +719,10 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenRegedit(game.url)
-                    if (!res.success) alert(res.error || 'Erro ao abrir regedit')
+                    if (!res.success) alert(res.error || t('library.configModal.proton.openRegeditFailed'))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
-                  title="Abrir editor de registro do Wine"
+                  title={t('library.configModal.proton.openRegedit')}
                 >
                   <Terminal size={14} /> Regedit
                 </button>
@@ -725,16 +730,16 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenFileManager(game.url)
-                    if (!res.success) alert(res.error || 'Erro ao abrir explorador')
+                    if (!res.success) alert(res.error || t('library.configModal.proton.openExplorerFailed'))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
-                  title="Abrir explorador de arquivos do Wine"
+                  title={t('library.configModal.proton.openExplorer')}
                 >
                   <FolderOpen size={14} /> Explorer
                 </button>
               </div>
               <span className="config-hint">
-                Abre as ferramentas diretamente no prefixo Wine deste jogo.
+                {t('library.configModal.proton.toolsHint')}
               </span>
             </div>
           </div>
@@ -745,17 +750,17 @@ function ProtonTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Monitor size={18} />
-          <h4>Runtime Proton</h4>
+          <h4>{t('library.configModal.proton.runtime')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-form-group">
-            <label>Versão do Proton</label>
+            <label>{t('library.configModal.proton.version')}</label>
             <select
               value={protonVersion}
               onChange={(e) => onProtonVersionChange(e.target.value)}
               className="config-select"
             >
-              <option value="">Automático (Proton Experimental)</option>
+              <option value="">{t('library.configModal.proton.autoExperimental')}</option>
               {protonRuntimes.map(rt => (
                 <option key={rt.runner} value={rt.path}>
                   {rt.name}
@@ -765,7 +770,7 @@ function ProtonTab(props: ConfigModalProps) {
           </div>
 
           <div className="config-form-group">
-            <label>Adicionar pasta de runtimes</label>
+            <label>{t('library.configModal.proton.addRuntimeFolder')}</label>
             <div className="config-input-action">
               <input
                 value={protonRootInput}
@@ -775,7 +780,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <button className="config-btn secondary" onClick={onAddProtonRoot}>
                 <Plus size={14} />
-                Adicionar
+                {t('library.configModal.proton.add')}
               </button>
             </div>
           </div>
@@ -785,11 +790,11 @@ function ProtonTab(props: ConfigModalProps) {
             <input
               value={steamAppId}
               onChange={(e) => onSteamAppIdChange(e.target.value.replace(/[^\d]/g, ''))}
-              placeholder="480 (padrão)"
+              placeholder={`480 (${t('common.default').toLowerCase()})`}
               className="config-input"
               style={{ maxWidth: 200 }}
             />
-            <span className="config-hint">Usado para cache de shaders e comportamento do Proton</span>
+            <span className="config-hint">{t('library.configModal.proton.steamAppIdHint')}</span>
           </div>
         </div>
       </div>
@@ -798,7 +803,7 @@ function ProtonTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Wrench size={18} />
-          <h4>Opções de Performance</h4>
+          <h4>{t('library.configModal.proton.performanceOptions')}</h4>
         </div>
         <div className="config-section-content">
           <div className="config-toggle-grid">
@@ -810,7 +815,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">ESYNC</span>
-                <span className="config-toggle-desc">Sincronização de eventos via eventfd</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.esyncDesc')}</span>
               </div>
             </label>
             
@@ -822,7 +827,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">FSYNC</span>
-                <span className="config-toggle-desc">Sincronização via futex (requer kernel compatível)</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.fsyncDesc')}</span>
               </div>
             </label>
             
@@ -834,7 +839,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">DXVK</span>
-                <span className="config-toggle-desc">Tradução D3D9/10/11 para Vulkan</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.dxvkDesc')}</span>
               </div>
             </label>
             
@@ -846,7 +851,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">GameMode</span>
-                <span className="config-toggle-desc">Otimizações de CPU pelo Feral GameMode</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.gamemodeDesc')}</span>
               </div>
             </label>
             
@@ -858,7 +863,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">MangoHUD</span>
-                <span className="config-toggle-desc">Overlay com métricas de performance</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.mangohudDesc')}</span>
               </div>
             </label>
 
@@ -870,7 +875,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">Steam Overlay</span>
-                <span className="config-toggle-desc">Ativa Shift+Tab para jogos Steam/OnlineFix com AppID detectado</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.steamOverlayDesc')}</span>
               </div>
             </label>
             
@@ -882,7 +887,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">Gamescope</span>
-                <span className="config-toggle-desc">Notificações in-game (requer gamescope instalado)</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.gamescopeDesc')}</span>
               </div>
             </label>
             
@@ -894,7 +899,7 @@ function ProtonTab(props: ConfigModalProps) {
               />
               <div className="config-toggle-info">
                 <span className="config-toggle-name">MESA GL Thread</span>
-                <span className="config-toggle-desc">Thread dedicada para OpenGL (Mesa)</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.mesaDesc')}</span>
               </div>
             </label>
           </div>
@@ -908,7 +913,7 @@ function ProtonTab(props: ConfigModalProps) {
           onClick={() => setShowAdvanced(!showAdvanced)}
         >
           <Terminal size={18} />
-          <h4>Opções Avançadas</h4>
+          <h4>{t('library.configModal.proton.advancedOptions')}</h4>
           <ChevronDown size={16} className={`config-chevron ${showAdvanced ? 'open' : ''}`} />
         </div>
         {showAdvanced && (
@@ -920,8 +925,8 @@ function ProtonTab(props: ConfigModalProps) {
                 onChange={(e) => onProtonOptionsChange({ ...protonOptions, logging: e.target.checked })} 
               />
               <div className="config-toggle-info">
-                <span className="config-toggle-name">Logs do Proton</span>
-                <span className="config-toggle-desc">Habilita logs detalhados para debug</span>
+                <span className="config-toggle-name">{t('library.logs.title')}</span>
+                <span className="config-toggle-desc">{t('library.configModal.proton.logsDesc')}</span>
               </div>
             </label>
 
@@ -936,7 +941,7 @@ function ProtonTab(props: ConfigModalProps) {
                 />
               </div>
               <div className="config-form-group">
-                <label>Argumentos de lançamento</label>
+                <label>{t('library.configModal.proton.launchArgs')}</label>
                 <input
                   value={protonOptions.launchArgs}
                   onChange={(e) => onProtonOptionsChange({ ...protonOptions, launchArgs: e.target.value })}
@@ -956,7 +961,7 @@ function ProtonTab(props: ConfigModalProps) {
                 style={{ fontFamily: 'monospace', fontSize: 12 }}
               />
               <span className="config-toggle-desc" style={{ marginTop: 4, display: 'block' }}>
-                Substitui o WINEDLLOVERRIDES padrão do launcher. Deixe vazio para usar o padrão.
+                {t('library.configModal.proton.dllOverridesHint')}
               </span>
             </div>
           </div>
@@ -968,6 +973,7 @@ function ProtonTab(props: ConfigModalProps) {
 
 function DiagnosticsTab(props: ConfigModalProps) {
   const { game } = props
+  const { t } = useI18n()
   const [loading, setLoading] = useState(false)
   const [repairing, setRepairing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -980,19 +986,19 @@ function DiagnosticsTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.getGameDiagnostics(game.url)
       if (!res.success) {
-        setError(res.error || 'Falha ao gerar diagnóstico')
+        setError(res.error || t('library.configModal.diagnostics.generateFailed'))
         setDiagnostics(null)
       } else {
         setDiagnostics(res.diagnostics || null)
         setRepairResult(null)
       }
     } catch (err: any) {
-      setError(err?.message || 'Falha ao gerar diagnóstico')
+      setError(err?.message || t('library.configModal.diagnostics.generateFailed'))
       setDiagnostics(null)
     } finally {
       setLoading(false)
     }
-  }, [game.url])
+  }, [game.url, t])
 
   React.useEffect(() => {
     loadDiagnostics()
@@ -1011,14 +1017,14 @@ function DiagnosticsTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.repairGameDiagnostics(game.url)
       if (!res.success) {
-        setError(res.error || 'Falha ao autocorrigir diagnóstico')
+        setError(res.error || t('library.configModal.diagnostics.repairFailed'))
         setRepairResult(res.actions || null)
       } else {
         setDiagnostics(res.diagnostics || null)
         setRepairResult(res.actions || [])
       }
     } catch (err: any) {
-      setError(err?.message || 'Falha ao autocorrigir diagnóstico')
+      setError(err?.message || t('library.configModal.diagnostics.repairFailed'))
     } finally {
       setRepairing(false)
     }
@@ -1026,15 +1032,15 @@ function DiagnosticsTab(props: ConfigModalProps) {
 
   const renderValue = (value: any) => {
     if (value === null || value === undefined || value === '') return '—'
-    if (typeof value === 'boolean') return value ? 'Sim' : 'Não'
+    if (typeof value === 'boolean') return value ? t('common.yes') : t('common.no')
     return String(value)
   }
 
   const summaryItems = diagnostics ? [
-    ['Executável', diagnostics.paths?.executable?.exists ? 'OK' : 'Ausente'],
-    ['Prefixo', diagnostics.paths?.prefix?.exists ? 'OK' : 'Pendente'],
-    ['Loja', diagnostics.overlayCompatibility?.store ? String(diagnostics.overlayCompatibility.store).toUpperCase() : '—'],
-    ['Overlay', diagnostics.overlayCompatibility?.selectedOverlay ? String(diagnostics.overlayCompatibility.selectedOverlay).toUpperCase() : 'Inativo']
+    [t('library.configModal.diagnostics.executable'), diagnostics.paths?.executable?.exists ? 'OK' : t('common.missing')],
+    [t('library.configModal.diagnostics.prefix'), diagnostics.paths?.prefix?.exists ? 'OK' : t('library.configModal.diagnostics.pending')],
+    [t('library.configModal.diagnostics.store'), diagnostics.overlayCompatibility?.store ? String(diagnostics.overlayCompatibility.store).toUpperCase() : '—'],
+    [t('library.configModal.diagnostics.overlay'), diagnostics.overlayCompatibility?.selectedOverlay ? String(diagnostics.overlayCompatibility.selectedOverlay).toUpperCase() : t('library.configModal.diagnostics.inactive')]
   ] : []
   const repairActions = diagnostics?.repairActions || []
 
@@ -1043,14 +1049,14 @@ function DiagnosticsTab(props: ConfigModalProps) {
       <div className="config-section">
         <div className="config-section-header">
           <Terminal size={18} />
-          <h4>Diagnóstico do jogo</h4>
-          <button className="config-section-action" onClick={loadDiagnostics} disabled={loading} title="Atualizar diagnóstico">
+          <h4>{t('library.configModal.diagnostics.gameDiagnostics')}</h4>
+          <button className="config-section-action" onClick={loadDiagnostics} disabled={loading} title={t('library.configModal.diagnostics.refresh')}>
             <RefreshCw size={14} className={loading ? 'of-spin' : ''} />
           </button>
-          <button className="config-section-action" onClick={runRepair} disabled={!diagnostics || repairing || repairActions.length === 0} title="Autocorrigir problemas detectados">
+          <button className="config-section-action" onClick={runRepair} disabled={!diagnostics || repairing || repairActions.length === 0} title={t('library.configModal.diagnostics.repairProblems')}>
             <Wrench size={14} className={repairing ? 'of-spin' : ''} />
           </button>
-          <button className="config-section-action" onClick={copyJson} disabled={!diagnostics} title="Copiar diagnóstico em JSON">
+          <button className="config-section-action" onClick={copyJson} disabled={!diagnostics} title={t('library.configModal.diagnostics.copyJson')}>
             <Copy size={14} />
           </button>
         </div>
@@ -1065,7 +1071,7 @@ function DiagnosticsTab(props: ConfigModalProps) {
           {!diagnostics && !error ? (
             <div className="config-progress">
               <RefreshCw size={14} className="of-spin" />
-              <span>Coletando informações...</span>
+              <span>{t('library.configModal.diagnostics.collecting')}</span>
             </div>
           ) : null}
 
@@ -1084,14 +1090,14 @@ function DiagnosticsTab(props: ConfigModalProps) {
                 <div className="diagnostic-repair-panel">
                   <div className="diagnostic-repair-header">
                     <div>
-                      <strong>{repairActions.length} autocorreção{repairActions.length === 1 ? '' : 'ões'} disponível{repairActions.length === 1 ? '' : 'is'}</strong>
-                      <span>O launcher pode aplicar ajustes seguros para este jogo.</span>
+                      <strong>{repairActions.length === 1 ? t('library.configModal.diagnostics.repairAvailable', { count: repairActions.length }) : t('library.configModal.diagnostics.repairsAvailable', { count: repairActions.length })}</strong>
+                      <span>{t('library.configModal.diagnostics.repairHint')}</span>
                     </div>
                     <button className="config-btn primary" onClick={runRepair} disabled={repairing}>
                       {repairing ? (
-                        <><RefreshCw size={14} className="of-spin" /> Corrigindo...</>
+                        <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.diagnostics.repairing')}</>
                       ) : (
-                        <><Wrench size={14} /> Autocorrigir</>
+                        <><Wrench size={14} /> {t('library.configModal.diagnostics.repair')}</>
                       )}
                     </button>
                   </div>
@@ -1107,14 +1113,14 @@ function DiagnosticsTab(props: ConfigModalProps) {
               ) : (
                 <div className="diagnostic-repair-empty">
                   <Check size={14} />
-                  <span>Nenhuma autocorreção segura pendente.</span>
+                  <span>{t('library.configModal.diagnostics.noPendingRepair')}</span>
                 </div>
               )}
 
               {repairResult ? (
                 <div className="diagnostic-repair-result">
                   {repairResult.length === 0 ? (
-                    <div><Check size={14} /><span>Nenhuma alteração necessária.</span></div>
+                    <div><Check size={14} /><span>{t('library.configModal.diagnostics.noChangeNeeded')}</span></div>
                   ) : repairResult.map((result: any) => (
                     <div className={`diagnostic-repair-result--${result.status}`} key={`${result.id}-${result.status}`}>
                       {result.status === 'done' ? <Check size={14} /> : result.status === 'error' ? <AlertCircle size={14} /> : <Terminal size={14} />}
@@ -1147,18 +1153,18 @@ function DiagnosticsTab(props: ConfigModalProps) {
           <div className="config-section">
             <div className="config-section-header">
               <Monitor size={18} />
-              <h4>Ambiente</h4>
+              <h4>{t('library.configModal.diagnostics.environment')}</h4>
             </div>
             <div className="config-section-content">
               <div className="diagnostic-grid">
                 <div><span>Game ID</span><strong>{renderValue(diagnostics.game?.gameId)}</strong></div>
-                <div><span>Versão instalada</span><strong>{renderValue(diagnostics.game?.installedVersion)}</strong></div>
+                <div><span>{t('library.configModal.general.installedVersion')}</span><strong>{renderValue(diagnostics.game?.installedVersion)}</strong></div>
                 <div><span>Steam AppID</span><strong>{renderValue(diagnostics.steam?.configuredSteamAppId)}</strong></div>
                 <div><span>Overlay AppID</span><strong>{renderValue(diagnostics.steam?.overlayAppId)}</strong></div>
-                <div><span>OnlineFix.ini</span><strong>{diagnostics.onlineFix?.found ? 'Encontrado' : 'Ausente'}</strong></div>
-                <div><span>Epic/EOS</span><strong>{diagnostics.overlayCompatibility?.store === 'epic' ? 'Detectado' : 'Não'}</strong></div>
-                <div><span>Sessão</span><strong>{renderValue(diagnostics.display?.sessionType || (diagnostics.display?.isWayland ? 'wayland' : 'x11'))}</strong></div>
-                <div><span>EOS Overlay</span><strong>{diagnostics.epic?.overlayValid ? 'Instalado' : 'Ausente'}</strong></div>
+                <div><span>OnlineFix.ini</span><strong>{diagnostics.onlineFix?.found ? t('library.configModal.onlineFix.found') : t('common.missing')}</strong></div>
+                <div><span>Epic/EOS</span><strong>{diagnostics.overlayCompatibility?.store === 'epic' ? t('library.configModal.diagnostics.detected') : t('common.no')}</strong></div>
+                <div><span>{t('library.configModal.diagnostics.session')}</span><strong>{renderValue(diagnostics.display?.sessionType || (diagnostics.display?.isWayland ? 'wayland' : 'x11'))}</strong></div>
+                <div><span>EOS Overlay</span><strong>{diagnostics.epic?.overlayValid ? t('common.installed') : t('common.missing')}</strong></div>
                 <div><span>Gamescope</span><strong>{renderValue(diagnostics.tools?.gamescope)}</strong></div>
                 <div><span>GameMode</span><strong>{renderValue(diagnostics.tools?.gamemoderun)}</strong></div>
               </div>
@@ -1168,13 +1174,13 @@ function DiagnosticsTab(props: ConfigModalProps) {
           <div className="config-section">
             <div className="config-section-header">
               <FolderOpen size={18} />
-              <h4>Paths</h4>
+              <h4>{t('library.configModal.diagnostics.paths')}</h4>
             </div>
             <div className="config-section-content">
               <div className="diagnostic-paths">
-                <div><span>Instalação</span><code>{renderValue(diagnostics.paths?.install?.path)}</code></div>
-                <div><span>Executável</span><code>{renderValue(diagnostics.paths?.executable?.path)}</code></div>
-                <div><span>Prefixo</span><code>{renderValue(diagnostics.paths?.prefix?.path)}</code></div>
+                <div><span>{t('library.configModal.diagnostics.installation')}</span><code>{renderValue(diagnostics.paths?.install?.path)}</code></div>
+                <div><span>{t('library.configModal.diagnostics.executable')}</span><code>{renderValue(diagnostics.paths?.executable?.path)}</code></div>
+                <div><span>{t('library.configModal.diagnostics.prefix')}</span><code>{renderValue(diagnostics.paths?.prefix?.path)}</code></div>
                 <div><span>Proton</span><code>{renderValue(diagnostics.paths?.protonRunner?.path)}</code></div>
                 <div><span>Steam root</span><code>{renderValue(diagnostics.steam?.selectedRoot)}</code></div>
               </div>
@@ -1220,6 +1226,7 @@ function LanTab(props: ConfigModalProps) {
     onCopyToClipboard,
     vpnConfig
   } = props
+  const { t } = useI18n()
 
   // Local state for room creation form
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -1264,7 +1271,7 @@ function LanTab(props: ConfigModalProps) {
   return (
     <div className="modal-section">
       {/* Mode selector */}
-      <div className="section-title">Modo de Conectividade</div>
+      <div className="section-title">{t('library.configModal.lan.mode')}</div>
       <div className="lan-mode-cards">
         <button
           className={`lan-mode-card ${lanMode === 'steam' ? 'active' : ''}`}
@@ -1272,7 +1279,7 @@ function LanTab(props: ConfigModalProps) {
         >
           <Globe size={24} />
           <div className="lan-mode-card-content">
-            <strong>Padrão</strong>
+            <strong>{t('library.configModal.lan.defaultMode')}</strong>
             <span>Steam/Epic/OnlineFix</span>
           </div>
         </button>
@@ -1282,16 +1289,16 @@ function LanTab(props: ConfigModalProps) {
         >
           <Users size={24} />
           <div className="lan-mode-card-content">
-            <strong>VPN (Salas)</strong>
-            <span>LAN virtual com amigos</span>
+            <strong>{t('library.configModal.lan.vpnMode')}</strong>
+            <span>{t('library.configModal.lan.virtualLan')}</span>
           </div>
         </button>
       </div>
 
       {lanMode === 'steam' && (
         <div className="lan-info-box">
-          <p>O modo padrão utiliza os servidores do OnlineFix/Steam/Epic para multiplayer online.</p>
-          <p style={{ marginTop: 8, color: '#9ca3af' }}>Use o modo VPN apenas se o multiplayer padrão não funcionar ou para jogos que precisam de LAN/Direct IP.</p>
+          <p>{t('library.configModal.lan.defaultDesc')}</p>
+          <p style={{ marginTop: 8, color: '#9ca3af' }}>{t('library.configModal.lan.vpnDesc')}</p>
         </div>
       )}
 
@@ -1304,28 +1311,28 @@ function LanTab(props: ConfigModalProps) {
             </div>
             <div className="vpn-status-text">
               {vpnLoading ? (
-                <span>Verificando...</span>
+                <span>{t('library.configModal.lan.checking')}</span>
               ) : !vpnStatus?.installed ? (
-                <span>WireGuard não instalado</span>
+                <span>{t('library.configModal.lan.wireguardNotInstalled')}</span>
               ) : vpnConnected ? (
-                <span>Conectado à VPN</span>
+                <span>{t('library.configModal.lan.connected')}</span>
               ) : (
-                <span>VPN pronta</span>
+                <span>{t('library.configModal.lan.ready')}</span>
               )}
             </div>
             {!vpnStatus?.installed && (
               <button className="btn small accent" onClick={onInstallVpn} disabled={vpnActionBusy}>
-                Instalar
+                {t('library.configModal.lan.install')}
               </button>
             )}
             {vpnStatus?.installed && !vpnConnected && vpnConfig && (
               <button className="btn small" onClick={onConnectVpn} disabled={vpnActionBusy}>
-                Conectar
+                {t('library.configModal.lan.connect')}
               </button>
             )}
             {vpnConnected && (
               <button className="btn small ghost" onClick={onDisconnectVpn} disabled={vpnActionBusy}>
-                Desconectar
+                {t('library.configModal.lan.disconnect')}
               </button>
             )}
           </div>
@@ -1342,13 +1349,13 @@ function LanTab(props: ConfigModalProps) {
             <div className="vpn-room-active">
               <div className="vpn-room-header">
                 <div className="vpn-room-info">
-                  <h4>{lanRoomName || 'Sala'}</h4>
+                  <h4>{lanRoomName || t('library.vpn.roomFallback')}</h4>
                   <div className="vpn-room-code">
                     <code>{lanNetworkId}</code>
                     <button
                       className="copy-btn"
                       onClick={() => handleCopy(lanNetworkId, 'code')}
-                      title="Copiar código"
+                      title={t('library.configModal.lan.copyCode')}
                     >
                       {copiedField === 'code' ? <Check size={14} /> : <Copy size={14} />}
                     </button>
@@ -1360,28 +1367,28 @@ function LanTab(props: ConfigModalProps) {
                   disabled={lanRoomBusy || vpnActionBusy}
                 >
                   <LogOut size={14} />
-                  Sair
+                  {t('library.configModal.lan.leave')}
                 </button>
               </div>
 
               <div className="vpn-room-ips">
                 <div className="vpn-ip-card">
-                  <span className="vpn-ip-label">Meu IP</span>
+                  <span className="vpn-ip-label">{t('library.configModal.lan.myIp')}</span>
                   <div className="vpn-ip-value">
                     <code>{vpnLocalIp || '—'}</code>
                     {vpnLocalIp && (
-                      <button className="copy-btn" onClick={() => handleCopy(vpnLocalIp, 'local')} title="Copiar">
+                      <button className="copy-btn" onClick={() => handleCopy(vpnLocalIp, 'local')} title={t('library.logs.copy')}>
                         {copiedField === 'local' ? <Check size={12} /> : <Copy size={12} />}
                       </button>
                     )}
                   </div>
                 </div>
                 <div className="vpn-ip-card">
-                  <span className="vpn-ip-label">IP do Host</span>
+                  <span className="vpn-ip-label">{t('library.configModal.lan.hostIp')}</span>
                   <div className="vpn-ip-value">
                     <code>{vpnHostIp || '—'}</code>
                     {vpnHostIp && (
-                      <button className="copy-btn" onClick={() => handleCopy(vpnHostIp, 'host')} title="Copiar">
+                      <button className="copy-btn" onClick={() => handleCopy(vpnHostIp, 'host')} title={t('library.logs.copy')}>
                         {copiedField === 'host' ? <Check size={12} /> : <Copy size={12} />}
                       </button>
                     )}
@@ -1392,11 +1399,11 @@ function LanTab(props: ConfigModalProps) {
               {/* Peers list */}
               <div className="vpn-peers-section">
                 <div className="vpn-peers-header">
-                  <span>Jogadores na sala ({vpnPeers.length})</span>
+                  <span>{t('library.configModal.lan.playersInRoom', { count: vpnPeers.length })}</span>
                 </div>
                 <div className="vpn-peers-list">
                   {vpnPeers.length === 0 ? (
-                    <div className="vpn-peers-empty">Carregando jogadores...</div>
+                    <div className="vpn-peers-empty">{t('library.configModal.lan.loadingPlayers')}</div>
                   ) : (
                     vpnPeers.map((peer) => (
                       <div key={peer.id || peer.ip} className={`vpn-peer-item ${peer.online === false ? 'offline' : ''}`}>
@@ -1404,7 +1411,7 @@ function LanTab(props: ConfigModalProps) {
                           {peer.role === 'host' ? <Crown size={14} /> : <User size={14} />}
                         </div>
                         <div className="vpn-peer-info">
-                          <span className="vpn-peer-name">{peer.name || 'Jogador'}</span>
+                          <span className="vpn-peer-name">{peer.name || t('library.configModal.lan.player')}</span>
                           <span className="vpn-peer-ip">{peer.ip}</span>
                         </div>
                         <div className={`vpn-peer-status ${peer.online !== false ? 'online' : 'offline'}`}>
@@ -1418,7 +1425,7 @@ function LanTab(props: ConfigModalProps) {
 
               <label className="toggle" style={{ marginTop: 12 }}>
                 <input type="checkbox" checked={lanAutoconnect} onChange={(e) => onLanAutoconnectChange(e.target.checked)} />
-                <span>Conectar automaticamente ao abrir o jogo</span>
+                <span>{t('library.configModal.lan.autoconnect')}</span>
               </label>
             </div>
           ) : (
@@ -1433,8 +1440,8 @@ function LanTab(props: ConfigModalProps) {
                     disabled={lanRoomBusy || vpnActionBusy || !vpnStatus?.installed}
                   >
                     <Plus size={24} />
-                    <strong>Criar Sala</strong>
-                    <span>Hospede uma sala para seus amigos</span>
+                    <strong>{t('library.configModal.lan.createRoom')}</strong>
+                    <span>{t('library.configModal.lan.createRoomDesc')}</span>
                   </button>
 
                   <button
@@ -1443,8 +1450,8 @@ function LanTab(props: ConfigModalProps) {
                     disabled={lanRoomBusy || vpnActionBusy || !vpnStatus?.installed}
                   >
                     <Globe size={24} />
-                    <strong>Procurar Salas</strong>
-                    <span>Encontre salas públicas</span>
+                    <strong>{t('library.configModal.lan.browseRooms')}</strong>
+                    <span>{t('library.configModal.lan.browseRoomsDesc')}</span>
                   </button>
                 </div>
               )}
@@ -1453,40 +1460,40 @@ function LanTab(props: ConfigModalProps) {
               {showCreateForm && (
                 <div className="vpn-create-form">
                   <div className="vpn-form-header">
-                    <h4>Criar Nova Sala</h4>
-                    <button className="btn ghost small" onClick={() => setShowCreateForm(false)}>Cancelar</button>
+                    <h4>{t('library.configModal.lan.createNewRoom')}</h4>
+                    <button className="btn ghost small" onClick={() => setShowCreateForm(false)}>{t('common.cancel')}</button>
                   </div>
 
                   <div className="vpn-form-field">
-                    <label>Nome da sala (opcional)</label>
+                    <label>{t('library.configModal.lan.roomName')}</label>
                     <input
                       value={createRoomName}
                       onChange={(e) => setCreateRoomName(e.target.value)}
-                      placeholder={`Sala de ${titleValue || 'Jogo'}`}
+                      placeholder={t('library.configModal.lan.roomNamePlaceholder', { title: titleValue || t('library.configModal.lan.gameFallback') })}
                       maxLength={64}
                     />
                   </div>
 
                   <div className="vpn-form-field">
-                    <label>Senha (opcional)</label>
+                    <label>{t('library.configModal.lan.password')}</label>
                     <input
                       type="password"
                       value={createPassword}
                       onChange={(e) => setCreatePassword(e.target.value)}
-                      placeholder="Deixe vazio para sem senha"
+                      placeholder={t('library.configModal.lan.passwordPlaceholder')}
                       maxLength={32}
                     />
                   </div>
 
                   <div className="vpn-form-row">
                     <div className="vpn-form-field" style={{ flex: 1 }}>
-                      <label>Máximo de jogadores</label>
+                      <label>{t('library.configModal.lan.maxPlayers')}</label>
                       <select
                         value={createMaxPlayers}
                         onChange={(e) => setCreateMaxPlayers(Number(e.target.value))}
                       >
                         {[2, 4, 6, 8, 12, 16, 24, 32].map(n => (
-                          <option key={n} value={n}>{n} jogadores</option>
+                          <option key={n} value={n}>{t('library.configModal.lan.players', { count: n })}</option>
                         ))}
                       </select>
                     </div>
@@ -1497,15 +1504,15 @@ function LanTab(props: ConfigModalProps) {
                         checked={createIsPublic}
                         onChange={(e) => setCreateIsPublic(e.target.checked)}
                       />
-                      <span>Sala pública</span>
+                      <span>{t('library.configModal.lan.publicRoom')}</span>
                     </label>
                   </div>
 
                   <div className="vpn-form-info">
                     {createIsPublic ? (
-                      <><Unlock size={14} /> Qualquer pessoa poderá ver e entrar na sala</>
+                      <><Unlock size={14} /> {t('library.configModal.lan.publicHint')}</>
                     ) : (
-                      <><Lock size={14} /> Apenas quem tiver o código poderá entrar</>
+                      <><Lock size={14} /> {t('library.configModal.lan.privateHint')}</>
                     )}
                   </div>
 
@@ -1514,7 +1521,7 @@ function LanTab(props: ConfigModalProps) {
                     onClick={handleCreateRoom}
                     disabled={lanRoomBusy || vpnActionBusy}
                   >
-                    {lanRoomBusy ? <><RefreshCw size={14} className="of-spin" /> Criando...</> : 'Criar Sala'}
+                    {lanRoomBusy ? <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.lan.creating')}</> : t('library.configModal.lan.createRoom')}
                   </button>
                 </div>
               )}
@@ -1523,12 +1530,12 @@ function LanTab(props: ConfigModalProps) {
               {showRoomBrowser && (
                 <div className="vpn-room-browser">
                   <div className="vpn-form-header">
-                    <h4>Salas Públicas</h4>
+                    <h4>{t('library.configModal.lan.publicRooms')}</h4>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="btn ghost small" onClick={onRefreshRooms} disabled={vpnLoading}>
                         <RefreshCw size={14} className={vpnLoading ? 'of-spin' : ''} />
                       </button>
-                      <button className="btn ghost small" onClick={() => setShowRoomBrowser(false)}>Fechar</button>
+                      <button className="btn ghost small" onClick={() => setShowRoomBrowser(false)}>{t('login.close')}</button>
                     </div>
                   </div>
 
@@ -1536,8 +1543,8 @@ function LanTab(props: ConfigModalProps) {
                     {vpnRooms.length === 0 ? (
                       <div className="vpn-rooms-empty">
                         <Users size={32} />
-                        <span>Nenhuma sala pública encontrada</span>
-                        <span className="vpn-rooms-empty-sub">Crie uma sala ou entre com um código</span>
+                        <span>{t('library.configModal.lan.noPublicRooms')}</span>
+                        <span className="vpn-rooms-empty-sub">{t('library.configModal.lan.noPublicRoomsHint')}</span>
                       </div>
                     ) : (
                       vpnRooms.map((room) => (
@@ -1557,7 +1564,7 @@ function LanTab(props: ConfigModalProps) {
                         >
                           <div className="vpn-room-item-info">
                             <strong>{room.name}</strong>
-                            <span className="vpn-room-item-host">por {room.hostName || 'Anônimo'}</span>
+                            <span className="vpn-room-item-host">{t('library.configModal.lan.byHost', { host: room.hostName || t('library.configModal.lan.anonymous') })}</span>
                           </div>
                           <div className="vpn-room-item-meta">
                             <span className="vpn-room-item-players">
@@ -1577,7 +1584,7 @@ function LanTab(props: ConfigModalProps) {
               {!showCreateForm && !showRoomBrowser && (
                 <div className="vpn-join-section">
                   <div className="vpn-join-divider">
-                    <span>ou entre com código</span>
+                    <span>{t('library.configModal.lan.joinWithCode')}</span>
                   </div>
 
                   <div className="vpn-join-form">
@@ -1586,14 +1593,14 @@ function LanTab(props: ConfigModalProps) {
                       onChange={(e) => onLanRoomCodeChange(
                         e.target.value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, '').slice(0, 16)
                       )}
-                      placeholder="Código da sala (ex: ABCD2345EF)"
+                      placeholder={t('library.configModal.lan.roomCodePlaceholder')}
                     />
                     {showJoinPassword && (
                       <input
                         type="password"
                         value={joinPassword}
                         onChange={(e) => setJoinPassword(e.target.value)}
-                        placeholder="Senha da sala"
+                        placeholder={t('library.configModal.lan.roomPassword')}
                       />
                     )}
                     <button
@@ -1602,7 +1609,7 @@ function LanTab(props: ConfigModalProps) {
                       disabled={lanRoomBusy || vpnActionBusy || !lanRoomCode.trim() || !vpnStatus?.installed}
                     >
                       <LogIn size={14} />
-                      Entrar
+                      {t('library.configModal.lan.join')}
                     </button>
                   </div>
                 </div>

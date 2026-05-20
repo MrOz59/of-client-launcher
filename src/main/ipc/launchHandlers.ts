@@ -42,6 +42,8 @@ import {
   compactProtonLogParts,
   extractInterestingProtonLog,
   findExecutableInDir,
+  findEpicAuthLauncherInDir,
+  findWin64ShippingExecutableInDir,
   waitMs,
   normalizeSteamId,
   resolveOverlayCompatibility
@@ -366,9 +368,23 @@ function hasOnlineFixBesideExe(exePath: string): boolean {
   }
 }
 
+function isEpicAuthLauncherPath(exePath?: string | null): boolean {
+  const name = path.basename(String(exePath || '')).toLowerCase()
+  return name === 'eosauthlauncher.exe' ||
+    name === 'eosauthlauncher-win64-shipping.exe' ||
+    name === 'eosauthlauncher-win32-shipping.exe' ||
+    (name.endsWith('.exe') && name.includes('eos') && name.includes('auth') && name.includes('launcher'))
+}
+
+function isWin64ShippingPath(exePath?: string | null): boolean {
+  return path.basename(String(exePath || '')).toLowerCase().endsWith('-win64-shipping.exe')
+}
+
 function shouldPreferAutoExecutable(currentExe: string, candidateExe: string): boolean {
   if (!currentExe || !candidateExe) return false
   if (path.resolve(currentExe) === path.resolve(candidateExe)) return false
+  if (isEpicAuthLauncherPath(currentExe)) return false
+  if (isEpicAuthLauncherPath(candidateExe)) return true
 
   const currentLower = currentExe.toLowerCase()
   const candidateLower = candidateExe.toLowerCase()
@@ -779,10 +795,46 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.warn('[DriveSync] Failed to sync saves before launch:', e?.message || e)
       }
 
+      const onlineFixIds: {
+        steamAppId?: string | null
+        fakeAppId?: string | null
+        realAppId?: string | null
+        epicProductId?: string | null
+      } = {}
+      try {
+        const found = await findAndReadOnlineFixIni(installDir)
+        if (found?.content) {
+          const ids = extractOnlineFixOverlayIds(found.content)
+          onlineFixIds.steamAppId = ids.steamAppId || null
+          onlineFixIds.fakeAppId = ids.fakeAppId || null
+          onlineFixIds.realAppId = ids.realAppId || null
+          onlineFixIds.epicProductId = ids.epicProductId || null
+          if (onlineFixIds.steamAppId) {
+            console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', onlineFixIds.steamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
+          }
+          if (ids.fakeAppId) {
+            console.log('[Launch] ✅ OnlineFix.ini Fake AppID:', ids.fakeAppId)
+          }
+          if (ids.realAppId) {
+            console.log('[Launch] ✅ OnlineFix.ini Real AppID:', ids.realAppId)
+          }
+          if (onlineFixIds.epicProductId) console.log('[Launch] ✅ OnlineFix.ini Epic Product ID:', onlineFixIds.epicProductId)
+        }
+      } catch (err: any) {
+        console.warn('[Launch] Failed to read OnlineFix.ini for overlay IDs:', err?.message || err)
+      }
+
+      const epicAuthLauncher = findEpicAuthLauncherInDir(installDir)
+      const epicWin64ShippingExe = findWin64ShippingExecutableInDir(installDir)
+      const preferredEpicExe = onlineFixIds.epicProductId
+        ? (epicAuthLauncher || epicWin64ShippingExe)
+        : epicAuthLauncher
+      const shouldUsePreferredEpicExe = Boolean(preferredEpicExe)
+
       // Try to auto-find executable if not configured or missing
       if (!exePath || !fs.existsSync(path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath))) {
         console.log('[Launch] 🔍 Auto-searching for executable...')
-        const autoExe = installDir ? findExecutableInDir(installDir) : null
+        const autoExe = shouldUsePreferredEpicExe ? preferredEpicExe : (installDir ? findExecutableInDir(installDir) : null)
         if (autoExe) {
           exePath = autoExe
           updateGameInfo(gameUrl, { executable_path: exePath })
@@ -800,6 +852,26 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
       // Resolve exe path relative to install dir if not absolute
       exePath = path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath)
+
+      if (
+        shouldUsePreferredEpicExe &&
+        preferredEpicExe &&
+        path.resolve(exePath) !== path.resolve(preferredEpicExe) &&
+        !isEpicAuthLauncherPath(exePath)
+      ) {
+        console.warn('[Launch] 🟣 Epic/EOS preferred executable detected; switching executable:', {
+          from: exePath,
+          to: preferredEpicExe,
+          epicProductId: onlineFixIds.epicProductId || null,
+          reason: isEpicAuthLauncherPath(preferredEpicExe)
+            ? 'EOSAuthLauncher recomendado'
+            : isWin64ShippingPath(preferredEpicExe)
+              ? 'fallback Win64-Shipping'
+              : 'fallback Epic'
+        })
+        exePath = preferredEpicExe
+        updateGameInfo(gameUrl, { executable_path: exePath })
+      }
 
       const bestExe = installDir ? findExecutableInDir(installDir) : null
       if (bestExe && fs.existsSync(bestExe) && shouldPreferAutoExecutable(exePath, bestExe)) {
@@ -903,36 +975,6 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.log('[Launch] 📂 Prefix path:', prefixPath)
         console.log('[Launch] 📂 Prefix exists:', fs.existsSync(prefixPath))
         activePrefixPath = prefixPath
-
-        // Detect OnlineFix overlay IDs (Steam vs Epic)
-        const onlineFixIds: {
-          steamAppId?: string | null
-          fakeAppId?: string | null
-          realAppId?: string | null
-          epicProductId?: string | null
-        } = {}
-        try {
-          const found = await findAndReadOnlineFixIni(installDir)
-          if (found?.content) {
-            const ids = extractOnlineFixOverlayIds(found.content)
-            onlineFixIds.steamAppId = ids.steamAppId || null
-            onlineFixIds.fakeAppId = ids.fakeAppId || null
-            onlineFixIds.realAppId = ids.realAppId || null
-            onlineFixIds.epicProductId = ids.epicProductId || null
-            if (onlineFixIds.steamAppId) {
-              console.log('[Launch] ✅ OnlineFix.ini Steam AppID:', onlineFixIds.steamAppId, ids.steamAppIdSource ? `(source: ${ids.steamAppIdSource})` : '')
-            }
-            if (ids.fakeAppId) {
-              console.log('[Launch] ✅ OnlineFix.ini Fake AppID:', ids.fakeAppId)
-            }
-            if (ids.realAppId) {
-              console.log('[Launch] ✅ OnlineFix.ini Real AppID:', ids.realAppId)
-            }
-            if (onlineFixIds.epicProductId) console.log('[Launch] ✅ OnlineFix.ini Epic Product ID:', onlineFixIds.epicProductId)
-          }
-        } catch (err: any) {
-          console.warn('[Launch] Failed to read OnlineFix.ini for overlay IDs:', err?.message || err)
-        }
 
         const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
         const overlayPolicy = resolveOverlayCompatibility({

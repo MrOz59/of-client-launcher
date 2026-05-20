@@ -1,5 +1,6 @@
 import React from 'react'
 import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 type Tab = 'store' | 'library' | 'downloads' | 'settings'
 
@@ -16,6 +17,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginClick, onLogoutClick, hasDownloadActivity, onProfileNavigate, collapsed, onToggleCollapse }: SidebarProps) {
+  const { t } = useI18n()
   const [profileName, setProfileName] = React.useState<string | null>(null)
   const [profileAvatar, setProfileAvatar] = React.useState<string | null>(null)
   const [profileUrl, setProfileUrl] = React.useState<string | null>(null)
@@ -54,8 +56,8 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <button
           className="sidebar-collapse"
           onClick={() => onToggleCollapse?.()}
-          title={isCollapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
-          aria-label={isCollapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+          title={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+          aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
         >
           {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
@@ -65,37 +67,37 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'store' ? 'active' : ''}`}
           onClick={() => onTabChange('store')}
-          title="Loja"
+          title={t('app.tabs.store')}
         >
           <Store />
-          <span>Loja</span>
+          <span>{t('app.tabs.store')}</span>
         </div>
 
         <div
           className={`nav-item ${activeTab === 'library' ? 'active' : ''}`}
           onClick={() => onTabChange('library')}
-          title="Biblioteca"
+          title={t('app.tabs.library')}
         >
           <Library />
-          <span>Biblioteca</span>
+          <span>{t('app.tabs.library')}</span>
         </div>
 
         <div
           className={`nav-item ${activeTab === 'downloads' ? 'active' : ''} ${hasDownloadActivity ? 'downloading' : ''}`}
           onClick={() => onTabChange('downloads')}
-          title="Downloads"
+          title={t('app.tabs.downloads')}
         >
           <Download />
-          <span>Downloads</span>
+          <span>{t('app.tabs.downloads')}</span>
         </div>
 
         <div
           className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => onTabChange('settings')}
-          title="Configurações"
+          title={t('app.tabs.settings')}
         >
           <Settings />
-          <span>Configurações</span>
+          <span>{t('app.tabs.settings')}</span>
         </div>
       </nav>
 
@@ -110,7 +112,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
             }
           }}
           style={{ cursor: 'pointer' }}
-          title={isLoggedIn ? (profileName || 'Ver perfil') : 'Abrir loja'}
+          title={isLoggedIn ? (profileName || t('sidebar.viewProfile')) : t('sidebar.openStore')}
         >
           <div className="user-avatar">
             {profileAvatar ? (
@@ -121,10 +123,10 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
           </div>
           <div className="user-status">
             <div className="user-status-name">
-              {isLoggedIn ? (profileName || 'Conectado') : 'Desconectado'}
+              {isLoggedIn ? (profileName || t('sidebar.connected')) : t('sidebar.disconnected')}
             </div>
             <div className="user-status-action">
-              {isLoggedIn ? 'Ver perfil' : 'Abrir loja'}
+              {isLoggedIn ? t('sidebar.viewProfile') : t('sidebar.openStore')}
             </div>
           </div>
         </div>
@@ -137,9 +139,9 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
               e.stopPropagation()
               onLogoutClick()
             }}
-            title="Sair"
+            title={t('sidebar.logout')}
           >
-            Sair
+            {t('sidebar.logout')}
           </button>
         ) : null}
       </div>

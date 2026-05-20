@@ -5,11 +5,13 @@ import LibraryTab from './components/LibraryTab'
 import DownloadsTab from './components/DownloadsTab'
 import SettingsTab from './components/SettingsTab'
 import LoginOverlay from './components/LoginOverlay'
+import { useI18n } from './i18n'
 import './App.css'
 
 type Tab = 'store' | 'library' | 'downloads' | 'settings'
 
 export default function App() {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('store')
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hasDownloadActivity, setHasDownloadActivity] = useState(false)
@@ -107,13 +109,13 @@ export default function App() {
   const getTabTitle = (tab: Tab) => {
     switch (tab) {
       case 'store':
-        return 'Loja'
+        return t('app.tabs.store')
       case 'library':
-        return 'Biblioteca'
+        return t('app.tabs.library')
       case 'downloads':
-        return 'Downloads'
+        return t('app.tabs.downloads')
       case 'settings':
-        return 'Configurações'
+        return t('app.tabs.settings')
       default:
         return ''
     }

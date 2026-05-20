@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Game, ProtonOptions, ProtonRuntime, LanMode, ConfigSaveState, SavedConfigState, GameConfigTab } from './types'
+import { useI18n } from '../../i18n'
 
 const DEFAULT_PROTON_OPTIONS: ProtonOptions = {
   esync: true,
@@ -17,6 +18,8 @@ const DEFAULT_PROTON_OPTIONS: ProtonOptions = {
 }
 
 export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
+  const { t } = useI18n()
+
   // Config modal state
   const [showConfig, setShowConfig] = useState<string | null>(null)
   const [configTab, setConfigTab] = useState<GameConfigTab>('geral')
@@ -117,8 +120,8 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     if (!root) return
     const res = await window.electronAPI.protonSetRoot(root)
     if (res.success) setProtonRuntimes(res.runtimes || [])
-    else alert(res.error || 'Falha ao salvar pasta de Proton')
-  }, [protonRootInput])
+    else alert(res.error || t('library.config.protonRootSaveFailed'))
+  }, [protonRootInput, t])
 
   const performConfigAutosave = useCallback(async (game: Game, snapshot: ReturnType<typeof getConfigSnapshot>, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
     const lastFallback = () => ({
@@ -143,28 +146,28 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
 
         if (snapshot.title && snapshot.title !== last.title) {
           const resTitle = await window.electronAPI.setGameTitle(game.url, snapshot.title)
-          if (!resTitle.success) throw new Error(resTitle.error || 'Falha ao salvar título')
+          if (!resTitle.success) throw new Error(resTitle.error || t('library.config.saveTitleFailed'))
           patch.title = snapshot.title
           nextSaved.title = snapshot.title
         }
 
         if (snapshot.version && snapshot.version !== last.version) {
           const resVersion = await window.electronAPI.setGameVersion(game.url, snapshot.version)
-          if (!resVersion.success) throw new Error(resVersion.error || 'Falha ao salvar versão')
+          if (!resVersion.success) throw new Error(resVersion.error || t('library.config.saveVersionFailed'))
           patch.installed_version = snapshot.version
           nextSaved.version = snapshot.version
         }
 
         if ((last.steamAppId || null) !== snapshot.steamAppId) {
           const appRes = await window.electronAPI.setGameSteamAppId(game.url, snapshot.steamAppId)
-          if (!appRes.success) throw new Error(appRes.error || 'Falha ao salvar Steam AppID')
+          if (!appRes.success) throw new Error(appRes.error || t('library.config.saveAppIdFailed'))
           patch.steam_app_id = snapshot.steamAppId
           nextSaved.steamAppId = snapshot.steamAppId
         }
 
         if (snapshot.protonRuntime !== last.protonRuntime || snapshot.protonOptionsJson !== last.protonOptionsJson) {
           const res = await window.electronAPI.setGameProtonOptions(game.url, snapshot.protonRuntime, snapshot.opts)
-          if (!res.success) throw new Error(res.error || 'Falha ao salvar Proton')
+          if (!res.success) throw new Error(res.error || t('library.config.saveProtonFailed'))
           patch.proton_runtime = snapshot.protonRuntime || null
           patch.proton_options = snapshot.protonOptionsJson
           nextSaved.protonRuntime = snapshot.protonRuntime
@@ -173,7 +176,7 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
 
         if (snapshot.protonPrefix !== last.protonPrefix) {
           const resPrefix = await window.electronAPI.setGameProtonPrefix(game.url, snapshot.protonPrefix ? snapshot.protonPrefix : null)
-          if (!resPrefix.success) throw new Error(resPrefix.error || 'Falha ao salvar prefixo')
+          if (!resPrefix.success) throw new Error(resPrefix.error || t('library.config.savePrefixFailed'))
           patch.proton_prefix = snapshot.protonPrefix ? snapshot.protonPrefix : null
           nextSaved.protonPrefix = snapshot.protonPrefix
         }
@@ -184,7 +187,7 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
             networkId: snapshot.lanNetworkId || null,
             autoconnect: snapshot.lanAutoconnect
           })
-          if (!lanRes.success) throw new Error(lanRes.error || 'Falha ao salvar LAN')
+          if (!lanRes.success) throw new Error(lanRes.error || t('library.config.saveLanFailed'))
           patch.lan_mode = snapshot.lanMode
           patch.lan_network_id = snapshot.lanNetworkId || null
           patch.lan_autoconnect = snapshot.lanAutoconnect ? 1 : 0
@@ -197,15 +200,15 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
         lastSavedConfigRef.current = nextSaved
 
         if (!snapshot.title) {
-          setConfigSaveState({ status: 'pending', message: 'Título não pode ficar vazio', updatedAt: Date.now() })
+          setConfigSaveState({ status: 'pending', message: t('library.config.titleRequired'), updatedAt: Date.now() })
         } else {
           setConfigSaveState({ status: 'saved', updatedAt: Date.now() })
         }
       })
       .catch((err: any) => {
-        setConfigSaveState({ status: 'error', message: err?.message || 'Falha ao salvar', updatedAt: Date.now() })
+        setConfigSaveState({ status: 'error', message: err?.message || t('library.config.saveFailed'), updatedAt: Date.now() })
       })
-  }, [])
+  }, [t])
 
   const scheduleConfigAutosave = useCallback((game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
     const snapshot = getConfigSnapshot()
@@ -226,19 +229,19 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
 
     if (!isDifferent) {
       if (!snapshot.title && last?.title) {
-        setConfigSaveState(s => s.status === 'saving' ? s : { status: 'pending', message: 'Título não pode ficar vazio', updatedAt: Date.now() })
+        setConfigSaveState(s => s.status === 'saving' ? s : { status: 'pending', message: t('library.config.titleRequired'), updatedAt: Date.now() })
       }
       return
     }
 
-    setConfigSaveState(s => s.status === 'saving' ? s : { status: 'pending', message: !snapshot.title ? 'Título não pode ficar vazio' : undefined, updatedAt: Date.now() })
+    setConfigSaveState(s => s.status === 'saving' ? s : { status: 'pending', message: !snapshot.title ? t('library.config.titleRequired') : undefined, updatedAt: Date.now() })
 
     if (configAutosaveTimerRef.current) clearTimeout(configAutosaveTimerRef.current)
     configAutosaveTimerRef.current = setTimeout(() => {
       configAutosaveTimerRef.current = null
       void performConfigAutosave(game, snapshot, setGames)
     }, 650)
-  }, [getConfigSnapshot, performConfigAutosave])
+  }, [getConfigSnapshot, performConfigAutosave, t])
 
   const openConfig = useCallback((game: Game) => {
     suppressConfigAutosaveRef.current = true
@@ -287,14 +290,14 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
         setGames(prev => prev.map(g => g.url === game.url ? { ...g, image_url: res.imageUrl } : g))
         setBannerManualUrl(res.imageUrl)
       } else {
-        alert(res.error || 'Nenhuma imagem encontrada')
+        alert(res.error || t('library.config.noBannerFound'))
       }
     } catch (e: any) {
-      alert(e?.message || 'Falha ao buscar banner')
+      alert(e?.message || t('library.config.fetchBannerFailed'))
     } finally {
       setBannerLoading(null)
     }
-  }, [])
+  }, [t])
 
   const applyBannerUrl = useCallback(async (game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
     const url = bannerManualUrl.trim()
@@ -302,20 +305,20 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     setBannerManualBusy(true)
     try {
       const res = await window.electronAPI.setGameImageUrl(game.url, url)
-      if (!res.success) { alert(res.error || 'Falha ao definir banner'); return }
+      if (!res.success) { alert(res.error || t('library.config.setBannerFailed')); return }
       setGames(prev => prev.map(g => g.url === game.url ? { ...g, image_url: (res.imageUrl as any) || undefined } : g))
     } catch (e: any) {
-      alert(e?.message || 'Falha ao aplicar banner')
+      alert(e?.message || t('library.config.applyBannerFailed'))
     } finally {
       setBannerManualBusy(false)
     }
-  }, [bannerManualUrl])
+  }, [bannerManualUrl, t])
 
   const pickBannerFile = useCallback(async (game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
     setBannerManualBusy(true)
     try {
       const res = await window.electronAPI.pickGameBannerFile(game.url)
-      if (!res.success) { if (!res.canceled) alert(res.error || 'Falha ao selecionar imagem'); return }
+      if (!res.success) { if (!res.canceled) alert(res.error || t('library.config.pickBannerFailed')); return }
       if (res.imageUrl) {
         setGames(prev => prev.map(g => g.url === game.url ? { ...g, image_url: res.imageUrl } : g))
         setBannerManualUrl(res.imageUrl)
@@ -323,21 +326,21 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     } finally {
       setBannerManualBusy(false)
     }
-  }, [])
+  }, [t])
 
   const clearBanner = useCallback(async (game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
     setBannerManualBusy(true)
     try {
       const res = await window.electronAPI.setGameImageUrl(game.url, null)
-      if (!res.success) { alert(res.error || 'Falha ao limpar banner'); return }
+      if (!res.success) { alert(res.error || t('library.config.clearBannerFailed')); return }
       setGames(prev => prev.map(g => g.url === game.url ? { ...g, image_url: undefined } : g))
       setBannerManualUrl('')
     } catch (e: any) {
-      alert(e?.message || 'Falha ao limpar banner')
+      alert(e?.message || t('library.config.clearBannerFailed'))
     } finally {
       setBannerManualBusy(false)
     }
-  }, [])
+  }, [t])
 
   // Load default LAN network ID
   useEffect(() => {

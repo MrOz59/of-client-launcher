@@ -85,6 +85,13 @@
         "to": "icon.png"
       },
       {
+        "from": "src/renderer/i18n/translations",
+        "to": "i18n/translations",
+        "filter": [
+          "*.json"
+        ]
+      },
+      {
         "from": "services/torrent-agent/torrent-agent",
         "to": "torrent-agent",
         "filter": [

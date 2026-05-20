@@ -35,7 +35,7 @@ function expandHome(p: string) {
   return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p
 }
 
-// ✅ NOVA FUNÇÃO - Encontra o diretório raiz do Steam
+// Find the Steam root directory.
 function findSteamRoot(): string {
   const candidates = [
     path.join(os.homedir(), '.steam', 'steam'),
@@ -284,11 +284,11 @@ type DefaultDepsMeta = {
   winebootDone?: boolean
   vcredist?: ComponentInstallState
   dotnet?: ComponentInstallState
-  // 🆕 STEAM-LIKE: Track individual components that have been installed
+  // Steam-like flow: track individual components that have been installed.
   installedComponents?: string[]
-  // 🆕 Track detected requirements for this game
+  // Track detected requirements for this game.
   detectedRequirements?: string[]
-  // 🆕 Track if smart install was used
+  // Track whether smart install was used.
   smartInstallUsed?: boolean
   // Legacy fields (file name existed before schema field)
   winetricks?: boolean
@@ -618,7 +618,7 @@ export async function ensureDefaultPrefix(runtimePath?: string) {
 }
 
 /**
- * 🆕 STEAM-LIKE: Ensure game prefix with smart dependency detection.
+ * Steam-like flow: ensure game prefix with smart dependency detection.
  * This function analyzes the game directory to detect what dependencies
  * are actually needed, similar to how Steam/Proton works.
  */
@@ -628,7 +628,7 @@ export async function ensureGamePrefixFromDefault(
   _commonRedistPath?: string,
   forceRecreate?: boolean,
   onProgress?: (msg: string) => void,
-  gameInstallPath?: string  // 🆕 Path to game install for smart detection
+  gameInstallPath?: string  // Game install path for smart detection.
 ) {
   const taskKey = `${gameSlug}::${runtimePath || 'auto'}::${forceRecreate ? 'recreate' : 'keep'}`
   const existing = inFlightGamePrefix.get(taskKey)
@@ -654,7 +654,7 @@ export async function ensureGamePrefixFromDefault(
     if (forceRecreate || !fs.existsSync(gamePrefix) || !hasSentinel || runtimeMismatch) {
       onProgress?.('Criando/atualizando prefixo do jogo...')
 
-      // 🆕 Use smart install with game path for requirement detection
+      // Use smart install with the game path for requirement detection.
       await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress, effectiveGamePath)
     }
 
@@ -667,7 +667,7 @@ export async function ensureGamePrefixFromDefault(
     // If the game package includes an _CommonRedist folder, attempt to run its installers
     // inside the game prefix (DirectX / bundled vcredist). This helps games that ship their
     // own redistributables instead of relying on winetricks.
-    // 🆕 This is now the PREFERRED method - use game's own installers first
+    // Preferred method: use the game's own installers first.
     try {
       if (_commonRedistPath && fs.existsSync(_commonRedistPath)) {
         onProgress?.('Aplicando redistribuíveis do jogo...')
@@ -678,7 +678,7 @@ export async function ensureGamePrefixFromDefault(
       console.warn('[Proton] Failed to run game _CommonRedist installers:', err)
     }
 
-    // 🆕 STEAM-LIKE: Only verify essential Wine files, not VC++ (game may not need it)
+    // Steam-like flow: only verify essential Wine files, not VC++ because the game may not need it.
     try {
       const { winePrefix } = resolveCompatDataPaths(gamePrefix, true)
       const sys32 = path.join(winePrefix, 'drive_c', 'windows', 'system32')
@@ -867,7 +867,7 @@ export function buildProtonLaunch(
     rawPrefix.startsWith(DEFAULT_PREFIX_DIR)
   )
   
-  // ✅ CORREÇÃO: Encontrar o diretório raiz do Steam
+  // Find the Steam root directory.
   const steamRoot = findSteamRoot()
 
   const detectPeArch = (filePath: string): 'x86' | 'x64' | null => {
@@ -915,7 +915,7 @@ export function buildProtonLaunch(
     // - winhttp: HTTP library (n,b = native with builtin fallback)
     const baseDllOverridesSteam = 'steam_api=n;steam_api64=n;winmm=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;dnet=n;winhttp=n,b'
     // For Epic games, use the alternate overrides requested to improve EOS overlay reliability.
-    const baseDllOverridesEpic = 'version=n,b;OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;winhttp=n,b'
+    const baseDllOverridesEpic = 'version=n,b;OnlineFix=n;OnlineFix64=n;SteamOverlay=n;SteamOverlay64=n;EOSOVH-Win32-Shipping=n,b;EOSOVH-Win64-Shipping=n,b;winmm=n,b;dnet=n;winhttp=n,b'
     const baseDllOverrides = options?.enableEosOverlay === true ? baseDllOverridesEpic : baseDllOverridesSteam
     const extraOverrides: string[] = []
     if (options?.enableEosOverlay === true) {
@@ -939,7 +939,7 @@ export function buildProtonLaunch(
     ? '-all,+err,+warn,+fixme,+seh,+loaddll,-unwind'
     : '-all'
 
-  // ✅ CORREÇÃO PRINCIPAL: Use 0 por default para non-Steam apps, evitando integração com Steam.exe
+  // Use 0 by default for non-Steam apps to avoid Steam.exe integration.
   const steamAppId = options?.steamAppId != null && String(options.steamAppId).trim() !== ''
     ? String(options.steamAppId).trim()
     : '0'
@@ -1026,7 +1026,7 @@ export function buildProtonLaunch(
         ...sanitizeEnvForProton(process.env),
         ...envOptions,
         STEAM_COMPAT_DATA_PATH: prefix,
-        STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,  // ✅ CORREÇÃO!
+        STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,  // Required for Steam compatibility paths.
         STEAM_COMPAT_INSTALL_PATH: options?.installDir ? String(options.installDir) : undefined,
         // Keep the real app id available for steam_api/OnlineFix even when the
         // overlay itself attaches through SteamOverlayGameId=480.
@@ -1050,7 +1050,7 @@ export function buildProtonLaunch(
 }
 
 // =====================================================
-// 🆕 SISTEMA DE PRÉ-REQUISITOS MELHORADO
+// Improved prerequisite system.
 // =====================================================
 
 function commandExists(cmd: string): boolean {
@@ -1146,7 +1146,7 @@ function getProtonWineOverrides(protonDir?: string | null): NodeJS.ProcessEnv {
         const binDir = path.dirname(c.wine)
         const prevPath = process.env.PATH || ''
 
-        // ✅ MELHORIA CRÍTICA: adicionar libs do Proton ao LD_LIBRARY_PATH
+        // Add Proton libraries to LD_LIBRARY_PATH.
         const libDirs: string[] = []
         const base = path.dirname(binDir) // .../files or .../dist
         const probe = [
@@ -1338,7 +1338,7 @@ export function protontricksAvailable(): boolean {
 }
 
 // =====================================================
-// 🆕 SISTEMA DE DETECÇÃO DE REQUISITOS (STEAM-LIKE)
+// Steam-like requirement detection system.
 // =====================================================
 
 export interface GameRequirements {
@@ -1567,7 +1567,7 @@ export function requirementsToWinetricks(reqs: GameRequirements): string[] {
   return Array.from(new Set(components))
 }
 
-// Lista de pré-requisitos básicos (fallback se detecção falhar)
+// Basic prerequisites used as fallback when detection fails.
 const BASIC_PREREQUISITES = {
   winetricks: [
     'vcrun2022',      // Visual C++ 2015-2022 Redistributable
@@ -1575,13 +1575,13 @@ const BASIC_PREREQUISITES = {
   ]
 }
 
-// Lista completa de pré-requisitos (modo legacy/forçado)
+// Complete prerequisites for legacy/forced mode.
 const COMMON_PREREQUISITES = {
   winetricks: [
     'vcrun2022',      // Visual C++ 2015-2022 Redistributable
     'corefonts',      // Microsoft Core Fonts (sometimes required by installers)
   ],
-  // Componentes extras que podem ser necessários
+  // Extra components that may be needed.
   winetricksExtras: [
     'd3dx9',          // DirectX 9
     'd3dcompiler_47', // DirectX Shader Compiler
@@ -1595,7 +1595,7 @@ const COMMON_PREREQUISITES = {
   ]
 }
 
-// 🆕 STEAM-LIKE: Optimized winetricks runner with better timeout and error handling
+// Steam-like optimized winetricks runner with better timeout and error handling.
 async function runWinetricks(
   runner: string,
   prefixCompatDataPath: string,
@@ -1618,7 +1618,7 @@ async function runWinetricks(
     ? String(env.WINEPREFIX)
     : path.join(prefixCompatDataPath, 'pfx')
 
-  // 🆕 OPTIMIZATION: Install multiple components at once when possible
+  // Optimization: install multiple components at once when possible.
   // Group compatible components together to reduce overhead
   const fastComponents = components.filter(c => ['corefonts', 'd3dcompiler_47'].includes(c))
   const slowComponents = components.filter(c => !fastComponents.includes(c))
@@ -1641,7 +1641,7 @@ async function runWinetricks(
       WINEPREFIX: winePrefix,
       STEAM_COMPAT_DATA_PATH: prefixCompatDataPath,
       WINETRICKS_NONINTERACTIVE: '1',
-      // 🆕 Reduce verbosity
+      // Reduce verbosity.
       WINETRICKS_DOWNLOADER: 'wget',
       WINETRICKS_QUIET: '1'
     })
@@ -1669,7 +1669,7 @@ async function runWinetricks(
       proc.on('close', (code) => resolve(typeof code === 'number' ? code : null))
       proc.on('error', () => resolve(null))
 
-      // 🆕 Smart timeout: extend if we're seeing output
+      // Smart timeout: extend if output is still being produced.
       const checkInterval = setInterval(() => {
         const elapsed = Date.now() - lastOutput
         if (elapsed > 60000) { // No output for 1 minute = stalled
@@ -1726,7 +1726,7 @@ async function runWinetricks(
   return okAll
 }
 
-// 🆕 STEAM-LIKE: Optimized protontricks runner with smart timeout
+// Steam-like optimized protontricks runner with smart timeout.
 async function runProtontricks(
   prefixPath: string,
   components: string[],
@@ -1780,7 +1780,7 @@ async function runProtontricks(
         proc.on('close', (code) => resolve(typeof code === 'number' ? code : null))
         proc.on('error', () => resolve(null))
 
-        // 🆕 Smart timeout: check for stalled process
+        // Smart timeout: check for stalled process.
         const checkInterval = setInterval(() => {
           const elapsed = Date.now() - lastOutput
           if (elapsed > 120000) { // No output for 2 minutes = stalled
@@ -1791,7 +1791,7 @@ async function runProtontricks(
           }
         }, 15000)
 
-        // 🆕 Reduced hard timeout: 5 minutes instead of 10
+        // Reduced hard timeout: 5 minutes instead of 10.
         const hardTimeout = setTimeout(() => {
           clearInterval(checkInterval)
           console.warn('[protontricks] Hard timeout reached (5 minutes)')
@@ -1871,7 +1871,7 @@ async function runCommonRedistInstallers(
 }
 
 // =====================================================
-// 🆕 STEAM-LIKE: VALIDAÇÃO PÓS-INSTALAÇÃO
+// Steam-like post-installation validation.
 // =====================================================
 
 export interface PrefixValidationResult {
@@ -2015,7 +2015,7 @@ export function getPrefixStatus(prefixPath: string): {
 }
 
 // =====================================================
-// FUNÇÃO PRINCIPAL DE INICIALIZAÇÃO DO PREFIXO
+// Main prefix initialization function.
 // =====================================================
 
 export async function ensurePrefixDefaults(
@@ -2023,7 +2023,7 @@ export async function ensurePrefixDefaults(
   runtimePath?: string,
   commonRedistPath?: string,
   onProgress?: (msg: string) => void,
-  gameInstallPath?: string  // 🆕 Path to game for requirement detection
+  gameInstallPath?: string  // Game path for requirement detection.
 ): Promise<boolean> {
   try {
     if (!isLinux()) return false
@@ -2070,7 +2070,7 @@ export async function ensurePrefixDefaults(
       protontricks: prevMeta?.protontricks
     }
 
-    // 🆕 STEAM-LIKE: Detect game requirements if game path provided
+    // Steam-like flow: detect game requirements when a game path is provided.
     let detectedReqs: GameRequirements | null = null
     let useSmartInstall = false
 
@@ -2142,7 +2142,7 @@ export async function ensurePrefixDefaults(
       console.log('[Proton] Prefix already bootstrapped; skipping wineboot')
     }
 
-    // 🆕 STEAM-LIKE: Smart dependency installation based on detected requirements
+    // Steam-like smart dependency installation based on detected requirements.
     if (useSmartInstall && detectedReqs && winetricksAvailable()) {
       // Convert detected requirements to winetricks components
       const smartComponents = requirementsToWinetricks(detectedReqs)
@@ -2245,7 +2245,7 @@ export async function ensurePrefixDefaults(
 }
 
 // =====================================================
-// FUNÇÃO PARA INSTALAR REQUISITOS EXTRAS
+// Install extra prerequisites.
 // =====================================================
 
 export async function installExtraComponents(

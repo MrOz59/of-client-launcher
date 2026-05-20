@@ -1,4 +1,5 @@
 import React from 'react'
+import { useI18n } from '../../i18n'
 
 export interface SchemaEditorModalProps {
   title: string
@@ -25,13 +26,16 @@ export function SchemaEditorModal({
   onClear,
   onSave
 }: SchemaEditorModalProps) {
+  const { t } = useI18n()
+  const format = '{ items: [{ id, name, description?, iconUrl?, hidden? }] }'
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal config-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <div className="config-modal-body">
           <div className="modal-header">
             <div>
-              <p className="eyebrow">Schema custom</p>
+              <p className="eyebrow">{t('library.schema.custom')}</p>
               <h3>{title}</h3>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -39,19 +43,19 @@ export function SchemaEditorModal({
                 className="btn ghost"
                 onClick={onGenerateTemplate}
                 disabled={busy}
-                title="Recriar a partir das conquistas atuais"
+                title={t('library.schema.generateTemplateTitle')}
               >
-                Gerar template
+                {t('library.schema.generateTemplate')}
               </button>
               <button
                 className="btn ghost"
                 onClick={onCopy}
                 disabled={busy}
-                title="Copiar JSON"
+                title={t('library.schema.copyJson')}
               >
-                Copiar
+                {t('library.schema.copyJson')}
               </button>
-              <button className="btn ghost" onClick={onClose} title="Fechar">
+              <button className="btn ghost" onClick={onClose} title={t('login.close')}>
                 ✕
               </button>
             </div>
@@ -86,7 +90,7 @@ export function SchemaEditorModal({
 
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
             <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Formato: {"{ items: [{ id, name, description?, iconUrl?, hidden? }] }"}
+              {t('library.schema.formatHint', { format })}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
@@ -94,14 +98,14 @@ export function SchemaEditorModal({
                 onClick={onClear}
                 disabled={busy}
               >
-                Limpar
+                {t('common.clear')}
               </button>
               <button
                 className="btn accent"
                 onClick={onSave}
                 disabled={busy}
               >
-                {busy ? 'Salvando...' : 'Salvar schema'}
+                {busy ? t('common.saving') : t('library.schema.save')}
               </button>
             </div>
           </div>

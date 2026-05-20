@@ -1,6 +1,7 @@
 import React from 'react'
 import { RefreshCw, Cloud, CloudOff, CheckCircle2, Loader2 } from 'lucide-react'
 import type { CloudSavesBannerState, Game } from './types'
+import { useI18n } from '../../i18n'
 
 export interface CloudSavesBannerProps {
   banner: CloudSavesBannerState
@@ -10,8 +11,9 @@ export interface CloudSavesBannerProps {
 }
 
 export function CloudSavesBanner({ banner, games, onOpenBackups, onClose }: CloudSavesBannerProps) {
+  const { t } = useI18n()
   const gameTitle = banner.gameUrl
-    ? (games.find(g => g.url === banner.gameUrl)?.title || 'Jogo')
+    ? (games.find(g => g.url === banner.gameUrl)?.title || t('library.cloudSaves.gameFallback'))
     : null
 
   return (
@@ -58,19 +60,19 @@ export function CloudSavesBanner({ banner, games, onOpenBackups, onClose }: Clou
           : banner.message}
         {banner.conflict && (
           <span style={{ marginLeft: 8, opacity: 0.85, fontSize: 12 }}>
-            (conflito detectado)
+            {t('library.cloudSaves.conflictDetected')}
           </span>
         )}
       </div>
       {banner.gameUrl && (
         <button className="btn ghost" onClick={onOpenBackups} style={{ fontSize: 12 }}>
-          Ver backups
+          {t('library.cloudSaves.viewBackups')}
         </button>
       )}
       <button
         className="btn ghost"
         onClick={onClose}
-        title="Fechar"
+        title={t('login.close')}
         style={{ paddingInline: 8, opacity: 0.7 }}
       >
         ✕

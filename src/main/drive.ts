@@ -726,7 +726,7 @@ function getLocalFolderLatestMtime(folder: string): string | null {
   }
 }
 
-// ✅ NOVO: Função para obter a data do save mais recente como objeto Date (solução para o erro 1)
+// Return the latest save timestamp as a Date object.
 async function getLatestLocalSaveTime(savesPath: string): Promise<Date | null> {
   const mtimeIso = getLocalFolderLatestMtime(savesPath)
   return mtimeIso ? new Date(mtimeIso) : null
@@ -762,9 +762,9 @@ async function extractZipTo(zipPath: string, destDir: string): Promise<void> {
   } catch (e) {
     throw new Error('Dependência ausente: extract-zip. Instale com `npm i extract-zip`.')
   }
-  // A extração deve ser feita no diretório-alvo. 
-  // Se o zip contiver uma pasta raiz, isso pode ser um problema (extract-zip lida com isso se você extrair para um dir temporário e depois copiar).
-  // Seus passos já usam um dir temporário, o que é bom.
+  // Extraction must happen in the target directory.
+  // If the zip contains a root folder, this can be an issue; callers that need
+  // flattening should extract to a temporary directory first and then copy.
   await extract(zipPath, { dir: destDir })
 }
 
@@ -808,15 +808,15 @@ export async function downloadAndExtractSaveTo(fileId: string, targetFolder: str
     const dres = await downloadSave(fileId, tmpPath)
     if (!dres.success) return dres
 
-    // 1. Cria um diretório temporário para extração
+    // 1. Create a temporary extraction directory.
     const extractDir = path.join(app.getPath('temp'), `ofsave_extract_${fileId}`)
     try { fs.rmSync(extractDir, { recursive: true, force: true }) } catch {}
     fs.mkdirSync(extractDir, { recursive: true })
 
-    // 2. Extrai o zip para o diretório temporário
+    // 2. Extract the zip into the temporary directory.
     await extractZipTo(tmpPath, extractDir)
 
-    // 3. Copia recursivamente do diretório temporário para o diretório alvo (sobrescrevendo)
+    // 3. Recursively copy from the temporary directory to the target directory, overwriting existing files.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     let fse: any
     try {
@@ -825,8 +825,7 @@ export async function downloadAndExtractSaveTo(fileId: string, targetFolder: str
       throw new Error('Dependência ausente: fs-extra. Instale com `npm i fs-extra`.')
     }
     
-    // Antes de copiar, limpe o diretório alvo se ele existir e não estiver vazio. 
-    // Isso garante uma restauração limpa.
+    // Empty the target directory before copying to guarantee a clean restore.
     if (fs.existsSync(targetFolder)) {
       await fse.emptyDir(targetFolder)
     } else {
@@ -880,7 +879,7 @@ export async function syncSavesOnPlayStart(options: {
       return { success: false, message: 'Não foi possível determinar pasta de saves local.' }
     }
     
-    // ✅ LOGS E LÓGICA NOVO: Separa a leitura de IDs para logs melhores
+    // Read IDs separately to produce clearer logs.
     const ridFromOptions = options.realAppId
     const ridFromIni = readRealAppIdFromOnlineFixIni(options.installPath || '')
     const rid = ridFromOptions || ridFromIni
@@ -895,47 +894,47 @@ export async function syncSavesOnPlayStart(options: {
     
     console.log(`[DRIVE-SYNC-LOGIC] Saves Path: ${savesPath} | RealAppId FINAL: ${rid}`)
     
-    // LOG NOVO 1: Verifica a existência da pasta de saves local
+    // Log whether the local saves folder exists.
     const savesPathExists = fs.existsSync(savesPath)
     console.log(`[DRIVE-SYNC-LOGIC] Saves Path Existe: ${savesPathExists}`)
 
-    // Esta função deve retornar 'null' se a pasta não existe ou está vazia.
+    // This returns null when the folder does not exist or is empty.
     const localDate = await getLatestLocalSaveTime(savesPath) 
     
-    // Busca o save remoto mais recente
+    // Fetch the newest remote save.
     const remote = await getNewestRemoteSave(rid)
     const remoteDate = remote?.modifiedTime ? new Date(remote.modifiedTime) : null
 
-    // LOG NOVO 2: Verifica o resultado da busca remota
+    // Log the remote lookup result.
     console.log(`[DRIVE-SYNC-LOGIC] Remote Search Result: ${remote ? 'Encontrado' : 'NULO'}`)
     
-    // LOG 18 & 19: As datas finais
+    // Log the final timestamps.
     console.log(`[DRIVE-SYNC-LOGIC] Local Date: ${localDate?.toISOString() || 'NULL'}`)
     console.log(`[DRIVE-SYNC-LOGIC] Remote Date: ${remoteDate?.toISOString() || 'NULL'}`)
 
-    // A. Não há saves (local e remoto)
+    // A. No local or remote saves.
     if (!localDate && !remoteDate) { 
       console.log('[DRIVE-SYNC-LOGIC] Não há saves locais nem remotos. Nada a fazer.')
       return { success: true, message: 'Nenhum save local ou remoto encontrado.' }
     }
     
-    // B. Upload: Local é mais novo ou remoto não existe (mas local existe)
+    // B. Upload: local save is newer or remote save does not exist.
     if (localDate && (!remoteDate || localDate.getTime() > remoteDate.getTime())) {
       console.log('[DRIVE-SYNC-LOGIC] Decisão: Local é mais novo. Fazendo Backup (Upload).')
       return await backupLocalSavesToDrive({ ...options, realAppId: rid })
     }
 
-    // C. Download: Remote é mais novo OU Remote existe e Local não existe (localDate é NULL)
+    // C. Download: remote save is newer, or remote exists while local does not.
     if (remoteDate && (!localDate || remoteDate.getTime() > localDate.getTime())) {
       console.log('[DRIVE-SYNC-LOGIC] Decisão: Remote é mais novo/Local não existe. Fazendo Download.')
       
-      // LOG NOVO 3: Confirma se a função de download será chamada
+      // Log that the download function is about to be called.
       console.log(`[DRIVE-SYNC-LOGIC] Chamando downloadAndExtractSaveTo(fileId: ${remote!.id}, destPath: ${savesPath})`)
       
       return await downloadAndExtractSaveTo(remote!.id, savesPath)
     }
 
-    // D. Saves Sincronizados
+    // D. Saves are already synchronized.
     console.log('[DRIVE-SYNC-LOGIC] Decisão: Saves estão sincronizados (datas iguais).')
     return { success: true, message: 'Saves estão sincronizados.' }
 
@@ -945,7 +944,7 @@ export async function syncSavesOnPlayStart(options: {
   }
 }
 
-// ✅ NOVO: Sempre tentar subir saves ao fechar o jogo (é isso que fazia sua pasta ficar vazia)
+// Always try to upload saves when the game closes.
 export async function syncSavesOnPlayEnd(options: { protonPrefix?: string; installPath?: string; realAppId?: string }) {
   try {
     const savesPath = getSavesPathForGame(options)

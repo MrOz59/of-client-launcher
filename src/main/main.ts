@@ -79,7 +79,7 @@ import os from 'os'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { importCookies, exportCookies } from './cookieManager.js'
-import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo } from './scraper.js'
+import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo, UNSUPPORTED_MICROSOFT_STORE_ERROR } from './scraper.js'
 import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
 import { shouldBlockRequest } from './easylist-filters.js'
@@ -939,14 +939,14 @@ async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, ins
     try {
       const game = getGame(gameUrl) as any
 
-      // Se já tem prefixo, não precisa criar
+      // If a prefix already exists, there is nothing to create.
       if (game?.proton_prefix) return true
 
       const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
       const slug = stableId ? `game_${stableId}` : slugify(title || game?.title || gameUrl || 'game')
       const runtime = (game?.proton_runtime as string | null) || findProtonRuntime() || undefined
 
-      // Enviar feedback visual para o usuário
+      // Send visual feedback to the user.
       sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo do Proton...' })
 
       const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
@@ -1118,6 +1118,10 @@ async function handleExternalDownload(url: string) {
     if (referer && referer.includes('online-fix.me') && !referer.includes('/torrents/')) {
       console.log('[Launcher] Scraping game info from referer:', referer)
       const gameInfo = await scrapeGameInfo(referer)
+      if (gameInfo.store?.unsupportedOnLinux) {
+        console.warn('[Launcher] Blocking Microsoft Store game download:', referer, gameInfo.store)
+        throw new Error(UNSUPPORTED_MICROSOFT_STORE_ERROR)
+      }
       if (gameInfo.title) title = gameInfo.title
       if (gameInfo.version) version = gameInfo.version
     }

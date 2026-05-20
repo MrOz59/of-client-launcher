@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { AlertCircle, Bell, Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2, Terminal } from 'lucide-react'
+import { useI18n, type SupportedLanguage } from '../i18n'
 
 interface Settings {
   downloadPath: string
@@ -60,6 +61,7 @@ function settingsSnapshot(settings: Settings) {
 }
 
 export default function SettingsTab() {
+  const { t, language, setLanguage, supportedLanguages } = useI18n()
   const [platformInfo, setPlatformInfo] = useState<{ platform: string; isLinux: boolean }>({
     platform: 'unknown',
     isLinux: false
@@ -87,7 +89,7 @@ export default function SettingsTab() {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [savedSnapshot, setSavedSnapshot] = useState('')
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: 'idle', message: 'Sem alterações' })
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: 'idle', message: t('settings.save.idle') })
   const [launcherDiagnostics, setLauncherDiagnostics] = useState<LauncherDiagnostics | null>(null)
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
 
@@ -164,7 +166,7 @@ export default function SettingsTab() {
       setPlatformInfo({ platform: String(res?.platform || 'unknown'), isLinux })
       return isLinux
     } catch (err: any) {
-      setSaveStatus({ state: 'error', message: err?.message || 'Falha ao carregar configurações' })
+      setSaveStatus({ state: 'error', message: err?.message || t('settings.save.error') })
       return false
     } finally {
       setLoading(false)
@@ -178,18 +180,18 @@ export default function SettingsTab() {
 
   useEffect(() => {
     if (hasUnsavedChanges && saveStatus.state !== 'saving' && saveStatus.state !== 'error') {
-      setSaveStatus({ state: 'pending', message: 'Alterações não salvas' })
+      setSaveStatus({ state: 'pending', message: t('settings.save.pending') })
     } else if (!hasUnsavedChanges && saveStatus.state === 'pending') {
-      setSaveStatus({ state: 'idle', message: 'Sem alterações' })
+      setSaveStatus({ state: 'idle', message: t('settings.save.idle') })
     }
-  }, [hasUnsavedChanges, saveStatus.state])
+  }, [hasUnsavedChanges, saveStatus.state, t])
 
   const loadLauncherDiagnostics = async () => {
     setDiagnosticsLoading(true)
     try {
       const res = await window.electronAPI.getLauncherDiagnostics()
       if (res.success) setLauncherDiagnostics(res.diagnostics || null)
-      else setLauncherDiagnostics({ error: res.error || 'Falha ao diagnosticar launcher', checks: [] })
+      else setLauncherDiagnostics({ error: res.error || t('settings.launcherDiagnostics.failed'), checks: [] })
     } catch (err: any) {
       setLauncherDiagnostics({ error: err?.message || String(err), checks: [] })
     } finally {
@@ -260,21 +262,21 @@ export default function SettingsTab() {
 
   const saveSettings = async () => {
     setSaving(true)
-    setSaveStatus({ state: 'saving', message: 'Salvando configurações...' })
+    setSaveStatus({ state: 'saving', message: t('settings.save.saving') })
     try {
       const res = await window.electronAPI.saveSettings(settings)
       if (!res.success) {
-        setSaveStatus({ state: 'error', message: res.error || 'Falha ao salvar configurações' })
+        setSaveStatus({ state: 'error', message: res.error || t('settings.save.error') })
       } else {
         await loadSettings()
         if (platformInfo.isLinux) {
           refreshRuntimes()
         }
         loadLauncherDiagnostics()
-        setSaveStatus({ state: 'saved', message: 'Configurações salvas' })
+        setSaveStatus({ state: 'saved', message: t('settings.save.saved') })
       }
     } catch (err: any) {
-      setSaveStatus({ state: 'error', message: err?.message || 'Falha ao salvar configurações' })
+      setSaveStatus({ state: 'error', message: err?.message || t('settings.save.error') })
     } finally {
       setSaving(false)
     }
@@ -285,7 +287,7 @@ export default function SettingsTab() {
   // =========================
 
   const driveAuth = async () => {
-    setDriveStatusTimed('Iniciando autenticação...')
+    setDriveStatusTimed(t('settings.cloud.authStarting'))
     try {
       const res = await window.electronAPI.driveAuth()
       if (res.success) {
@@ -295,28 +297,28 @@ export default function SettingsTab() {
         const err = String((res as any)?.ludusaviError || '').trim()
 
         if (prepared === true) {
-          setDriveStatusTimed(downloaded ? 'Autenticado (Ludusavi baixado e pronto)' : 'Autenticado (Ludusavi pronto)')
+          setDriveStatusTimed(downloaded ? t('settings.cloud.authenticatedDownloaded') : t('settings.cloud.authenticatedReady'))
         } else if (prepared === false) {
-          setDriveStatusTimed('Autenticado, mas falhou preparar Ludusavi' + (err ? ': ' + err : ''), 9000)
+          setDriveStatusTimed(t('settings.cloud.authLudusaviFailed') + (err ? ': ' + err : ''), 9000)
         } else {
-          setDriveStatusTimed('Autenticado')
+          setDriveStatusTimed(t('settings.cloud.authenticated'))
         }
       } else {
-        setDriveStatusTimed('Erro: ' + (res.message || ''))
+        setDriveStatusTimed(t('settings.errorPrefix', { message: res.message || '' }))
         setDriveConnected(false)
       }
     } catch (e) {
-      setDriveStatusTimed('Erro: ' + String(e))
+      setDriveStatusTimed(t('settings.errorPrefix', { message: String(e) }))
       setDriveConnected(false)
     }
   }
 
   const driveList = async () => {
-    setDriveStatusTimed('Listando...')
+    setDriveStatusTimed(t('settings.cloud.listing'))
     try {
       const res = await window.electronAPI.driveListSaves()
 
-      // Compat: alguns handlers retornam array direto, outros retornam {success, files}
+      // Compatibility: some handlers return the array directly, others return {success, files}.
       if (Array.isArray(res)) {
         setDriveFiles(res as DriveFile[])
         setDriveStatusTimed('OK')
@@ -325,52 +327,63 @@ export default function SettingsTab() {
         setDriveStatusTimed('OK')
       } else if (res && typeof res === 'object' && res.error) {
         setDriveFiles(null)
-        setDriveStatusTimed('Erro: ' + String(res.error))
+        setDriveStatusTimed(t('settings.errorPrefix', { message: String(res.error) }))
       } else if (res && typeof res === 'object' && res.success === false) {
         setDriveFiles(null)
-        setDriveStatusTimed('Erro: ' + String(res.message || res.error || 'Falha ao listar'))
+        setDriveStatusTimed(t('settings.errorPrefix', { message: String(res.message || res.error || t('downloads.status.error')) }))
       } else {
         setDriveFiles(null)
-        setDriveStatusTimed('Erro: resposta inesperada')
+        setDriveStatusTimed(t('settings.errorPrefix', { message: t('settings.cloud.unexpectedResponse') }))
       }
     } catch (e) {
       setDriveFiles(null)
-      setDriveStatusTimed('Erro: ' + String(e))
+      setDriveStatusTimed(t('settings.errorPrefix', { message: String(e) }))
     }
   }
 
   const driveDownload = async (fileId: string, fileName: string) => {
-    setDriveStatusTimed('Baixando...', 4500)
+    setDriveStatusTimed(t('downloads.status.downloading') + '...', 4500)
     try {
       const safeName = String(fileName || 'save.zip').replace(/[\/\\]/g, '_')
       const dest = `${settings.downloadPath}/${safeName}`
       const res = await window.electronAPI.driveDownloadSave(fileId, dest)
-      if (res.success) setDriveStatusTimed('Baixado em: ' + dest, 4500)
-      else setDriveStatusTimed('Erro: ' + (res.message || ''), 4500)
+      if (res.success) setDriveStatusTimed(t('settings.cloud.downloadedTo', { path: dest }), 4500)
+      else setDriveStatusTimed(t('settings.errorPrefix', { message: res.message || '' }), 4500)
     } catch (e) {
-      setDriveStatusTimed('Erro: ' + String(e), 4500)
+      setDriveStatusTimed(t('settings.errorPrefix', { message: String(e) }), 4500)
     }
   }
 
   const gamesPathHint = settings.gamesPathDefault
-    ? `Padrão: ${settings.gamesPathDefault}`
-    : 'Padrão: ~/Games/VoidLauncher'
+    ? t('settings.path.default', { path: settings.gamesPathDefault })
+    : t('settings.path.default', { path: '~/Games/VoidLauncher' })
   const downloadPathHint = settings.downloadPathDefault
-    ? `Padrão: ${settings.downloadPathDefault}`
-    : 'Padrão: ~/Downloads'
+    ? t('settings.path.default', { path: settings.downloadPathDefault })
+    : t('settings.path.default', { path: '~/Downloads' })
   const diagnosticSummary = launcherDiagnostics ? [
-    ['Plataforma', launcherDiagnostics.app?.platform || platformInfo.platform],
-    ['Proton', launcherDiagnostics.linux?.protonRuntime ? 'OK' : platformInfo.isLinux ? 'Pendente' : 'N/A'],
+    [t('settings.launcherDiagnostics.platform'), launcherDiagnostics.app?.platform || platformInfo.platform],
+    ['Proton', launcherDiagnostics.linux?.protonRuntime ? 'OK' : platformInfo.isLinux ? t('library.configModal.diagnostics.pending') : 'N/A'],
     ['Torrent agent', launcherDiagnostics.tools?.torrentAgentPath ? 'OK' : 'Fallback'],
-    ['Ludusavi', launcherDiagnostics.tools?.ludusaviPath ? 'OK' : 'Ausente']
+    ['Ludusavi', launcherDiagnostics.tools?.ludusaviPath ? 'OK' : t('common.missing')]
   ] : []
+
+  const saveStatusText = (() => {
+    switch (saveStatus.state) {
+      case 'idle': return t('settings.save.idle')
+      case 'pending': return t('settings.save.pending')
+      case 'saving': return t('settings.save.saving')
+      case 'saved': return t('settings.save.saved')
+      case 'error': return saveStatus.message || t('settings.save.error')
+      default: return saveStatus.message
+    }
+  })()
 
   return (
     <div className="settings-page">
       {loading && (
         <div className="settings-loading">
           <RefreshCw size={20} className="of-spin" />
-          <span>Carregando configurações...</span>
+          <span>{t('settings.loading')}</span>
         </div>
       )}
 
@@ -380,8 +393,8 @@ export default function SettingsTab() {
           <Settings2 size={24} />
         </div>
         <div>
-          <h1>Configurações</h1>
-          <p>Personalize o VoidLauncher de acordo com suas preferências</p>
+          <h1>{t('settings.title')}</h1>
+          <p>{t('settings.subtitle')}</p>
         </div>
       </div>
 
@@ -389,18 +402,46 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Settings2 size={18} />
-          <h3>Geral</h3>
+          <h3>{t('settings.general.title')}</h3>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-item">
             <div className="settings-card-info">
               <div className="settings-card-title">
-                <Minimize2 size={16} />
-                Minimizar para bandeja
+                <Globe size={16} />
+                {t('settings.language.title')}
               </div>
               <div className="settings-card-description">
-                Ao fechar a janela, manter o launcher rodando na bandeja do sistema
+                {t('settings.language.description')}
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <div className="settings-select-wrapper">
+                <select
+                  className="settings-select settings-select-compact"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as SupportedLanguage)}
+                >
+                  {supportedLanguages.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.nativeLabel}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="settings-select-icon" />
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Minimize2 size={16} />
+                {t('settings.minimizeToTray.title')}
+              </div>
+              <div className="settings-card-description">
+                {t('settings.minimizeToTray.description')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -419,10 +460,10 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 <Bell size={16} />
-                Notificações
+                {t('settings.notifications.title')}
               </div>
               <div className="settings-card-description">
-                Exibe avisos de conquistas, downloads e eventos importantes do launcher.
+                {t('settings.notifications.description')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -439,9 +480,9 @@ export default function SettingsTab() {
 
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Posição das notificações</div>
+              <div className="settings-card-title">{t('settings.notificationPosition.title')}</div>
               <div className="settings-card-description">
-                Define onde os avisos aparecem na tela.
+                {t('settings.notificationPosition.description')}
               </div>
             </div>
             <div className="settings-card-control settings-actions-column">
@@ -451,16 +492,16 @@ export default function SettingsTab() {
                   value={settings.notificationPosition || 'bottom-right'}
                   onChange={(e) => setSettings({ ...settings, notificationPosition: e.target.value })}
                 >
-                  <option value="bottom-right">Inferior direita</option>
-                  <option value="bottom-left">Inferior esquerda</option>
-                  <option value="top-right">Superior direita</option>
-                  <option value="top-left">Superior esquerda</option>
+                  <option value="bottom-right">{t('settings.notificationPosition.bottomRight')}</option>
+                  <option value="bottom-left">{t('settings.notificationPosition.bottomLeft')}</option>
+                  <option value="top-right">{t('settings.notificationPosition.topRight')}</option>
+                  <option value="top-left">{t('settings.notificationPosition.topLeft')}</option>
                 </select>
                 <ChevronDown size={16} className="settings-select-icon" />
               </div>
               <button className="settings-btn ghost" onClick={() => window.electronAPI.testNotification('info')}>
                 <Bell size={14} />
-                Testar
+                {t('common.test')}
               </button>
             </div>
           </div>
@@ -471,7 +512,7 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Download size={18} />
-          <h3>Downloads</h3>
+          <h3>{t('settings.downloads.title')}</h3>
         </div>
 
         <div className="settings-card">
@@ -479,10 +520,10 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 <HardDrive size={16} />
-                Pasta de jogos
+                {t('settings.downloads.gamesPath')}
               </div>
               <div className="settings-card-description">
-                Local onde os jogos serão instalados. {gamesPathHint}
+                {t('settings.downloads.gamesPathDescription', { hint: gamesPathHint })}
               </div>
             </div>
             <div className="settings-card-control">
@@ -496,10 +537,10 @@ export default function SettingsTab() {
                 />
                 <button className="settings-btn secondary" onClick={selectGamesPath}>
                   <Folder size={14} />
-                  Selecionar
+                  {t('common.select')}
                 </button>
                 <button className="settings-btn ghost" onClick={() => setSettings({ ...settings, gamesPath: '' })}>
-                  Usar padrão
+                  {t('common.useDefault')}
                 </button>
               </div>
             </div>
@@ -509,10 +550,10 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 <Download size={16} />
-                Pasta de downloads
+                {t('settings.downloads.downloadPath')}
               </div>
               <div className="settings-card-description">
-                Local onde os arquivos serão baixados. {downloadPathHint}
+                {t('settings.downloads.downloadPathDescription', { hint: downloadPathHint })}
               </div>
             </div>
             <div className="settings-card-control">
@@ -526,10 +567,10 @@ export default function SettingsTab() {
                 />
                 <button className="settings-btn secondary" onClick={selectDownloadPath}>
                   <Folder size={14} />
-                  Selecionar
+                  {t('common.select')}
                 </button>
                 <button className="settings-btn ghost" onClick={() => setSettings({ ...settings, downloadPath: '' })}>
-                  Usar padrão
+                  {t('common.useDefault')}
                 </button>
               </div>
             </div>
@@ -537,9 +578,9 @@ export default function SettingsTab() {
 
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Extrair automaticamente</div>
+              <div className="settings-card-title">{t('settings.downloads.autoExtract')}</div>
               <div className="settings-card-description">
-                Extrai arquivos comprimidos automaticamente após o download
+                {t('settings.downloads.autoExtractDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -556,9 +597,9 @@ export default function SettingsTab() {
 
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Downloads paralelos</div>
+              <div className="settings-card-title">{t('settings.downloads.parallel')}</div>
               <div className="settings-card-description">
-                Número máximo de downloads simultâneos
+                {t('settings.downloads.parallelDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -582,15 +623,15 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <RefreshCw size={18} />
-          <h3>Atualizações</h3>
+          <h3>{t('settings.updates.title')}</h3>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Verificar updates ao abrir a biblioteca</div>
+              <div className="settings-card-title">{t('settings.updates.autoCheck')}</div>
               <div className="settings-card-description">
-                Atualiza metadados de versão quando a biblioteca é aberta. Downloads continuam sendo iniciados manualmente.
+                {t('settings.updates.autoCheckDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -610,7 +651,7 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Key size={18} />
-          <h3>Conquistas / Steam</h3>
+          <h3>{t('settings.achievements.title')}</h3>
         </div>
 
         <div className="settings-card">
@@ -621,7 +662,7 @@ export default function SettingsTab() {
                 Steam Web API Key
               </div>
               <div className="settings-card-description">
-                Necessária para baixar o schema completo de conquistas via API oficial da Steam.
+                {t('settings.achievements.steamKeyDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -630,7 +671,7 @@ export default function SettingsTab() {
                 className="settings-input"
                 value={settings.steamWebApiKey || ''}
                 onChange={(e) => setSettings({ ...settings, steamWebApiKey: e.target.value })}
-                placeholder="Cole sua Steam Web API Key aqui"
+                placeholder={t('settings.achievements.steamKeyPlaceholder')}
               />
             </div>
           </div>
@@ -639,10 +680,10 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 <Link size={16} />
-                Schema comunitário (conquistas)
+                {t('settings.achievements.communitySchema')}
               </div>
               <div className="settings-card-description">
-                Opcional. URL base que disponibiliza <code>&lt;appid&gt;.json</code> com nome/descrição das conquistas.
+                {t('settings.achievements.communitySchemaDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -651,7 +692,7 @@ export default function SettingsTab() {
                 className="settings-input"
                 value={settings.achievementSchemaBaseUrl || ''}
                 onChange={(e) => setSettings({ ...settings, achievementSchemaBaseUrl: e.target.value })}
-                placeholder="Ex: https://meu-servidor/schemas"
+                placeholder={t('settings.achievements.communitySchemaPlaceholder')}
               />
             </div>
           </div>
@@ -663,7 +704,7 @@ export default function SettingsTab() {
         <div className="settings-section">
           <div className="settings-section-header">
             <Monitor size={18} />
-            <h3>Proton (Linux)</h3>
+            <h3>{t('settings.proton.title')}</h3>
           </div>
 
           <div className="settings-card">
@@ -671,10 +712,10 @@ export default function SettingsTab() {
               <div className="settings-card-info">
                 <div className="settings-card-title">
                   <Gamepad2 size={16} />
-                  Proton padrão
+                  {t('settings.proton.default')}
                 </div>
                 <div className="settings-card-description">
-                  Runtime usado por padrão para jogos Windows no Linux. O launcher também procura Protons da Steam, Heroic e caminhos extras.
+                  {t('settings.proton.defaultDescription')}
                 </div>
               </div>
               <div className="settings-proton-control">
@@ -685,7 +726,7 @@ export default function SettingsTab() {
                     onChange={(e) => setSettings({ ...settings, protonDefaultRuntimePath: e.target.value })}
                     title={selectedRuntimeTitle}
                   >
-                    <option value="">Auto (recomendado)</option>
+                    <option value="">{t('settings.proton.autoRecommended')}</option>
                     {runtimes.map((rt) => (
                       <option key={rt.runner} value={rt.path}>
                         {rt.name} • {shortenPathForLabel(rt.path)}
@@ -697,11 +738,11 @@ export default function SettingsTab() {
                 <div className="settings-btn-row">
                   <button className="settings-btn ghost" onClick={() => refreshRuntimes(true)}>
                     <RefreshCw size={14} />
-                    Recarregar
+                    {t('settings.proton.reload')}
                   </button>
                   <button className="settings-btn ghost" onClick={addProtonSearchPath}>
                     <FolderPlus size={14} />
-                    Adicionar caminho
+                    {t('settings.proton.addPath')}
                   </button>
                 </div>
               </div>
@@ -710,9 +751,9 @@ export default function SettingsTab() {
             {(settings.protonExtraPaths || []).length > 0 && (
               <div className="settings-card-item vertical">
                 <div className="settings-card-info">
-                  <div className="settings-card-title">Caminhos extras</div>
+                  <div className="settings-card-title">{t('settings.proton.extraPaths')}</div>
                   <div className="settings-card-description">
-                    Diretórios adicionais onde existam instalações do Proton.
+                    {t('settings.proton.extraPathsDescription')}
                   </div>
                 </div>
                 <div className="settings-paths-list">
@@ -741,22 +782,22 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Globe size={18} />
-          <h3>VPN / LAN Online</h3>
+          <h3>{t('settings.vpn.title')}</h3>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Sala padrão (código)</div>
+              <div className="settings-card-title">{t('settings.vpn.defaultRoom')}</div>
               <div className="settings-card-description">
-                Usado para conectar automaticamente ao abrir o jogo (se habilitado por jogo). Deixe vazio se você só cria/entra manualmente.
+                {t('settings.vpn.defaultRoomDescription')}
               </div>
             </div>
             <div className="settings-card-control">
               <input
                 type="text"
                 className="settings-input"
-                placeholder="(opcional) Código da sala"
+                placeholder={t('settings.vpn.defaultRoomPlaceholder')}
                 value={settings.lanDefaultNetworkId || ''}
                 onChange={(e) => setSettings((prev) => ({ ...prev, lanDefaultNetworkId: e.target.value }))}
               />
@@ -770,7 +811,7 @@ export default function SettingsTab() {
                 VPN Controller URL
               </div>
               <div className="settings-card-description">
-                Por padrão: <code>https://vpn.mroz.dev.br</code>. Só altere se você estiver rodando seu próprio controller.
+                {t('settings.vpn.controllerDescription', { url: 'https://vpn.mroz.dev.br' })}
               </div>
             </div>
             <div className="settings-card-control">
@@ -790,7 +831,7 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Cloud size={18} />
-          <h3>Cloud Saves (Google Drive)</h3>
+          <h3>{t('settings.cloud.title')}</h3>
         </div>
 
         <div className="settings-card">
@@ -798,16 +839,16 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 {driveConnected ? <Cloud size={16} /> : <CloudOff size={16} />}
-                Status da conexão
+                {t('settings.cloud.connectionStatus')}
               </div>
               <div className="settings-card-description">
-                Conecte sua conta Google para salvar/restaurar backups.
+                {t('settings.cloud.connectionDescription')}
               </div>
             </div>
             <div className="settings-card-control settings-actions-column">
               <div className={`settings-status-badge ${driveConnected ? 'connected' : 'disconnected'}`}>
                 {driveConnected ? <Check size={14} /> : <X size={14} />}
-                {driveConnected ? 'Conectado ao Google Drive' : 'Não conectado'}
+                {driveConnected ? t('settings.cloud.connected') : t('settings.cloud.disconnected')}
               </div>
               {driveStatus && (
                 <div className="settings-status-message">{driveStatus}</div>
@@ -815,7 +856,7 @@ export default function SettingsTab() {
               <div className="settings-btn-row">
                 <button className="settings-btn secondary" onClick={driveAuth}>
                   <Cloud size={14} />
-                  Conectar
+                  {t('settings.cloud.connect')}
                 </button>
                 <button
                   className="settings-btn ghost"
@@ -824,21 +865,21 @@ export default function SettingsTab() {
                       const res = await window.electronAPI.driveDisconnect()
                       if (res?.success) {
                         setDriveConnected(false)
-                        setDriveStatusTimed('Desconectado')
+                        setDriveStatusTimed(t('settings.cloud.disconnectedStatus'))
                       } else {
-                        setDriveStatusTimed('Erro: ' + (res?.message || 'Falha ao desconectar'))
+                        setDriveStatusTimed(t('settings.errorPrefix', { message: res?.message || t('library.vpn.disconnectFailed') }))
                       }
                     } catch (e: any) {
-                      setDriveStatusTimed('Erro: ' + (e?.message || String(e)))
+                      setDriveStatusTimed(t('settings.errorPrefix', { message: e?.message || String(e) }))
                     }
                   }}
                   disabled={!driveConnected}
                 >
-                  Desconectar
+                  {t('settings.cloud.disconnect')}
                 </button>
                 <button className="settings-btn ghost" onClick={driveList}>
                   <RefreshCw size={14} />
-                  Listar backups
+                  {t('settings.cloud.listBackups')}
                 </button>
               </div>
             </div>
@@ -846,9 +887,9 @@ export default function SettingsTab() {
 
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">Sincronização automática</div>
+              <div className="settings-card-title">{t('settings.cloud.syncAutomatic')}</div>
               <div className="settings-card-description">
-                Sincroniza saves automaticamente ao iniciar e fechar jogos (estilo Steam Cloud).
+                {t('settings.cloud.syncAutomaticDescription')}
               </div>
             </div>
             <div className="settings-card-control">
@@ -866,15 +907,15 @@ export default function SettingsTab() {
           {driveFiles && driveFiles.length > 0 && (
             <div className="settings-card-item vertical">
               <div className="settings-card-info settings-card-info-spaced">
-                <div className="settings-card-title">Backups no Drive</div>
+                <div className="settings-card-title">{t('settings.cloud.driveBackups')}</div>
                 <div className="settings-card-description">
-                  Lista dos arquivos dentro da pasta <code>OF-Client-Saves</code> no seu Drive.
+                  {t('settings.cloud.driveBackupsDescription')}
                 </div>
               </div>
               <div className="settings-drive-list">
                 <div className="settings-drive-list-header">
-                  <div>Arquivo</div>
-                  <div>Modificado</div>
+                  <div>{t('settings.cloud.file')}</div>
+                  <div>{t('settings.cloud.modified')}</div>
                   <div></div>
                 </div>
                 {driveFiles.map(f => (
@@ -884,7 +925,7 @@ export default function SettingsTab() {
                     <div>
                       <button className="settings-btn ghost sm" onClick={() => driveDownload(f.id, f.name)}>
                         <Download size={12} />
-                        Baixar
+                        {t('downloads.status.downloading')}
                       </button>
                     </div>
                   </div>
@@ -896,7 +937,7 @@ export default function SettingsTab() {
           {driveFiles && driveFiles.length === 0 && (
             <div className="settings-empty-state">
               <CloudOff size={32} />
-              <span>Nenhum backup encontrado no Drive</span>
+              <span>{t('settings.cloud.noBackups')}</span>
             </div>
           )}
         </div>
@@ -905,7 +946,7 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Terminal size={18} />
-          <h3>Diagnóstico do launcher</h3>
+          <h3>{t('settings.launcherDiagnostics.title')}</h3>
         </div>
 
         <div className="settings-card">
@@ -913,17 +954,17 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">
                 <Terminal size={16} />
-                Compatibilidade e ferramentas
+                {t('settings.launcherDiagnostics.compatTools')}
               </div>
               <div className="settings-card-description">
-                Verifica paths, torrent agent, Cloud Saves, Proton, Steam Overlay, EOS Overlay, Wayland e Gamescope.
+                {t('settings.launcherDiagnostics.description')}
               </div>
             </div>
 
             <div className="settings-btn-row">
               <button className="settings-btn secondary" onClick={loadLauncherDiagnostics} disabled={diagnosticsLoading}>
                 <RefreshCw size={14} className={diagnosticsLoading ? 'of-spin' : ''} />
-                Atualizar diagnóstico
+                {t('settings.launcherDiagnostics.refresh')}
               </button>
             </div>
 
@@ -962,7 +1003,7 @@ export default function SettingsTab() {
             ) : (
               <div className="settings-empty-state">
                 <Terminal size={32} />
-                <span>Diagnóstico ainda não carregado</span>
+                <span>{t('settings.launcherDiagnostics.notLoaded')}</span>
               </div>
             )}
           </div>
@@ -973,7 +1014,7 @@ export default function SettingsTab() {
       <div className="settings-section">
         <div className="settings-section-header">
           <Info size={18} />
-          <h3>Sobre</h3>
+          <h3>{t('settings.about.title')}</h3>
         </div>
 
         <div className="settings-card">
@@ -981,7 +1022,7 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">VoidLauncher</div>
               <div className="settings-card-description">
-                Versão 0.2.0 • Protótipo em desenvolvimento
+                {t('settings.about.version')}
               </div>
             </div>
             <div className="settings-version-badge">v0.2.0</div>
@@ -992,7 +1033,7 @@ export default function SettingsTab() {
       {/* Save Button */}
       <div className="settings-footer">
         <div className="config-save-pill" data-status={saveStatus.state}>
-          {saveStatus.message}
+          {saveStatusText}
         </div>
         <button
           className="settings-btn primary lg"
@@ -1000,9 +1041,9 @@ export default function SettingsTab() {
           disabled={saving || !hasUnsavedChanges}
         >
           {saving ? (
-            <><RefreshCw size={16} className="of-spin" /> Salvando...</>
+            <><RefreshCw size={16} className="of-spin" /> {t('settings.save.buttonSaving')}</>
           ) : (
-            <><Check size={16} /> Salvar Configurações</>
+            <><Check size={16} /> {t('settings.save.button')}</>
           )}
         </button>
       </div>

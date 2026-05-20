@@ -107,6 +107,108 @@ export function findArchive(startPath: string): { archivePath?: string; destDir:
 /**
  * Find executable in directory with scoring to select the best one
  */
+export function findEpicAuthLauncherInDir(dir: string): string | null {
+  const root = String(dir || '').trim()
+  if (!root) return null
+
+  const exactNames = [
+    'eosauthlauncher.exe',
+    'eosauthlauncher-win64-shipping.exe',
+    'eosauthlauncher-win32-shipping.exe'
+  ]
+
+  try {
+    const candidates: Array<{ path: string; depth: number; score: number }> = []
+
+    function scanDir(currentDir: string, depth: number = 0) {
+      if (depth > 4) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(currentDir, { withFileTypes: true })
+      } catch {
+        return
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name)
+        const nameLower = entry.name.toLowerCase()
+
+        if (entry.isDirectory()) {
+          const skipDirs = ['__macosx', 'redist', 'directx', '_commonredist', 'vcredist', 'support', 'dotnet']
+          if (!skipDirs.includes(nameLower)) scanDir(fullPath, depth + 1)
+          continue
+        }
+
+        if (!entry.isFile() || !nameLower.endsWith('.exe')) continue
+        const exactIdx = exactNames.indexOf(nameLower)
+        const looksLikeAuthLauncher =
+          exactIdx >= 0 ||
+          (nameLower.includes('eos') && nameLower.includes('auth') && nameLower.includes('launcher'))
+        if (!looksLikeAuthLauncher) continue
+
+        let score = exactIdx >= 0 ? 100 - exactIdx * 10 : 50
+        score += (4 - depth) * 5
+        candidates.push({ path: fullPath, depth, score })
+      }
+    }
+
+    scanDir(root)
+    candidates.sort((a, b) => (b.score - a.score) || (a.depth - b.depth))
+    return candidates[0]?.path || null
+  } catch (err) {
+    console.warn('[findEpicAuthLauncherInDir] Failed to scan', dir, err)
+    return null
+  }
+}
+
+export function findWin64ShippingExecutableInDir(dir: string): string | null {
+  const root = String(dir || '').trim()
+  if (!root) return null
+
+  try {
+    const candidates: Array<{ path: string; depth: number; size: number; score: number }> = []
+
+    function scanDir(currentDir: string, depth: number = 0) {
+      if (depth > 5) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(currentDir, { withFileTypes: true })
+      } catch {
+        return
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name)
+        const nameLower = entry.name.toLowerCase()
+
+        if (entry.isDirectory()) {
+          const skipDirs = ['__macosx', 'redist', 'directx', '_commonredist', 'vcredist', 'support', 'dotnet']
+          if (!skipDirs.includes(nameLower)) scanDir(fullPath, depth + 1)
+          continue
+        }
+
+        if (!entry.isFile() || !nameLower.endsWith('-win64-shipping.exe')) continue
+
+        let size = 0
+        try { size = fs.statSync(fullPath).size || 0 } catch {}
+        const pathLower = fullPath.toLowerCase()
+        let score = 100
+        if (pathLower.includes('binaries/win64') || pathLower.includes('binaries\\win64')) score += 50
+        score += Math.min(40, Math.floor(size / (10 * 1024 * 1024)) * 10)
+        score += (5 - depth) * 5
+        candidates.push({ path: fullPath, depth, size, score })
+      }
+    }
+
+    scanDir(root)
+    candidates.sort((a, b) => (b.score - a.score) || (b.size - a.size) || (a.depth - b.depth))
+    return candidates[0]?.path || null
+  } catch (err) {
+    console.warn('[findWin64ShippingExecutableInDir] Failed to scan', dir, err)
+    return null
+  }
+}
+
 export function findExecutableInDir(dir: string): string | null {
   try {
     const exeFiles: Array<{ name: string; path: string; depth: number; size: number }> = []

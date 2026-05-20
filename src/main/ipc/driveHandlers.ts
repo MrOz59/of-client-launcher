@@ -195,7 +195,7 @@ export const registerDriveHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
           return { success: false, message: 'Jogo não encontrado no banco de dados.' }
         }
 
-        // Resolve o caminho absoluto se necessário
+        // Resolve the absolute path if needed.
         let installPath = game.install_path
         if (installPath && !path.isAbsolute(installPath)) {
           installPath = path.resolve(process.cwd(), installPath)

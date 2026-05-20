@@ -3,7 +3,7 @@
  * These need to be registered separately because they depend on main.ts functions
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { scrapeGameInfo } from '../scraper'
+import { scrapeGameInfo, UNSUPPORTED_MICROSOFT_STORE_ERROR } from '../scraper'
 import { startGameDownload, parseVersionFromName } from '../downloadManager'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from '../torrentResolver'
 import { updateGameInfo, getDownloadByUrl } from '../db'
@@ -70,6 +70,10 @@ export const registerTorrentHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =>
       if (gamePageUrl && gamePageUrl.includes('online-fix.me') && !gamePageUrl.includes('/torrents/')) {
         console.log('[Main] Scraping game info from page:', gamePageUrl)
         const gameInfo = await scrapeGameInfo(gamePageUrl)
+        if (gameInfo.store?.unsupportedOnLinux) {
+          console.warn('[Main] Blocking Microsoft Store game download:', gamePageUrl, gameInfo.store)
+          return { success: false, error: UNSUPPORTED_MICROSOFT_STORE_ERROR }
+        }
         if (gameInfo.title) {
           title = gameInfo.title
           console.log('[Main] Using scraped title:', title)

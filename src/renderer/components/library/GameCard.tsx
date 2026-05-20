@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Play, Trash2, RefreshCw, Folder, Library, AlertCircle, Settings, Download, Square, FileText, Trophy, Star, MoreVertical, Cloud } from 'lucide-react'
 import type { Game, LaunchState, PrefixJobState, SaveSyncJobState, AchievementProgress, UpdatingGameState, UpdateQueueState } from './types'
 import { hasUpdate } from './useFilteredGames'
+import { useI18n } from '../../i18n'
 
 export interface GameCardProps {
   game: Game
@@ -47,6 +48,7 @@ export function GameCard({
   onPlay,
   onStop
 }: GameCardProps) {
+  const { t } = useI18n()
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [menuPosition, setMenuPosition] = useState<{ bottom: number; left: number } | null>(null)
 
@@ -63,15 +65,15 @@ export function GameCard({
   const isAchvComplete = !!achievementProgress?.complete
 
   const label = isGameUpdating
-    ? 'Atualizando...'
+    ? t('library.card.updating')
     : isSyncing
-      ? (syncState?.message || 'Sincronizando saves...')
+      ? (syncState?.message || t('library.card.syncingSaves'))
       : isPrefixing
-        ? (prefixState?.message || 'Preparando prefixo...')
+        ? (prefixState?.message || t('library.prefix.preparing'))
         : isLaunching
-          ? (launchState?.message || (launchState?.status === 'running' ? 'Em execução' : 'Iniciando...'))
+          ? (launchState?.message || (launchState?.status === 'running' ? t('library.card.running') : t('library.launch.starting')))
           : isError
-            ? `Falha ao iniciar${launchState?.code != null ? ` (cód. ${launchState.code})` : ''}`
+            ? (launchState?.code != null ? t('library.card.launchFailedWithCode', { code: launchState.code }) : t('library.card.launchFailed'))
             : ''
 
   // Update menu position when opened
@@ -137,7 +139,7 @@ export function GameCard({
           )}
 
           {updateAvailable && (
-            <div className="update-badge" title="Precisa de atualização">
+            <div className="update-badge" title={t('library.card.needsUpdate')}>
               <Download size={12} />
             </div>
           )}
@@ -146,7 +148,7 @@ export function GameCard({
           {isFavorite && (
             <div
               className="favorite-badge"
-              title="Favorito"
+              title={t('library.card.favorite')}
               style={{
                 position: 'absolute',
                 top: 8,
@@ -168,7 +170,7 @@ export function GameCard({
           {(game as any)?.steam_app_id && (
             <div
               className="cloud-badge"
-              title="Cloud Saves habilitado"
+              title={t('library.card.cloudSavesEnabled')}
               style={{
                 position: 'absolute',
                 top: 8,
@@ -192,7 +194,7 @@ export function GameCard({
               {!game.executable_path && (
                 <div className="exe-warning">
                   <AlertCircle size={16} />
-                  <span>Configurar .exe</span>
+                  <span>{t('library.card.configureExe')}</span>
                 </div>
               )}
             </div>
@@ -208,7 +210,7 @@ export function GameCard({
                 e.stopPropagation()
                 onToggleActionMenu()
               }}
-              title="Mais ações"
+              title={t('library.card.moreActions')}
             >
               <MoreVertical size={18} />
             </button>
@@ -226,18 +228,18 @@ export function GameCard({
               >
                 <button className="action-menu-item" onClick={() => { onCloseActionMenu(); onOpenConfig() }}>
                   <Settings size={16} />
-                  <span>Configurações</span>
+                  <span>{t('library.card.settings')}</span>
                 </button>
 
                 <button className="action-menu-item" onClick={() => { onCloseActionMenu(); onToggleFavorite() }}>
                   <Star size={16} fill={isFavorite ? 'currentColor' : 'none'} />
-                  <span>{isFavorite ? 'Remover favorito' : 'Adicionar favorito'}</span>
+                  <span>{isFavorite ? t('library.card.removeFavorite') : t('library.card.addFavorite')}</span>
                 </button>
 
                 {!!game.install_path && (
                   <button className="action-menu-item" onClick={() => { onCloseActionMenu(); onOpenFolder() }}>
                     <Folder size={16} />
-                    <span>Abrir pasta</span>
+                    <span>{t('library.card.openFolder')}</span>
                   </button>
                 )}
 
@@ -248,7 +250,7 @@ export function GameCard({
                     disabled={!!updatingGames[game.url] || updateQueue.running}
                   >
                     <Download size={16} />
-                    <span>Atualizar</span>
+                    <span>{t('library.card.update')}</span>
                   </button>
                 )}
 
@@ -261,7 +263,7 @@ export function GameCard({
                     }}
                   >
                     <FileText size={16} />
-                    <span>Abrir logs</span>
+                    <span>{t('library.card.openLogs')}</span>
                   </button>
                 )}
 
@@ -269,7 +271,7 @@ export function GameCard({
 
                 <button className="action-menu-item danger" onClick={() => { onCloseActionMenu(); onDelete() }}>
                   <Trash2 size={16} />
-                  <span>Desinstalar</span>
+                  <span>{t('library.card.uninstall')}</span>
                 </button>
               </div>,
               document.body
@@ -283,7 +285,7 @@ export function GameCard({
               onCloseActionMenu()
               onOpenAchievements()
             }}
-            title={isAchvComplete ? `Conquistas (100% - ${achievementProgress?.unlocked}/${achievementProgress?.total})` : (achievementProgress?.total ? `Conquistas (${achievementProgress?.unlocked}/${achievementProgress?.total})` : 'Conquistas')}
+            title={isAchvComplete ? t('library.card.achievementsComplete', { unlocked: achievementProgress?.unlocked, total: achievementProgress?.total }) : (achievementProgress?.total ? t('library.card.achievementsProgress', { unlocked: achievementProgress?.unlocked, total: achievementProgress?.total }) : t('library.card.achievements'))}
           >
             <Trophy size={18} className={isAchvComplete ? 'of-achv-complete' : undefined} />
           </button>
@@ -296,7 +298,7 @@ export function GameCard({
                 onStop()
               }}
               disabled={!!updatingGames[game.url]}
-              title="Parar"
+              title={t('library.card.stop')}
             >
               <Square size={18} />
             </button>
@@ -306,7 +308,7 @@ export function GameCard({
               onClick={(e) => { e.stopPropagation(); if (!updatingGames[game.url] && !isPrefixing) onPlay() }}
               disabled={!!updatingGames[game.url] || isPrefixing}
               style={(updatingGames[game.url] || isPrefixing) ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-              title={isPrefixing ? 'Aguardando preparo do prefixo' : 'Jogar'}
+              title={isPrefixing ? t('library.card.waitingPrefix') : t('library.card.play')}
             >
               {isPrefixing ? <RefreshCw size={18} className="of-spin" /> : <Play size={20} fill="currentColor" />}
             </button>

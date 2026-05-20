@@ -1,4 +1,5 @@
 import React from 'react'
+import { useI18n } from '../i18n'
 
 const STORE_PARTITION = 'persist:online-fix'
 const LOGIN_HOME = 'https://online-fix.me/'
@@ -64,8 +65,16 @@ const adBlockCSS = `
   }
 `
 
-const loginInstructionsScript = `
+const buildLoginInstructionsScript = (labels: { title: string; instructions: string; gotIt: string }) => `
 (function() {
+  const labels = ${JSON.stringify({
+    title: '__TITLE__',
+    instructions: '__INSTRUCTIONS__',
+    gotIt: '__GOT_IT__'
+  })};
+  labels.title = ${JSON.stringify(labels.title)};
+  labels.instructions = ${JSON.stringify(labels.instructions)};
+  labels.gotIt = ${JSON.stringify(labels.gotIt)};
   try {
     if (document.getElementById('of-login-instructions')) return;
 
@@ -93,13 +102,15 @@ const loginInstructionsScript = `
     const text = document.createElement('div');
     text.style.cssText = 'font-size: 13px; line-height: 1.35; font-weight: 600;';
     text.innerHTML = [
-      '<div style="font-size: 13px; font-weight: 800; margin-bottom: 4px;">Login no Online-Fix</div>',
-      '<div style="opacity: 0.85; font-weight: 600;">Faça login normalmente. O launcher vai identificar automaticamente e salvar seus cookies para você baixar os jogos depois.</div>'
+      '<div style="font-size: 13px; font-weight: 800; margin-bottom: 4px;"></div>',
+      '<div style="opacity: 0.85; font-weight: 600;"></div>'
     ].join('');
+    text.children[0].textContent = labels.title;
+    text.children[1].textContent = labels.instructions;
 
     const close = document.createElement('button');
     close.type = 'button';
-    close.textContent = 'Entendi';
+    close.textContent = labels.gotIt;
     close.style.cssText = [
       'flex: none',
       'cursor: pointer',
@@ -363,6 +374,7 @@ type Props = {
 }
 
 export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
+  const { t } = useI18n()
   const webviewRef = React.useRef<Electron.WebviewTag | null>(null)
   const [checking, setChecking] = React.useState(false)
   const [loginUser, setLoginUser] = React.useState('')
@@ -377,14 +389,14 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
 
   const formatLoginError = (payload: any) => {
     const reason = String(payload?.reason || '')
-    if (reason === 'missing-credentials') return 'Preencha usuário e senha.'
+    if (reason === 'missing-credentials') return t('login.error.missingCredentials')
     if (reason === 'no-form') {
       const href = payload?.href ? ` URL: ${payload.href}` : ''
       const forms = typeof payload?.forms === 'number' ? ` Forms: ${payload.forms}` : ''
-      return `Não encontrei o formulário de login no site.${href}${forms}`
+      return `${t('login.error.noForm')}${href}${forms}`
     }
-    if (reason === 'no-inputs') return 'Não encontrei os campos de usuário/senha. Tente novamente.'
-    return 'Não consegui enviar o login automaticamente. Tente novamente.'
+    if (reason === 'no-inputs') return t('login.error.noInputs')
+    return t('login.error.siteLoginFailed')
   }
 
   const runPasswordAttempt = React.useCallback(async () => {
@@ -413,10 +425,10 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
       }
       return false
     } catch {
-      setLoginError('Falha ao executar o login no site. Tente novamente.')
+      setLoginError(t('login.error.siteLoginFailed'))
       return false
     }
-  }, [])
+  }, [t])
 
   const handleLoggedIn = React.useCallback(() => {
     pendingPasswordRef.current = null
@@ -463,7 +475,11 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
         console.warn('[LoginOverlay] insertCSS failed:', e)
       }
       try {
-        await (wv as any).executeJavaScript?.(loginInstructionsScript, true)
+        await (wv as any).executeJavaScript?.(buildLoginInstructionsScript({
+          title: t('login.webview.title'),
+          instructions: t('login.webview.instructions'),
+          gotIt: t('login.webview.gotIt')
+        }), true)
       } catch (e) {
         console.warn('[LoginOverlay] loginInstructionsScript failed:', e)
       }
@@ -540,7 +556,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
       try { wv.removeEventListener('new-window', onNewWindow as any) } catch {}
       try { wv.removeEventListener('will-navigate', onWillNavigate as any) } catch {}
     }
-  }, [open, checkLoggedIn])
+  }, [open, checkLoggedIn, runPasswordAttempt, t])
 
   React.useEffect(() => {
     if (!open) {
@@ -597,7 +613,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
     const pass = loginPass
     console.log('[LoginOverlay] triggerPasswordLogin for user:', user)
     if (!user || !pass) {
-      setLoginError('Preencha usuário e senha.')
+      setLoginError(t('login.error.missingCredentials'))
       return
     }
     setLoginError(null)
@@ -632,10 +648,10 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
       <div className="login-overlay__scrim" onClick={onClose} />
       <div className="login-overlay__panel">
         <div className="login-overlay__header">
-          <div className="login-overlay__title">Login</div>
+          <div className="login-overlay__title">{t('login.title')}</div>
           <div className="login-overlay__methods">
             <button className="login-overlay__method" data-provider="password" onClick={() => triggerLogin('password')}>
-              Senha
+              {t('login.method.password')}
             </button>
             <button className="login-overlay__method" data-provider="google" onClick={() => triggerLogin('google')}>
               Google
@@ -644,7 +660,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
               Discord
             </button>
           </div>
-          <button className="login-overlay__close" onClick={onClose} aria-label="Fechar">
+          <button className="login-overlay__close" onClick={onClose} aria-label={t('login.close')}>
             ✕
           </button>
         </div>
@@ -660,10 +676,10 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
                     lastIntentRef.current = null
                   }}
                 >
-                  ← Voltar
+                  ← {t('login.back')}
                 </button>
                 <span className="login-overlay__webview-title">
-                  {lastIntentRef.current === 'google' ? 'Login com Google' : 'Login com Discord'}
+                  {lastIntentRef.current === 'google' ? t('login.withGoogle') : t('login.withDiscord')}
                 </span>
               </div>
               <webview
@@ -680,7 +696,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
             </>
           ) : (
             <div className="login-overlay__form">
-              <div className="login-overlay__form-title">Login com senha</div>
+              <div className="login-overlay__form-title">{t('login.withPassword')}</div>
               <div className="login-overlay__form-row">
                 <input
                   className="login-overlay__input"
@@ -690,7 +706,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
                     setLoginUser(e.target.value)
                     if (loginError) setLoginError(null)
                   }}
-                  placeholder="Usuário ou e-mail"
+                  placeholder={t('login.usernamePlaceholder')}
                   autoComplete="username"
                   disabled={isLoggingIn}
                 />
@@ -702,7 +718,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
                     setLoginPass(e.target.value)
                     if (loginError) setLoginError(null)
                   }}
-                  placeholder="Senha"
+                  placeholder={t('login.passwordPlaceholder')}
                   autoComplete="current-password"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !isLoggingIn) triggerPasswordLogin()
@@ -717,7 +733,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
                   {isLoggingIn ? (
                     <span className="login-overlay__spinner" />
                   ) : (
-                    'Entrar'
+                    t('login.submit')
                   )}
                 </button>
               </div>
@@ -725,10 +741,10 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
               {isLoggingIn && (
                 <div className="login-overlay__loading">
                   <span className="login-overlay__spinner" />
-                  <span>Fazendo login...</span>
+                  <span>{t('login.loading')}</span>
                 </div>
               )}
-              <div className="login-overlay__divider">ou</div>
+              <div className="login-overlay__divider">{t('login.divider')}</div>
               <div className="login-overlay__social">
                 <button
                   className="login-overlay__method"
@@ -747,7 +763,7 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
                   Discord
                 </button>
               </div>
-              <div className="login-overlay__note">A senha não fica salva no launcher. Só usamos para abrir sessão e salvar os cookies.</div>
+              <div className="login-overlay__note">{t('login.note')}</div>
             </div>
           )}
           {/* Hidden webview for password login */}
@@ -769,8 +785,8 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
         <div className="login-overlay__footer">
           <div className="login-overlay__hint">
             {showWebview
-              ? 'Complete o login no navegador. A janela fechará automaticamente.'
-              : 'Escolha o método e conclua o login. A janela fechará automaticamente.'}
+              ? t('login.footer.webview')
+              : t('login.footer.default')}
           </div>
         </div>
       </div>

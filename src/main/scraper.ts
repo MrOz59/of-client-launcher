@@ -4,6 +4,16 @@ import { session } from 'electron'
 import { getCookieHeaderForUrl } from './cookieManager'
 import { sanitizeVersionText } from './utils/versionUtils'
 
+export const UNSUPPORTED_MICROSOFT_STORE_ERROR =
+  'Este jogo é da Microsoft Store/Xbox e não é compatível com Linux. O download foi bloqueado pelo launcher.'
+
+export type GameStoreInfo = {
+  id: 'microsoft' | 'unknown'
+  label: string | null
+  href: string | null
+  unsupportedOnLinux: boolean
+}
+
 function cookiesToHeader(cookies: Electron.Cookie[]) {
   const header = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
   return header
@@ -239,10 +249,65 @@ export function extractVersionFromHtml(html: string): string | null {
   return null
 }
 
+function normalizeStoreText(value?: string | null): string {
+  return String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isMicrosoftStoreMarker(value?: string | null): boolean {
+  const text = normalizeStoreText(value).toLowerCase()
+  if (!text) return false
+  return (
+    text.includes('microsoft store') ||
+    text.includes('ms store') ||
+    text.includes('windows store') ||
+    text.includes('xbox app') ||
+    text.includes('xbox store') ||
+    text.includes('apps.microsoft.com') ||
+    text.includes('microsoft.com/store') ||
+    text.includes('xbox.com')
+  )
+}
+
+/**
+ * Extract store/platform marker from the Online-Fix game page.
+ *
+ * The current Online-Fix page structure exposes the store link at:
+ * /html/body/div[3]/div[1]/div/div[2]/div/article/div[2]/div[3]/a[1]
+ */
+export function extractGameStoreInfoFromHtml(html: string): GameStoreInfo {
+  const $ = cheerio.load(html)
+  const xpathEquivalentSelector =
+    'body > div:nth-of-type(3) > div:nth-of-type(1) > div > div:nth-of-type(2) > div > article > div:nth-of-type(2) > div:nth-of-type(3) > a:nth-of-type(1)'
+
+  const exact = $(xpathEquivalentSelector).first()
+  const exactText = normalizeStoreText(exact.text())
+  const exactHref = normalizeStoreText(exact.attr('href'))
+  if (isMicrosoftStoreMarker(`${exactText} ${exactHref}`)) {
+    return { id: 'microsoft', label: exactText || 'Microsoft Store', href: exactHref || null, unsupportedOnLinux: true }
+  }
+
+  let microsoft: GameStoreInfo | null = null
+  $('article a').each((_, el) => {
+    if (microsoft) return false
+    const link = $(el)
+    const text = normalizeStoreText(link.text())
+    const href = normalizeStoreText(link.attr('href'))
+    if (isMicrosoftStoreMarker(`${text} ${href}`)) {
+      microsoft = { id: 'microsoft', label: text || 'Microsoft Store', href: href || null, unsupportedOnLinux: true }
+      return false
+    }
+  })
+
+  return microsoft || { id: 'unknown', label: exactText || null, href: exactHref || null, unsupportedOnLinux: false }
+}
+
 /**
  * Scrape game info (title and version) from a game page URL
  */
-export async function scrapeGameInfo(url: string): Promise<{ title: string | null; version: string | null }> {
+export async function scrapeGameInfo(url: string): Promise<{ title: string | null; version: string | null; store: GameStoreInfo }> {
   console.log('[Scraper] Scraping game info from:', url)
   try {
     const cookieHeader = await getCookieHeaderForUrl(url)
@@ -259,14 +324,16 @@ export async function scrapeGameInfo(url: string): Promise<{ title: string | nul
     const html = decodeHtmlResponse(resp)
     const title = extractTitleFromHtml(html)
     const version = extractVersionFromHtml(html)
+    const store = extractGameStoreInfoFromHtml(html)
 
     console.log('[Scraper] Scraped title:', title)
     console.log('[Scraper] Scraped version:', version)
+    if (store.label || store.id !== 'unknown') console.log('[Scraper] Scraped store:', store)
 
-    return { title, version }
+    return { title, version, store }
   } catch (err: any) {
     console.warn('[Scraper] Failed to scrape game info:', err.message)
-    return { title: null, version: null }
+    return { title: null, version: null, store: { id: 'unknown', label: null, href: null, unsupportedOnLinux: false } }
   }
 }
 
@@ -310,7 +377,7 @@ function getFriendlyUpdateFetchError(err: any): string {
   return err?.message || 'Falha ao buscar dados de atualização.'
 }
 
-export async function fetchGameUpdateInfo(url: string): Promise<{ version: string | null; torrentUrl: string | null }> {
+export async function fetchGameUpdateInfo(url: string): Promise<{ version: string | null; torrentUrl: string | null; store: GameStoreInfo }> {
   const cookieHeader = await getCookieHeaderForUrl(url)
 
   try {
@@ -326,9 +393,13 @@ export async function fetchGameUpdateInfo(url: string): Promise<{ version: strin
 
     const html = decodeHtmlResponse(resp)
     const $ = cheerio.load(html)
+    const store = extractGameStoreInfoFromHtml(html)
+    if (store.unsupportedOnLinux) {
+      throw new Error(UNSUPPORTED_MICROSOFT_STORE_ERROR)
+    }
     const parsed = extractVersionFromHtml(html)
     const torrentUrl = extractTorrentLink($, url)
-    return { version: parsed, torrentUrl }
+    return { version: parsed, torrentUrl, store }
   } catch (err: any) {
     throw new Error(getFriendlyUpdateFetchError(err))
   }

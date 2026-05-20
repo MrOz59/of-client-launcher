@@ -140,6 +140,19 @@ declare global {
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
       getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      listLanguagePacks: () => Promise<{
+        success: boolean
+        languages?: Array<{
+          code: string
+          label?: string
+          nativeLabel?: string
+          source?: string
+          translations: Record<string, string>
+        }>
+        directory?: string
+        directories?: string[]
+        error?: string
+      }>
       selectDirectory: () => Promise<{ success: boolean; path?: string; error?: string }>
       extractDownload: (downloadId: number | string, path?: string) => Promise<DownloadResult & { destPath?: string }>
       protonEnsureRuntime: (customPath?: string) => Promise<{ success: boolean; runtime?: string; runner?: string; error?: string }>

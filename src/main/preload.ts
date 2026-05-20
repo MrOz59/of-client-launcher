@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
+  listLanguagePacks: () => ipcRenderer.invoke('i18n-list-language-packs'),
 
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   extractDownload: (downloadId: number | string, path?: string) => ipcRenderer.invoke('extract-download', downloadId, path),
@@ -296,7 +297,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   driveStatus: () => ipcRenderer.invoke('drive-status'),
   driveDisconnect: () => ipcRenderer.invoke('drive-disconnect'),
   
-  // ✅ FIX: Adicionada a função syncGameSaves para compatibilidade com o LibraryTab
+  // FIX: Add syncGameSaves for LibraryTab compatibility.
   syncGameSaves: (gameUrl: string) => ipcRenderer.invoke('drive-sync-game-saves', gameUrl),
 
   driveListSaves: () => ipcRenderer.invoke('drive-list-saves') as Promise<{ success: boolean; files?: DriveListItem[]; error?: string }>,
