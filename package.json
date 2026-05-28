@@ -1,7 +1,7 @@
 {
   "name": "voidlauncher",
   "version": "0.3.0",
-  "description": "VoidLauncher (prototype)",
+  "description": "Desktop launcher and updater for online-fix.me games",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
   "repository": {
     "type": "git",

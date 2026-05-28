@@ -16,6 +16,7 @@ import {
 import { ensureLegendaryAvailable, resolveLegendaryBinary, runLegendary } from '../legendary'
 import { ensureLudusaviAvailable, resolveLudusaviBinary, runLudusavi } from '../ludusavi'
 import { findEosOverlayInstallPath, isEosOverlayPathValid } from '../utils'
+import { resolveAppIconPath } from '../appIcon'
 
 type ManagedTool = 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay'
 type ProtonProvider = 'proton-ge' | 'proton-cachyos'
@@ -279,10 +280,12 @@ function readLegendaryAuthFile(): LegendaryAuthInfo | null {
 function captureLegendaryCredentialFromBrowser(): Promise<{ kind: 'code' | 'token' | 'sid'; value: string }> {
   return new Promise((resolve, reject) => {
     let settled = false
+    const iconPath = resolveAppIconPath()
     const win = new BrowserWindow({
       width: 980,
       height: 760,
       title: 'Epic Games Login',
+      icon: iconPath,
       autoHideMenuBar: true,
       webPreferences: {
         contextIsolation: true,

@@ -95,6 +95,7 @@ import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestE
 import { AchievementsManager } from './achievements/manager.js'
 import { AchievementOverlay } from './achievements/overlay.js'
 import { notifyDownloadComplete } from './desktopNotifications.js'
+import { resolveAppIconPath } from './appIcon.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { registerAllIpcHandlers } from './ipc/index.js'
 import type { IpcContext } from './ipc/types.js'
@@ -117,6 +118,50 @@ import {
 } from './utils/index.js'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
+
+app.setName('VoidLauncher')
+if (process.platform === 'linux') {
+  const maybeSetDesktopName = (app as any).setDesktopName
+  if (typeof maybeSetDesktopName === 'function') maybeSetDesktopName.call(app, 'voidlauncher.desktop')
+  app.commandLine.appendSwitch('class', 'VoidLauncher')
+}
+
+function desktopEntryEscape(value: string): string {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/\n/g, ' ')
+}
+
+function ensureLinuxDesktopEntry() {
+  if (process.platform !== 'linux') return
+
+  try {
+    const iconPath = resolveAppIconPath()
+    if (!iconPath) return
+
+    const applicationsDir = path.join(os.homedir(), '.local', 'share', 'applications')
+    const desktopPath = path.join(applicationsDir, 'voidlauncher.desktop')
+    const execPath = app.isPackaged
+      ? process.execPath
+      : `${process.execPath} ${app.getAppPath()}`
+    const content = [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=VoidLauncher',
+      'Comment=Desktop launcher and updater for online-fix.me games',
+      `Exec=${desktopEntryEscape(execPath)}`,
+      `Icon=${desktopEntryEscape(iconPath)}`,
+      'Terminal=false',
+      'Categories=Game;',
+      'StartupWMClass=VoidLauncher',
+      ''
+    ].join('\n')
+
+    fs.mkdirSync(applicationsDir, { recursive: true })
+    const current = fs.existsSync(desktopPath) ? fs.readFileSync(desktopPath, 'utf8') : ''
+    if (current !== content) fs.writeFileSync(desktopPath, content, 'utf8')
+  } catch (err: any) {
+    console.warn('[Main] Failed to write Linux desktop entry:', err?.message || err)
+  }
+}
 
 function resolveLauncherUserDataPath(): string | null {
   try {
@@ -255,9 +300,11 @@ function sendDownloadProgress(payload: any) {
 // System Tray
 // ─────────────────────────────────────────────────────────────────────────────
 function createTray() {
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, '../../icon.png')
+  const iconPath = resolveAppIconPath()
+  if (!iconPath) {
+    console.warn('[Tray] Icon path not found')
+    return
+  }
 
   let trayIcon: Electron.NativeImage
   try {
@@ -1175,24 +1222,13 @@ async function createMainWindow() {
     ? path.join(__dirname, '../../dist-preload/preload.js')
     : path.join(__dirname, 'preload.js')
 
-  // Resolve icon path for window (needed for Wayland alt-tab icon)
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, '../../icon.png')
-  
-  let windowIcon: Electron.NativeImage | undefined
-  try {
-    if (fs.existsSync(iconPath)) {
-      windowIcon = nativeImage.createFromPath(iconPath)
-    }
-  } catch (e) {
-    console.warn('[Main] Failed to load window icon:', e)
-  }
+  const iconPath = resolveAppIconPath()
 
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    icon: windowIcon,
+    title: 'VoidLauncher',
+    icon: iconPath,
     show: true, // Ensure window is shown
     x: 0, // Position at top-left for Gamescope compatibility
     y: 0,
@@ -1247,11 +1283,14 @@ async function createMainWindow() {
 }
 
 async function createAuthWindow() {
+  const iconPath = resolveAppIconPath()
   const authWin = new BrowserWindow({
     width: 900,
     height: 700,
     parent: mainWindow || undefined,
     modal: true,
+    title: 'VoidLauncher Login',
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1293,6 +1332,7 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(async () => {
+  ensureLinuxDesktopEntry()
   await importCookies('https://online-fix.me')
 
   // Create system tray

@@ -184,7 +184,7 @@
   "settings.launcherDiagnostics.platform": "Plataforma",
   "settings.launcherDiagnostics.torrentAgent": "Torrent agent",
   "settings.about.title": "Sobre",
-  "settings.about.version": "Versão 0.3.0 - Protótipo em desenvolvimento",
+  "settings.about.version": "Versão 0.3.0",
   "settings.donate.title": "Apoiar o VoidLauncher",
   "settings.donate.description": "Ajude a manter o launcher atualizado, corrigir mudanças do site e melhorar suporte a Linux, Proton e downloads.",
   "settings.donate.button": "Fazer donate",

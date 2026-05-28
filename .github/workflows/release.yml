@@ -4,6 +4,32 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create/publish, for example v0.3.0"
+        required: true
+        type: string
+      draft:
+        description: "Create as draft release"
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: "Mark as prerelease"
+        required: true
+        default: false
+        type: boolean
+      make_latest:
+        description: "Mark this release as latest"
+        required: true
+        default: true
+        type: boolean
+      release_notes:
+        description: "Optional release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -167,33 +193,136 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create draft release (idempotent)
+      - name: Resolve release options
+        id: release_options
+        shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          INPUT_DRAFT: ${{ github.event.inputs.draft }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+          INPUT_MAKE_LATEST: ${{ github.event.inputs.make_latest }}
+          INPUT_RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="$INPUT_RELEASE_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+(\.[0-9]+){1,2}([-.][A-Za-z0-9._-]+)?$ ]]; then
+            echo "Release tag must look like v0.3.0 or v0.3.0-beta.1"; exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            draft="$INPUT_DRAFT"
+            prerelease="$INPUT_PRERELEASE"
+            make_latest="$INPUT_MAKE_LATEST"
+            notes="$INPUT_RELEASE_NOTES"
+          else
+            draft="true"
+            prerelease="false"
+            make_latest="true"
+            notes=""
+          fi
+
+          latest_flag="--latest=false"
+          if [ "$make_latest" = "true" ]; then
+            latest_flag="--latest"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "latest_flag=$latest_flag" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "$notes"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create tag for manual release
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-          gh release create "${GITHUB_REF_NAME}" \
+          tag="${{ steps.release_options.outputs.tag }}"
+          if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release $tag already exists"
+          fi
+          if git ls-remote --tags origin "refs/tags/$tag" | grep -q "$tag"; then
+            echo "Tag $tag already exists"
+          else
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/$tag" \
+              -f sha="${GITHUB_SHA}"
+          fi
+
+      - name: Create release (idempotent)
+        shell: bash
+        env:
+          RELEASE_NOTES: ${{ steps.release_options.outputs.notes }}
+        run: |
+          tag="${{ steps.release_options.outputs.tag }}"
+          notes="$RELEASE_NOTES"
+
+          args=()
+          if [ "${{ steps.release_options.outputs.draft }}" = "true" ]; then
+            args+=(--draft)
+          fi
+          if [ "${{ steps.release_options.outputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          if [ -n "$notes" ]; then
+            args+=(--notes "$notes")
+          else
+            args+=(--generate-notes)
+          fi
+
+          gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+          gh release create "$tag" \
             --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --title "${GITHUB_REF_NAME}" \
-            --notes "" || true
+            --title "$tag" \
+            --target "${GITHUB_SHA}" \
+            "${args[@]}" || true
 
       - name: Upload assets
         shell: bash
         run: |
           shopt -s globstar nullglob
+          declare -A seen
           files=()
           for f in artifacts/**/*; do
-            [ -f "$f" ] && files+=("$f")
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            case "$base" in
+              builder-debug.yml|builder-effective-config.yaml) continue ;;
+            esac
+            if [[ -z "${seen[$base]}" ]]; then
+              seen[$base]=1
+              files+=("$f")
+            fi
           done
           if [ ${#files[@]} -eq 0 ]; then
             echo "No artifacts downloaded"; exit 1
           fi
-          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload "${{ steps.release_options.outputs.tag }}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
 
-      - name: Publish release (remove draft)
+      - name: Apply final release flags
         shell: bash
         run: |
-          gh release edit "${GITHUB_REF_NAME}" \
+          args=()
+          if [ "${{ steps.release_options.outputs.draft }}" = "true" ]; then
+            args+=(--draft=true)
+          else
+            args+=(--draft=false)
+          fi
+          if [ "${{ steps.release_options.outputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease=true)
+          else
+            args+=(--prerelease=false)
+          fi
+          args+=("${{ steps.release_options.outputs.latest_flag }}")
+
+          gh release edit "${{ steps.release_options.outputs.tag }}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --draft=false \
-            --latest
+            "${args[@]}"

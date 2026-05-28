@@ -4,7 +4,7 @@ Desktop launcher and updater for games from **online-fix.me**.
 
 **Current version:** 0.3.0
 
-> Status: prototype / experimental. The app is usable for local testing, but several flows still depend on host tools, bundled sidecars, and OnlineFix page structure.
+> Status: active desktop launcher. Some features depend on host tools, bundled sidecars, and the current OnlineFix page structure.
 
 ## Overview
 
@@ -184,6 +184,20 @@ Packaging commands fetch or build the resources that electron-builder includes a
 - toast binary into `notification-overlay/dist/`
 - notification sounds from `resources/notifications/`
 - bundled language JSON files from `src/renderer/i18n/translations/`
+
+## Release Process
+
+Nightly builds are published automatically from `main` by the **Nightly** workflow.
+
+Stable releases use the **Release** workflow. The easiest path is:
+
+1. Update `package.json`, `package-lock.json`, visible version strings, and README.
+2. Merge the tested changes into `main`.
+3. Open GitHub Actions, run **Release** manually, and set `release_tag` to a version tag such as `v0.3.0`.
+4. Keep `draft=true` for the first run so the generated release can be reviewed before publishing.
+5. After checking the uploaded AppImage, deb, rpm, pacman, and Windows installer assets, publish the draft release from GitHub.
+
+The manual release workflow creates the tag if it does not exist, builds all release artifacts, uploads them to the GitHub release, and can optionally mark the release as latest. Pushing a `v*` tag still triggers the same workflow for tag-based releases.
 
 ## Language Packs
 
