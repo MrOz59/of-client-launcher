@@ -144,7 +144,7 @@ function selectAsset(assets, { platform, arch }) {
 
   const archNeedles =
     arch === 'x64'
-      ? ['x86_64', 'x64', 'amd64']
+      ? ['x86_64', 'x64', 'amd64', 'win64', 'win-x64']
       : arch === 'arm64'
         ? ['aarch64', 'arm64']
         : [arch]
@@ -170,10 +170,18 @@ function selectAsset(assets, { platform, arch }) {
         if (!looksArm) score += 10
       }
 
+      // Ludusavi Windows assets use names like "...-win64.zip".
+      if (!hasArch && platform === 'win32' && arch === 'x64' && hasPlatform) {
+        const looksArm = n.includes('arm') || n.includes('aarch64')
+        const looks64 = n.includes('64')
+        if (looks64 && !looksArm) score += 10
+      }
+
       if (n.includes('cli')) score += 2
       if (n.includes('gui')) score -= 1
       // Prefer tar.gz on Linux (usually preserves exec bit) when available.
       if (platform === 'linux' && (n.endsWith('.tar.gz') || n.endsWith('.tgz'))) score += 1
+      if (platform === 'win32' && n.endsWith('.zip')) score += 1
       return { a, score, n }
     })
     .sort((x, y) => y.score - x.score)
