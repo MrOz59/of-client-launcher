@@ -26,6 +26,7 @@ src-tauri/capabilities/*
 !src-tauri/icons/
 src-tauri/icons/*
 !src-tauri/icons/icon.png
+!src-tauri/icons/icon.ico
 
 !src-tauri/src/
 src-tauri/src/*
