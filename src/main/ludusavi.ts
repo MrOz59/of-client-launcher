@@ -74,28 +74,27 @@ function tryResolveBinaryFromEnv(): string | null {
 }
 
 function tryResolveBundledBinary(): string | null {
-  // Packaged app: bundled under resources/ludusavi/<platform>-<arch>/ludusavi(.exe)
-  if (app?.isPackaged && process.resourcesPath) {
-    const folder = `${process.platform}-${process.arch}`
-    const exe = process.platform === 'win32' ? 'ludusavi.exe' : 'ludusavi'
-    const candidate = path.join(process.resourcesPath, 'ludusavi', folder, exe)
-    if (fs.existsSync(candidate)) return candidate
-  }
+  const folder = `${process.platform}-${process.arch}`
+  const exe = process.platform === 'win32' ? 'ludusavi.exe' : 'ludusavi'
 
   // Downloaded at runtime: userData/tools/ludusavi/<platform>-<arch>/ludusavi(.exe)
+  // Prefer this over the bundled copy so the launcher can update tools without
+  // replacing the app package.
   try {
-    const folder = `${process.platform}-${process.arch}`
-    const exe = process.platform === 'win32' ? 'ludusavi.exe' : 'ludusavi'
     const candidate = path.join(app.getPath('userData'), 'tools', 'ludusavi', folder, exe)
     if (fs.existsSync(candidate)) return candidate
   } catch {
     // ignore
   }
 
+  // Packaged app: bundled under resources/ludusavi/<platform>-<arch>/ludusavi(.exe)
+  if (app?.isPackaged && process.resourcesPath) {
+    const candidate = path.join(process.resourcesPath, 'ludusavi', folder, exe)
+    if (fs.existsSync(candidate)) return candidate
+  }
+
   // Dev: allow a vendored binary downloaded by scripts/fetch-ludusavi.js
   try {
-    const folder = `${process.platform}-${process.arch}`
-    const exe = process.platform === 'win32' ? 'ludusavi.exe' : 'ludusavi'
     const candidate = path.join(process.cwd(), 'vendor', 'ludusavi', folder, exe)
     if (fs.existsSync(candidate)) return candidate
   } catch {
@@ -322,12 +321,13 @@ export async function ensureLudusaviAvailable(options?: {
   repo?: string
   timeoutMs?: number
   allowDownload?: boolean
+  forceDownload?: boolean
 }): Promise<{ ok: boolean; path?: string; message?: string; downloaded?: boolean }> {
   if (!process.versions?.electron) {
     return { ok: false, message: 'Auto-download do Ludusavi requer runtime do Electron.' }
   }
 
-  const already = await resolveLudusaviBinary()
+  const already = options?.forceDownload ? null : await resolveLudusaviBinary()
   if (already) return { ok: true, path: already, downloaded: false }
 
   if (options?.allowDownload === false) {
@@ -342,10 +342,13 @@ export async function ensureLudusaviAvailable(options?: {
   const exe = process.platform === 'win32' ? 'ludusavi.exe' : 'ludusavi'
   const outDir = path.join(app.getPath('userData'), 'tools', 'ludusavi', folder)
   const destExe = path.join(outDir, exe)
+  if (options?.forceDownload) rimraf(outDir)
   if (fs.existsSync(destExe)) return { ok: true, path: destExe, downloaded: false }
 
   // Fetch release asset from GitHub
-  const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/v${version}`
+  const releaseUrl = version === 'latest'
+    ? `https://api.github.com/repos/${repo}/releases/latest`
+    : `https://api.github.com/repos/${repo}/releases/tags/v${version}`
   const release = await httpGetJson(releaseUrl, timeoutMs)
   const assets = Array.isArray(release?.assets) ? release.assets : []
   const asset = selectLudusaviAsset(assets, process.platform, process.arch)
@@ -374,7 +377,7 @@ export async function ensureLudusaviAvailable(options?: {
         // ignore
       }
     }
-    fs.writeFileSync(path.join(outDir, 'VERSION.txt'), `v${version}\n`, 'utf8')
+    fs.writeFileSync(path.join(outDir, 'VERSION.txt'), String(release?.tag_name || `v${version}`) + '\n', 'utf8')
 
     return { ok: true, path: destExe, downloaded: true }
   } catch (e: any) {

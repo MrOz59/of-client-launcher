@@ -2,6 +2,8 @@
 
 Desktop launcher and updater for games from **online-fix.me**.
 
+**Current version:** 0.3.0
+
 > Status: prototype / experimental. The app is usable for local testing, but several flows still depend on host tools, bundled sidecars, and OnlineFix page structure.
 
 ## Overview
@@ -10,14 +12,19 @@ VoidLauncher is an Electron desktop app with a React/Vite renderer. It centraliz
 
 - OnlineFix login through persisted Electron cookies
 - Embedded store browsing and page injection for download/update actions
+- Store ad controls with popup-only or full ad blocking modes
 - Game library management, favorites, custom banners, diagnostics, and launch config
 - Download queue with torrent and HTTP flows
-- Archive extraction for zip, rar, and 7z content
+- Archive extraction for zip, rar, 7z, and multi-part game/update archives
 - Linux game launching through Proton/Wine prefixes
+- Launcher-managed Proton-GE and Proton-CachyOS runtimes
 - Steam and Epic EOS overlay setup where metadata is available
+- Legendary account login/logout and managed release installation
+- Launcher-managed Ludusavi and EOS Overlay tooling
 - Cloud saves with Ludusavi and Google Drive
 - Local achievement discovery, schema editing, unlock watching, and toast notifications
 - LAN/VPN rooms through a WireGuard controller service
+- Optional donate link to support launcher maintenance
 
 ## Tech Stack
 
@@ -30,6 +37,7 @@ VoidLauncher is an Electron desktop app with a React/Vite renderer. It centraliz
 - Tauri/Rust standalone toast binary for desktop notifications
 - Ludusavi for save backup/restore
 - Legendary for Epic/EOS overlay support
+- Ghostery adblocker engine for store ad filtering
 - WireGuard controller service for VPN rooms
 
 ## Repository Layout
@@ -87,12 +95,14 @@ For release builds:
 - Python build tooling for the torrent sidecar
 - `tar`/`unzip` for tool fetch scripts
 - Network access to download Ludusavi and Legendary release assets
+- Network access to refresh Proton-GE, Proton-CachyOS, Legendary, and Ludusavi release metadata
 
 For Linux runtime features:
 
 - Wine/Proton compatible runtime
 - WireGuard tools for VPN connect/disconnect
 - `winetricks` or `protontricks` for optional prefix components
+- `tar` with gzip/xz/zstd support for managed Proton runtime extraction
 
 ## Install
 
@@ -227,6 +237,13 @@ Minimal example:
 
 The launcher uses the OnlineFix session stored in Electron cookies. The store webview is injected with launcher actions for download/update flows.
 
+The store ad blocker can run in two modes:
+
+- Popup-only mode blocks unwanted windows while keeping regular site ads visible.
+- Full ad-block mode blocks banners, embedded ads, and ad network requests.
+
+The first-run prompt explains the choice and links to the official OnlineFix Donator guide for users who want to support the site and remove ads through OnlineFix itself.
+
 `OnlineFix.ini` is used to infer platform-specific metadata:
 
 - Epic: `RealProductId`
@@ -243,10 +260,21 @@ Downloads are managed through the main process and surfaced in the Downloads tab
 - The app can bundle a cx_Freeze torrent-agent executable for packaged builds
 - HTTP downloads are available as a fallback path
 - Extraction supports zip, rar, and 7z through the configured Node extraction libraries and bundled 7zip binaries
+- Newer torrents that include an `Updates/` folder are handled as base game plus ordered update archives when present
+- Older torrents without an `Updates/` folder continue to use the legacy full-download/full-extract path
 
 ## Proton, Wine, and Overlays
 
 On Linux, the launcher prepares per-game prefixes and builds the launch environment through `src/main/protonManager.ts`.
+
+The Tools tab can manage launcher-owned Proton runtimes:
+
+- Proton-GE from `GloriousEggroll/proton-ge-custom`
+- Proton-CachyOS from `CachyOS/proton-cachyos`
+
+These runtimes are stored separately under the launcher-managed Proton directory and can be selected as the default runtime. Steam, Heroic, and manually detected Proton paths are still supported by the launch system, but they are intentionally not managed from the Tools tab.
+
+GitHub release metadata for managed tools is cached under the app user data directory. On startup, the launcher refreshes each tool once per session. Manual refresh forces a new request. If GitHub rate limits anonymous API requests, the launcher falls back to the cached release list when available.
 
 Steam overlay support is enabled when a Steam AppID is resolved. The launch environment can set:
 
@@ -255,6 +283,15 @@ Steam overlay support is enabled when a Steam AppID is resolved. The launch envi
 - `VK_INSTANCE_LAYERS`
 
 Epic EOS overlay support uses Legendary to install/enable EOS overlay files in the prefix and applies Epic-specific `WINEDLLOVERRIDES`.
+
+Legendary is also managed from the Tools tab:
+
+- list/install Legendary releases
+- show the current Legendary version
+- login/logout Epic accounts through `legendary auth`
+- install/update/remove/query EOS Overlay through `legendary eos-overlay`
+
+Ludusavi releases can also be listed and installed from the Tools tab.
 
 ## Cloud Saves
 
@@ -291,6 +328,16 @@ The controller service is in `services/lan-controller/` and supports:
 - Docker deployment with Caddy or direct port exposure
 
 See `services/lan-controller/README.md` for deployment details.
+
+## Supporting Development
+
+The Settings/About page includes a donate action for users who want to support VoidLauncher maintenance. The default link is:
+
+```text
+https://ko-fi.com/mroz59
+```
+
+This is separate from OnlineFix Donator support, which is linked from the store ad-blocking prompt/settings and applies to the OnlineFix site itself.
 
 ## Environment Variables
 

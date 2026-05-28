@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 
 interface StoreTabProps {
@@ -22,6 +22,8 @@ type LauncherGameStatus = {
   hasUpdate?: boolean
 }
 
+type StoreAdBlockMode = 'popups' | 'all'
+
 const WEBVIEW_ALLOWED_HOSTS = new Set([
   'online-fix.me',
   'accounts.google.com',
@@ -30,6 +32,28 @@ const WEBVIEW_ALLOWED_HOSTS = new Set([
 ])
 const WEBVIEW_ALLOWED_SUFFIXES = ['.online-fix.me', '.discord.com', '.discordapp.com']
 const DEFAULT_WEBVIEW_URL = 'https://online-fix.me'
+const DONATOR_GUIDE_URL = 'https://online-fix.me/guides/17009-kak-poluchit-rol-how-to-obtain-role-mecenat.html'
+const STORE_AD_BLOCK_MODE_STORAGE_KEY = 'of_store_ad_block_mode'
+
+function normalizeStoreAdBlockMode(value: unknown): StoreAdBlockMode {
+  return value === 'all' ? 'all' : 'popups'
+}
+
+function getCachedStoreAdBlockMode(): StoreAdBlockMode {
+  try {
+    return normalizeStoreAdBlockMode(localStorage.getItem(STORE_AD_BLOCK_MODE_STORAGE_KEY))
+  } catch {
+    return 'popups'
+  }
+}
+
+function setCachedStoreAdBlockMode(mode: StoreAdBlockMode) {
+  try {
+    localStorage.setItem(STORE_AD_BLOCK_MODE_STORAGE_KEY, mode)
+  } catch {
+    // ignore
+  }
+}
 
 function isAllowedWebviewHost(host: string) {
   const h = String(host || '').toLowerCase()
@@ -154,41 +178,22 @@ const cssRules = [
   '[id*="advertisement"]', '[id*="ad-container"]', '[id*="ad-banner"]',
   '[id*="google_ads"]', '[data-ad-client]', '[data-ad-slot]',
   'iframe[src*="doubleclick"]', 'iframe[src*="/ads"]', 'iframe[src*="googlesyndication"]',
+  'iframe[src*="loot-rewards"]', 'iframe[src*="adsterra"]', 'iframe[src*="onclick"]',
   '.adsbygoogle', 'ins.adsbygoogle',
   '[class*="popup"]', '[class*="pop-up"]', '[class*="modal-ad"]', '[class*="overlay-ad"]',
   '[class*="yandex-ad"]', '[class*="begun"]', '[class*="adfox"]',
-  'div[id*="yandex_ad"]'
+  'div[id*="yandex_ad"]',
+  'a[href*="loot-rewards"]', 'a[href*="adsterra"]', 'a[href*="onclick"]',
+  'script[src*="loot-rewards"]', 'script[src*="adsterra"]', 'script[src*="onclick"]'
 ]
 
-// Aggressive CSS blocking
-const adBlockCSS = `
-  ${cssRules.join(',\\n  ')} {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-    height: 0 !important;
-    width: 0 !important;
-    position: absolute !important;
-    left: -9999px !important;
-  }
-
+const storeHelperCSS = `
   body, html {
     overflow: auto !important;
   }
 
-  /* Remove forced overlays */
   html[style*="overflow: hidden"] {
     overflow: auto !important;
-  }
-
-  /* Hide common ad sizes */
-  div[style*="width: 728px"][style*="height: 90px"],
-  div[style*="width: 300px"][style*="height: 250px"],
-  div[style*="width: 160px"][style*="height: 600px"],
-  div[style*="width: 320px"][style*="height: 50px"],
-  div[style*="width: 970px"][style*="height: 90px"],
-  div[style*="width: 300px"][style*="height: 600px"] {
-    display: none !important;
   }
 
   .of-launcher-download-warning {
@@ -202,8 +207,38 @@ const adBlockCSS = `
   }
 `
 
+// Aggressive CSS blocking
+const adBlockCSS = `
+  ${storeHelperCSS}
+
+  ${cssRules.join(',\\n  ')} {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    height: 0 !important;
+    width: 0 !important;
+    position: absolute !important;
+    left: -9999px !important;
+  }
+
+  /* Hide common ad sizes */
+  div[style*="width: 728px"][style*="height: 90px"],
+  div[style*="width: 300px"][style*="height: 250px"],
+  div[style*="width: 160px"][style*="height: 600px"],
+  div[style*="width: 320px"][style*="height: 50px"],
+  div[style*="width: 970px"][style*="height: 90px"],
+  div[style*="width: 300px"][style*="height: 600px"] {
+    display: none !important;
+  }
+
+`
+
+function getStoreCss(mode: StoreAdBlockMode) {
+  return mode === 'all' ? adBlockCSS : storeHelperCSS
+}
+
 // Advanced DOM cleanup script - function to generate with installed games data
-function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string, string>) {
+function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string, string>, mode: StoreAdBlockMode) {
   return `
 (function() {
   'use strict';
@@ -211,9 +246,12 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
 
   const rules = ${JSON.stringify(cssRules)};
   const labels = ${JSON.stringify(labels).replace(/</g, '\\u003c')};
+  const adBlockMode = ${JSON.stringify(mode)};
+  const blockAllAds = adBlockMode === 'all';
 
-  // Installed games data from launcher
-  const installedGames = ${JSON.stringify(installedGames)};
+  // Installed games data from launcher. Starts with cached data and is refreshed
+  // asynchronously so download buttons can be rendered without waiting on IPC.
+  let installedGames = ${JSON.stringify(installedGames)};
   console.log('[AdBlock Pro] Installed games:', installedGames.length);
 
   // Keywords to identify unsupported download buttons (Russian + translated versions)
@@ -456,6 +494,99 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
     return null;
   }
 
+  function textOf(el) {
+    return String((el && el.textContent) || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function removeNode(el, reason) {
+    if (!el || !el.parentElement || el.__ofLauncherRemoved) return false;
+    el.__ofLauncherRemoved = true;
+    try {
+      console.log('[AdBlock Pro] Removing Online-Fix ad block:', reason);
+      el.remove();
+      return true;
+    } catch {
+      try {
+        el.style.setProperty('display', 'none', 'important');
+        return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  function removeNativeOnlineFixAds() {
+    if (!blockAllAds) return 0;
+    let removed = 0;
+
+    const adTextMarkers = [
+      'блок рекламы',
+      'bloco de publicidade',
+      'advertising block',
+      'bloque de publicidad',
+      'considere desat',
+      'cansado de anúncios',
+      'cansado de anuncios',
+      'tired of ads',
+      'turn off adblock',
+      'disable adblock',
+      'desative o adblock',
+      'torne-se um doador',
+      'torne-se um patrono',
+      'become a donator',
+      'become a patron',
+      'loot-rewards'
+    ];
+
+    const adUrlMarkers = [
+      'loot-rewards',
+      'adsterra',
+      'onclick',
+      'popcash',
+      'popads',
+      'exoclick',
+      'trafficstars',
+      'propellerads'
+    ];
+
+    document.querySelectorAll('a, iframe, img, script').forEach(el => {
+      const src = String(el.src || el.href || el.getAttribute('src') || el.getAttribute('href') || '').toLowerCase();
+      if (!src || !adUrlMarkers.some(marker => src.includes(marker))) return;
+      const container = el.closest('aside, .rightside, .sidebar, .block, .story-block, article div, div') || el;
+      if (removeNode(container, src.slice(0, 80))) removed++;
+    });
+
+    document.querySelectorAll('div, section, aside, p, span, b, strong').forEach(el => {
+      const text = textOf(el);
+      if (!text || !adTextMarkers.some(marker => text.includes(marker))) return;
+
+      const hasNativeAdLabel =
+        text.includes('блок рекламы') ||
+        text.includes('bloco de publicidade') ||
+        text.includes('advertising block') ||
+        text.includes('bloque de publicidad')
+
+      if (hasNativeAdLabel && text.length > 200) return;
+
+      const isLabel = text.length <= 120 && hasNativeAdLabel;
+      if (isLabel) {
+        const labelBlock = el.closest('div, p, section') || el;
+        const next = labelBlock.nextElementSibling;
+        if (next && (next.querySelector('img, iframe, a') || textOf(next).length <= 300)) {
+          if (removeNode(next, 'native ad after label')) removed++;
+        }
+        if (removeNode(labelBlock, 'native ad label')) removed++;
+        return;
+      }
+
+      if (text.length > 500) return;
+
+      const container = el.closest('aside, .rightside, .sidebar, .block, section, div') || el;
+      if (removeNode(container, text.slice(0, 80))) removed++;
+    });
+
+    return removed;
+  }
+
   function removeAds() {
     try {
       let count = 0;
@@ -486,32 +617,36 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
         }
       };
 
-      // Remove by CSS selectors
-      rules.forEach(r => {
-        try {
-          document.querySelectorAll(r).forEach(el => {
-            el.remove();
-            count++;
-          });
-        } catch(e) {}
-      });
+      if (blockAllAds) {
+        count += removeNativeOnlineFixAds();
 
-      // AGGRESSIVE: Remove ALL iframes with ad-related content
-      document.querySelectorAll('iframe').forEach(iframe => {
-        const src = (iframe.src || '').toLowerCase();
-        const id = (iframe.id || '').toLowerCase();
-        const cls = (iframe.className || '').toLowerCase();
-        // Whitelist Google Translate widgets/frames
-        const isTranslate = src.includes('translate.google') || id.includes('goog') || cls.includes('goog')
-        if (isTranslate) return
-        if (src.includes('ad') || src.includes('banner') || src.includes('popup') ||
-            src.includes('doubleclick') || src.includes('googlesyndication') ||
-            src === '' || src === 'about:blank') {
-          console.log('[AdBlock Pro] Removing iframe:', src.substring(0, 50));
-          iframe.remove();
-          count++;
-        }
-      });
+        // Remove by CSS selectors
+        rules.forEach(r => {
+          try {
+            document.querySelectorAll(r).forEach(el => {
+              el.remove();
+              count++;
+            });
+          } catch(e) {}
+        });
+
+        // AGGRESSIVE: Remove ALL iframes with ad-related content
+        document.querySelectorAll('iframe').forEach(iframe => {
+          const src = (iframe.src || '').toLowerCase();
+          const id = (iframe.id || '').toLowerCase();
+          const cls = (iframe.className || '').toLowerCase();
+          // Whitelist Google Translate widgets/frames
+          const isTranslate = src.includes('translate.google') || id.includes('goog') || cls.includes('goog')
+          if (isTranslate) return
+          if (src.includes('ad') || src.includes('banner') || src.includes('popup') ||
+              src.includes('doubleclick') || src.includes('googlesyndication') ||
+              src === '' || src === 'about:blank') {
+            console.log('[AdBlock Pro] Removing iframe:', src.substring(0, 50));
+            iframe.remove();
+            count++;
+          }
+        });
+      }
 
       // Remove high z-index fixed overlays (popups/modals)
       document.querySelectorAll('div[style*="position: fixed"], div[style*="position:fixed"]').forEach(div => {
@@ -527,11 +662,13 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
         }
       });
 
-      // Remove elements with ad-related attributes
-      document.querySelectorAll('[data-ad-client], [data-ad-slot], [data-google-query-id]').forEach(el => {
-        el.remove();
-        count++;
-      });
+      if (blockAllAds) {
+        // Remove elements with ad-related attributes
+        document.querySelectorAll('[data-ad-client], [data-ad-slot], [data-google-query-id]').forEach(el => {
+          el.remove();
+          count++;
+        });
+      }
 
       if (count > 0) {
         console.log('[AdBlock Pro] Removed ' + count + ' ad elements');
@@ -803,7 +940,7 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
         const id = (idVal && typeof idVal.toLowerCase === 'function') ? idVal.toLowerCase() : '';
         const cls = (clsVal && typeof clsVal.toLowerCase === 'function') ? clsVal.toLowerCase() : '';
         const isTranslate = src.includes('translate.google') || id.includes('goog') || cls.includes('goog');
-        if (!isTranslate && (src.includes('ad') || src.includes('doubleclick') || src.includes('googlesyndication'))) {
+        if (!isTranslate && blockAllAds && (src.includes('ad') || src.includes('doubleclick') || src.includes('googlesyndication'))) {
           console.log('[AdBlock Pro] Blocked appendChild:', src);
           return child;
         }
@@ -860,6 +997,14 @@ function getAdBlockScript(installedGames: InstalledGame[], labels: Record<string
 
   // Clean up immediately (once)
   removeAds();
+
+  window.addEventListener('message', event => {
+    const data = event && event.data ? event.data : {};
+    if (data.type !== 'OF_LAUNCHER_INSTALLED_GAMES') return;
+    installedGames = Array.isArray(data.games) ? data.games : [];
+    console.log('[AdBlock Pro] Installed games refreshed:', installedGames.length);
+    removeAds();
+  });
 
   // Clean up on DOM ready
   if (document.readyState === 'loading') {
@@ -1027,6 +1172,68 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
   const webviewInstance = useRef<any>(null)
   const targetUrlRef = useRef<string | null>(null)
   const lastTorrentRequestRef = useRef<{ url: string; at: number } | null>(null)
+  const installedGamesCacheRef = useRef<InstalledGame[]>([])
+  const launcherGamesCacheRef = useRef<LauncherGameStatus[]>([])
+  const [storeAdBlockMode, setStoreAdBlockMode] = useState<StoreAdBlockMode>(getCachedStoreAdBlockMode)
+  const storeAdBlockModeRef = useRef<StoreAdBlockMode>(storeAdBlockMode)
+  const storeSettingsRef = useRef<any>(null)
+  const [showAdChoiceModal, setShowAdChoiceModal] = useState(false)
+
+  useEffect(() => {
+    storeAdBlockModeRef.current = storeAdBlockMode
+  }, [storeAdBlockMode])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await window.electronAPI.getSettings()
+        if (cancelled || !res?.success || !res.settings) return
+        storeSettingsRef.current = res.settings
+        const mode = normalizeStoreAdBlockMode(res.settings.storeAdBlockMode)
+        setCachedStoreAdBlockMode(mode)
+        setStoreAdBlockMode(mode)
+        storeAdBlockModeRef.current = mode
+        setShowAdChoiceModal(res.settings.storeAdChoiceSeen !== true)
+      } catch {
+        // keep cached/default mode
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const saveStoreAdChoice = async (mode: StoreAdBlockMode) => {
+    const normalizedMode = normalizeStoreAdBlockMode(mode)
+    setCachedStoreAdBlockMode(normalizedMode)
+    setStoreAdBlockMode(normalizedMode)
+    storeAdBlockModeRef.current = normalizedMode
+    setShowAdChoiceModal(false)
+
+    try {
+      let baseSettings = storeSettingsRef.current
+      if (!baseSettings) {
+        const res = await window.electronAPI.getSettings()
+        baseSettings = res?.settings || {}
+      }
+      const nextSettings = {
+        ...baseSettings,
+        storeAdBlockMode: normalizedMode,
+        storeAdChoiceSeen: true
+      }
+      const res = await window.electronAPI.saveSettings(nextSettings)
+      if (res?.success) storeSettingsRef.current = nextSettings
+    } catch (err) {
+      console.warn('[StoreTab] Failed to save store ad blocking preference', err)
+    }
+
+    try {
+      webviewInstance.current?.reload?.()
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     if (!webviewRef.current) return
@@ -1046,6 +1253,10 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
     if (persistedUrl && !isAllowedWebviewUrl(persistedUrl)) {
       setPersistedUrl(null)
     }
+    const storePreloadUrl = window.electronAPI.getStoreWebviewPreloadUrl?.()
+    if (storePreloadUrl) {
+      wv.setAttribute('preload', storePreloadUrl)
+    }
     wv.src = initialUrl
     wv.style.width = '100%'
     wv.style.height = '100%'
@@ -1064,15 +1275,32 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       wv.executeJavaScript(`window.postMessage({ type: 'OF_LAUNCHER_UPDATE_GAMES', games: ${payload} }, '*');`).catch(() => {})
     }
 
-    const refreshLauncherGames = async () => {
+    const postInstalledGames = (games: InstalledGame[]) => {
+      if (!ensureUsable() || !isReady) return
+      const payload = JSON.stringify(games).replace(/</g, '\\u003c')
+      wv.executeJavaScript(`window.postMessage({ type: 'OF_LAUNCHER_INSTALLED_GAMES', games: ${payload} }, '*');`).catch(() => {})
+    }
+
+    const refreshStoreGameData = async () => {
       if (!ensureUsable() || !isReady) return
       try {
         const res = await window.electronAPI.getGames()
         const gamesList = res?.games || []
+        const currentInstalledGames = gamesList.filter((g: any) => g.install_path).map((g: any) => ({
+          url: g.url,
+          title: g.title,
+          installed_version: g.installed_version,
+          install_path: g.install_path
+        }))
         const launcherGames = buildLauncherStatuses(gamesList)
+        installedGamesCacheRef.current = currentInstalledGames
+        launcherGamesCacheRef.current = launcherGames
+        if (!ensureUsable() || !isReady) return
+        postInstalledGames(currentInstalledGames)
         postLauncherGames(launcherGames)
-      } catch {
-        // ignore
+        console.log('[StoreTab] Loaded installed games:', currentInstalledGames.length)
+      } catch (err) {
+        console.warn('[StoreTab] Failed to load games:', err)
       }
     }
 
@@ -1080,12 +1308,12 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       if (refreshTimer) return
       refreshTimer = setTimeout(() => {
         refreshTimer = null
-        refreshLauncherGames().catch(() => {})
+        refreshStoreGameData().catch(() => {})
       }, 400)
     }
 
     const startTorrentDownloadOnce = (url: string, source: string) => {
-      if (!ensureUsable() || !isReady) return false
+      if (!ensureUsable()) return false
       if (!isAllowedTorrentUrl(url)) return false
 
       const now = Date.now()
@@ -1198,6 +1426,17 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       }
     })
 
+    wv.addEventListener('ipc-message', (e: any) => {
+      if (e?.channel !== 'torrent-download-request') return
+      const torrentUrl = String(e?.args?.[0] || '').trim()
+      if (!isAllowedWebviewUrl(wv.getURL()) || !isAllowedTorrentUrl(torrentUrl)) {
+        console.warn('[StoreTab] Blocked torrent request from webview preload:', torrentUrl)
+        return
+      }
+      console.log('[StoreTab] Captured torrent download request from webview preload:', torrentUrl)
+      startTorrentDownloadOnce(torrentUrl, 'webview-preload')
+    })
+
     const offGameVersion = window.electronAPI.onGameVersionUpdate?.(() => {
       scheduleLauncherRefresh()
     })
@@ -1210,34 +1449,19 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
       if (!ensureUsable()) return
       isReady = true
       console.log('[StoreTab] Webview DOM ready, injecting scripts...')
+      const cachedInstalledGames = installedGamesCacheRef.current
+      const cachedLauncherGames = launcherGamesCacheRef.current
+      const currentAdBlockMode = storeAdBlockModeRef.current
 
-      // Load installed games for this page
-      let currentInstalledGames: InstalledGame[] = []
-      let launcherGames: LauncherGameStatus[] = []
-      try {
-        const result = await window.electronAPI.getGames()
-        const gamesList = result?.games || []
-        currentInstalledGames = gamesList.filter((g: any) => g.install_path).map((g: any) => ({
-          url: g.url,
-          title: g.title,
-          installed_version: g.installed_version,
-          install_path: g.install_path
-        }))
-        launcherGames = buildLauncherStatuses(gamesList)
-        console.log('[StoreTab] Loaded installed games:', currentInstalledGames.length)
-      } catch (err) {
-        console.warn('[StoreTab] Failed to load games:', err)
-      }
-
-      // Inject adblock first (highest priority)
-      wv.insertCSS(adBlockCSS)
+      // Inject store protection CSS first (highest priority)
+      wv.insertCSS(getStoreCss(currentAdBlockMode))
         .then(() => {
-          console.log('[StoreTab] AdBlock CSS injected')
+          console.log('[StoreTab] Store protection CSS injected:', currentAdBlockMode)
         })
-        .catch((err: unknown) => console.warn('[StoreTab] Failed to inject AdBlock CSS', err))
+        .catch((err: unknown) => console.warn('[StoreTab] Failed to inject store protection CSS', err))
 
-      // Generate script with installed games data
-      const adBlockScript = getAdBlockScript(currentInstalledGames, {
+      // Generate script with cached installed games data; fresh data is posted below.
+      const adBlockScript = getAdBlockScript(cachedInstalledGames, {
         downloadBlockedMicrosoft: t('store.downloadBlockedMicrosoft'),
         downloadTorrent: t('store.downloadTorrent'),
         updateTorrent: t('store.updateTorrent'),
@@ -1248,19 +1472,25 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
         updateAvailableInstalled: t('store.updateAvailableInstalled'),
         installed: t('store.installed'),
         unavailable: t('store.unavailable')
-      })
-      wv.executeJavaScript(adBlockScript)
+      }, currentAdBlockMode)
+      const adBlockReady = wv.executeJavaScript(adBlockScript)
         .then(() => {
-          console.log('[StoreTab] AdBlock script injected with', currentInstalledGames.length, 'installed games')
+          console.log('[StoreTab] AdBlock script injected with', cachedInstalledGames.length, 'cached installed games')
         })
-        .catch((err: unknown) => console.warn('[StoreTab] Failed to inject AdBlock script', err))
+        .catch((err: unknown) => {
+          console.warn('[StoreTab] Failed to inject AdBlock script', err)
+        })
 
       // Then launcher features
       wv.insertCSS(launcherCSS).catch(() => {})
-      wv.executeJavaScript(getLauncherScript({ update: t('library.card.update') }))
+      const launcherReady = wv.executeJavaScript(getLauncherScript({ update: t('library.card.update') }))
         .then(() => {
-          postLauncherGames(launcherGames)
+          postLauncherGames(cachedLauncherGames)
         })
+        .catch(() => {})
+
+      Promise.allSettled([adBlockReady, launcherReady])
+        .then(() => refreshStoreGameData())
         .catch(() => {})
 
       // If a target URL was provided, navigate to it after DOM ready
@@ -1333,6 +1563,38 @@ export default function StoreTab({ isLoggedIn, targetUrl, onTargetConsumed }: St
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div className="webview-container" ref={webviewRef} style={{ width: '100%', height: '100%' }} />
+      {showAdChoiceModal && (
+        <div className="store-ad-choice-overlay">
+          <div className="store-ad-choice-dialog">
+            <div className="store-ad-choice-header">
+              <h3>{t('store.adChoice.title')}</h3>
+              <button
+                className="store-ad-choice-close"
+                onClick={() => saveStoreAdChoice(storeAdBlockMode)}
+                title={t('common.cancel')}
+              >
+                x
+              </button>
+            </div>
+            <p>{t('store.adChoice.description')}</p>
+            <p>{t('store.adChoice.donatorSummary')}</p>
+            <div className="store-ad-choice-actions">
+              <button className="store-ad-choice-btn primary" onClick={() => saveStoreAdChoice('popups')}>
+                {t('store.adChoice.popupsOnly')}
+              </button>
+              <button className="store-ad-choice-btn secondary" onClick={() => saveStoreAdChoice('all')}>
+                {t('store.adChoice.allAds')}
+              </button>
+            </div>
+            <button
+              className="store-ad-choice-link"
+              onClick={() => window.electronAPI.openExternal(DONATOR_GUIDE_URL)}
+            >
+              {t('store.adChoice.openGuide')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,7 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import * as path from 'path'
 import type { NotificationMessage } from './overlayIPC'
-import { getSetting } from './db'
 
 interface NotificationWindow {
   window: BrowserWindow
@@ -31,9 +30,8 @@ class DesktopNotificationManager {
     const display = screen.getPrimaryDisplay()
     const workArea = display.workArea
 
-    const position = this.getPositionSetting()
     const stackOffset = (this.activeNotifications.length * (this.notificationHeight + this.spacing))
-    const { anchor, offsetX, offsetY } = this.computeAnchorOffsets(position, stackOffset)
+    const { anchor, offsetX, offsetY } = this.computeAnchorOffsets(stackOffset)
 
     const win = new BrowserWindow({
       width: workArea.width,
@@ -135,12 +133,10 @@ class DesktopNotificationManager {
     const display = screen.getPrimaryDisplay()
     const workArea = display.workArea
 
-    const position = this.getPositionSetting()
-
     this.activeNotifications.forEach((notification, index) => {
       if (!notification.window.isDestroyed()) {
         const stackOffset = index * (this.notificationHeight + this.spacing)
-        const { anchor, offsetX, offsetY } = this.computeAnchorOffsets(position, stackOffset)
+        const { anchor, offsetX, offsetY } = this.computeAnchorOffsets(stackOffset)
         try {
           notification.window.webContents.executeJavaScript(
             `window.__setAnchorOffset && window.__setAnchorOffset(${JSON.stringify(anchor)}, ${Number(offsetX)}, ${Number(offsetY)});`
@@ -162,21 +158,11 @@ class DesktopNotificationManager {
     })
   }
 
-  private computeAnchorOffsets(position: string, stackOffset: number) {
-    const isTop = position.startsWith('top')
-    const isLeft = position.endsWith('left')
-    const anchor = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}` as const
+  private computeAnchorOffsets(stackOffset: number) {
+    const anchor = 'bottom-right' as const
     const offsetX = this.marginRight
     const offsetY = this.marginBottom + stackOffset
     return { anchor, offsetX, offsetY }
-  }
-
-  private getPositionSetting(): 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' {
-    const raw = String(getSetting('notification_position') || 'bottom-right').trim().toLowerCase()
-    if (raw === 'top-left' || raw === 'top-right' || raw === 'bottom-left' || raw === 'bottom-right') {
-      return raw
-    }
-    return 'bottom-right'
   }
 
   closeAll() {

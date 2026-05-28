@@ -64,18 +64,20 @@ function tryResolveBundledBinary(): string | null {
   const folder = `${process.platform}-${process.arch}`
   const exe = process.platform === 'win32' ? 'legendary.exe' : 'legendary'
 
-  // Packaged app: bundled under resources/legendary/<platform>-<arch>/legendary(.exe)
-  if (app?.isPackaged && process.resourcesPath) {
-    const candidate = path.join(process.resourcesPath, 'legendary', folder, exe)
-    if (fs.existsSync(candidate)) return candidate
-  }
-
   // Downloaded at runtime: userData/tools/legendary/<platform>-<arch>/legendary(.exe)
+  // Prefer this over the bundled copy so the launcher can update tools without
+  // replacing the app package.
   try {
     const candidate = path.join(app.getPath('userData'), 'tools', 'legendary', folder, exe)
     if (fs.existsSync(candidate)) return candidate
   } catch {
     // ignore
+  }
+
+  // Packaged app: bundled under resources/legendary/<platform>-<arch>/legendary(.exe)
+  if (app?.isPackaged && process.resourcesPath) {
+    const candidate = path.join(process.resourcesPath, 'legendary', folder, exe)
+    if (fs.existsSync(candidate)) return candidate
   }
 
   // Dev: allow a vendored binary downloaded by scripts/fetch-legendary.js
@@ -96,10 +98,15 @@ function httpGetJson(url: string, timeoutMs: number): Promise<any> {
       {
         method: 'GET',
         headers: {
+          'Accept': 'application/vnd.github+json',
           'User-Agent': 'voidlauncher-legendary'
         }
       },
       (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          httpGetJson(new URL(res.headers.location, url).toString(), timeoutMs).then(resolve, reject)
+          return
+        }
         let data = ''
         res.setEncoding('utf8')
         res.on('data', (c) => (data += c))
@@ -140,7 +147,7 @@ function httpDownload(url: string, destFile: string, timeoutMs: number): Promise
       },
       (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          httpDownload(res.headers.location, destFile, timeoutMs).then(resolve, reject)
+          httpDownload(new URL(res.headers.location, url).toString(), destFile, timeoutMs).then(resolve, reject)
           return
         }
         if (res.statusCode && res.statusCode >= 400) {
@@ -342,19 +349,20 @@ export async function ensureLegendaryAvailable(options?: {
   repo?: string
   timeoutMs?: number
   allowDownload?: boolean
+  forceDownload?: boolean
 }): Promise<{ ok: boolean; path?: string; message?: string; downloaded?: boolean }> {
   if (!process.versions?.electron) {
     return { ok: false, message: 'Auto-download do Legendary requer runtime do Electron.' }
   }
 
-  const already = await resolveLegendaryBinary()
+  const already = options?.forceDownload ? null : await resolveLegendaryBinary()
   if (already) return { ok: true, path: already, downloaded: false }
 
   if (options?.allowDownload === false) {
     return { ok: false, message: 'Legendary não encontrado e auto-download desativado.' }
   }
 
-  const repo = String(options?.repo || process.env.LEGENDARY_REPO || 'derrod/legendary')
+  const repo = String(options?.repo || process.env.LEGENDARY_REPO || 'legendary-gl/legendary')
   const timeoutMs = Number.isFinite(options?.timeoutMs) ? (options!.timeoutMs as number) : 60_000
   const version = String(options?.version || process.env.LEGENDARY_VERSION || 'latest').replace(/^v/, '')
 
@@ -362,12 +370,19 @@ export async function ensureLegendaryAvailable(options?: {
   const exe = process.platform === 'win32' ? 'legendary.exe' : 'legendary'
   const outDir = path.join(app.getPath('userData'), 'tools', 'legendary', folder)
   const destExe = path.join(outDir, exe)
+  if (options?.forceDownload) rimraf(outDir)
   if (fs.existsSync(destExe)) return { ok: true, path: destExe, downloaded: false }
 
   const releaseUrl = version === 'latest'
     ? `https://api.github.com/repos/${repo}/releases/latest`
-    : `https://api.github.com/repos/${repo}/releases/tags/v${version}`
-  let release = await httpGetJson(releaseUrl, timeoutMs)
+    : `https://api.github.com/repos/${repo}/releases/tags/${version}`
+  let release: any
+  try {
+    release = await httpGetJson(releaseUrl, timeoutMs)
+  } catch (err) {
+    if (version === 'latest' || /^v/i.test(version)) throw err
+    release = await httpGetJson(`https://api.github.com/repos/${repo}/releases/tags/v${version}`, timeoutMs)
+  }
   let assets = await normalizeReleaseAssets(release, timeoutMs)
   if (!assets.length && version === 'latest') {
     try {

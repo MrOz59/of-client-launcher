@@ -289,6 +289,53 @@ function findExecutable(gameDir: string): string | null {
   }
 }
 
+function isUpdateArchivePath(filePath: string): boolean {
+  const normalized = String(filePath || '').replace(/\\/g, '/').toLowerCase()
+  const parts = normalized.split('/').filter(Boolean)
+  const name = parts[parts.length - 1] || normalized
+  return (
+    parts.includes('updates') ||
+    normalized.includes('/updates/') ||
+    name.startsWith('update') ||
+    name.includes('.update.') ||
+    name.includes('_update_') ||
+    name.includes('-update-')
+  )
+}
+
+function archiveOrderKey(filePath: string): number {
+  const name = path.basename(filePath).toLowerCase()
+
+  const leading = name.match(/^(\d{1,3})[-_. ]/)
+  if (leading) return Number(leading[1])
+
+  const updateVersion = name.match(/(?:update|upd|patch)[-_. ]*v?(\d+(?:[._-]\d+)*)/i)
+  if (updateVersion) {
+    return Number(updateVersion[1].replace(/[^0-9]/g, '').slice(0, 12)) || 0
+  }
+
+  const version = name.match(/\bv?(\d+(?:[._-]\d+){1,6})\b/i)
+  if (version) {
+    return Number(version[1].replace(/[^0-9]/g, '').slice(0, 12)) || 0
+  }
+
+  return Number.MAX_SAFE_INTEGER
+}
+
+function compareArchiveGroups(
+  a: { first: string; all: string[] },
+  b: { first: string; all: string[] }
+): number {
+  const aIsUpdate = isUpdateArchivePath(a.first)
+  const bIsUpdate = isUpdateArchivePath(b.first)
+  if (aIsUpdate !== bIsUpdate) return aIsUpdate ? 1 : -1
+
+  const orderDelta = archiveOrderKey(a.first) - archiveOrderKey(b.first)
+  if (orderDelta !== 0) return orderDelta
+
+  return a.first.localeCompare(b.first, undefined, { numeric: true, sensitivity: 'base' })
+}
+
 /**
  * Process torrent update - extract RAR, cleanup, restore configs.
  * This handles the case where a torrent downloads an update with a .rar file
@@ -386,7 +433,10 @@ export async function processUpdateExtraction(
     groups.set(key, group)
   }
 
-  for (const group of groups.values()) {
+  const orderedGroups = Array.from(groups.values()).sort(compareArchiveGroups)
+  console.log('[UpdateProcessor] Extraction order:', orderedGroups.map(g => path.basename(g.first)))
+
+  for (const group of orderedGroups) {
     const rarFile = group.first
     console.log('[UpdateProcessor] Extracting:', rarFile, 'to:', installPath)
     try {

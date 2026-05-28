@@ -83,6 +83,7 @@ import { fetchGameUpdateInfo, fetchUserProfile, scrapeGameInfo, UNSUPPORTED_MICR
 import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
 import { shouldBlockRequest } from './easylist-filters.js'
+import { initializeStoreAdBlocker } from './storeAdBlocker.js'
 import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir, reconcileDownloadState, hasExistingGameInstall } from './downloadManager.js'
 import axios from 'axios'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResolver.js'
@@ -93,8 +94,7 @@ import { vpnControllerCreateRoom, vpnControllerJoinRoom, vpnControllerListPeers,
 import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestEffort } from './ofVpnManager.js'
 import { AchievementsManager } from './achievements/manager.js'
 import { AchievementOverlay } from './achievements/overlay.js'
-import { registerNotificationHotkeys, unregisterAllHotkeys } from './notificationHotkeys.js'
-import { NOTIFICATIONS_ENABLED, notifyDownloadComplete } from './desktopNotifications.js'
+import { notifyDownloadComplete } from './desktopNotifications.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { registerAllIpcHandlers } from './ipc/index.js'
 import type { IpcContext } from './ipc/types.js'
@@ -1290,8 +1290,6 @@ app.isQuitting = false
 
 app.on('before-quit', () => {
   app.isQuitting = true
-  // Unregister global hotkeys
-  unregisterAllHotkeys()
 })
 
 app.whenReady().then(async () => {
@@ -1303,14 +1301,6 @@ app.whenReady().then(async () => {
   // Initialize cloud saves setting
   const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
   drive.setCloudSavesEnabled(cloudSavesEnabled)
-
-  // Register notification hotkeys for in-game testing (disabled for now)
-  if (NOTIFICATIONS_ENABLED) {
-    registerNotificationHotkeys(() => runningGames)
-    console.log('[Main] ⌨️  Hotkey registered: Ctrl+Shift+F9 to test in-game notifications')
-  } else {
-    console.log('[Main] Notifications disabled; skipping hotkeys')
-  }
 
   // Warm Proton runtimes cache at startup (Linux only).
   if (process.platform === 'linux') {
@@ -1341,36 +1331,8 @@ app.whenReady().then(async () => {
   // Allow disabling via env for troubleshooting.
   const disableAutoResume = ['1', 'true', 'yes'].includes(String(process.env.OF_DISABLE_AUTO_RESUME_DOWNLOADS || '').toLowerCase())
 
-  // Lightweight popup blocker - blocks popups/popunders but allows banner ads
-  // This is fair to the website while protecting users from annoying redirects
-  console.log('[PopupBlocker] Initializing lightweight popup blocker...')
-
-  const filter = {
-    urls: ['<all_urls>']
-  }
-
-  let blockedCount = 0
   const webviewSession = session.fromPartition(TORRENT_PARTITION)
-  webviewSession.setPermissionRequestHandler((_wc, _permission, callback) => {
-    // Deny notification permission prompts to prevent spam
-    callback(false)
-  })
-
-  // Network-level blocking - only for popup/redirect domains
-  webviewSession.webRequest.onBeforeRequest(filter, (details, callback) => {
-    const shouldBlock = shouldBlockRequest(details.url, {
-      resourceType: details.resourceType
-    })
-    if (shouldBlock) {
-      blockedCount++
-      console.log(`[PopupBlocker] Network Block #${blockedCount}:`, details.url.substring(0, 80))
-      callback({ cancel: true })
-    } else {
-      callback({ cancel: false })
-    }
-  })
-
-  console.log('[PopupBlocker] Network-level popup blocking enabled')
+  initializeStoreAdBlocker(webviewSession, getSetting('store_ad_block_mode'))
 
   // Block popunders at BrowserWindow level (but allow normal new windows)
   app.on('web-contents-created', (_event, contents) => {

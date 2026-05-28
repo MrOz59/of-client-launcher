@@ -1,6 +1,6 @@
 {
   "name": "voidlauncher",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "VoidLauncher (prototype)",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
   "repository": {
@@ -49,6 +49,7 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
+    "@ghostery/adblocker-electron": "^2.17.3",
     "7zip-bin-full": "^25.1.2",
     "axios": "^1.5.0",
     "better-sqlite3": "^12.5.0",

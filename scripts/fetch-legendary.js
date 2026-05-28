@@ -10,7 +10,7 @@ const os = require('os')
 const https = require('https')
 const { spawnSync } = require('child_process')
 
-const REPO = String(process.env.LEGENDARY_REPO || 'derrod/legendary')
+const REPO = String(process.env.LEGENDARY_REPO || 'legendary-gl/legendary')
 const VERSION = String(process.env.LEGENDARY_VERSION || 'latest').replace(/^v/, '')
 const TIMEOUT_MS = Number(process.env.LEGENDARY_TIMEOUT_MS || 120000)
 

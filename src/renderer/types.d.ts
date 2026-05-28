@@ -110,6 +110,7 @@ export {}
 declare global {
   interface Window {
     electronAPI: {
+      getStoreWebviewPreloadUrl: () => string
       openAuthWindow: () => Promise<boolean>
       checkGameVersion: (url: string) => Promise<VersionResult>
       onCookiesSaved: (cb: (cookies: Cookie[]) => void) => (() => void)
@@ -140,6 +141,13 @@ declare global {
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
       getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      getToolsStatus: () => Promise<{ success: boolean; status?: any; error?: string }>
+      listToolReleases: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', limit?: number, force?: boolean) => Promise<{ success: boolean; releases?: Array<{ tag: string; name: string; publishedAt?: string; assetName?: string; downloadUrl?: string }>; fromCache?: boolean; warning?: string; error?: string }>
+      installTool: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', version?: string) => Promise<{ success: boolean; status?: any; path?: string; downloaded?: boolean; error?: string }>
+      legendaryAuth: (action: 'status' | 'login' | 'logout') => Promise<{ success: boolean; status?: any; auth?: any; error?: string }>
+      eosOverlayAction: (action: 'info' | 'install' | 'update' | 'remove') => Promise<{ success: boolean; status?: any; info?: any; path?: string | null; error?: string }>
+      setDefaultProtonRuntime: (runtimePath: string) => Promise<{ success: boolean; status?: any; error?: string }>
+      removeProtonGeRuntime: (runtimePath: string) => Promise<{ success: boolean; status?: any; error?: string }>
       listLanguagePacks: () => Promise<{
         success: boolean
         languages?: Array<{
@@ -253,9 +261,6 @@ declare global {
       // Navigation events from tray menu
       onNavigateToTab: (cb: (tab: string) => void) => (() => void)
       onNavigateToGame: (cb: (gameUrl: string) => void) => (() => void)
-
-      // Test/Debug
-      testNotification: (type: string) => Promise<{ success: boolean; error?: string }>
 
       // Drive
       driveAuth: () => Promise<{

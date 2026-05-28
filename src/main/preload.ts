@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import path from 'path'
+import { pathToFileURL } from 'url'
 
 type DownloadProgressPayload = {
   url?: string
@@ -65,6 +67,7 @@ type LauncherTaskStatusPayload = {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getStoreWebviewPreloadUrl: () => pathToFileURL(path.join(__dirname, 'storeWebviewPreload.js')).toString(),
   openAuthWindow: () => ipcRenderer.invoke('open-auth-window'),
   checkGameVersion: (url: string) => ipcRenderer.invoke('check-game-version', url),
   getCookieHeader: (url: string) => ipcRenderer.invoke('get-cookie-header', url),
@@ -134,6 +137,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
+  getToolsStatus: () => ipcRenderer.invoke('tools-status'),
+  listToolReleases: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', limit?: number, force?: boolean) =>
+    ipcRenderer.invoke('tools-list-releases', { tool, limit, force }),
+  installTool: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', version?: string) =>
+    ipcRenderer.invoke('tools-install', { tool, version }),
+  legendaryAuth: (action: 'status' | 'login' | 'logout') =>
+    ipcRenderer.invoke('tools-legendary-auth', { action }),
+  eosOverlayAction: (action: 'info' | 'install' | 'update' | 'remove') =>
+    ipcRenderer.invoke('tools-eos-overlay-action', { action }),
+  setDefaultProtonRuntime: (runtimePath: string) => ipcRenderer.invoke('tools-set-proton-default', runtimePath),
+  removeProtonGeRuntime: (runtimePath: string) => ipcRenderer.invoke('tools-remove-proton-ge', runtimePath),
   listLanguagePacks: () => ipcRenderer.invoke('i18n-list-language-packs'),
 
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
@@ -284,11 +298,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('prefix-job-status', handler)
     return () => ipcRenderer.removeListener('prefix-job-status', handler)
   },
-
-  // ==========================
-  // Test/Debug APIs
-  // ==========================
-  testNotification: (type: string) => ipcRenderer.invoke('test-notification', type),
 
   // ==========================
   // Drive APIs

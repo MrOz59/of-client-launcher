@@ -48,9 +48,40 @@ type ActiveTorrent = {
   finish?: (err?: Error) => void
   pausedRequested?: boolean
   pollTimer?: NodeJS.Timeout
+  mode?: TorrentDownloadMode
 }
 
+export type TorrentDownloadMode = 'all' | 'updates'
+
 const activeTorrents = new Map<string, ActiveTorrent>()
+
+function shouldForcePythonTorrentAgent(): boolean {
+  return String(process.env.OF_FORCE_PYTHON_TORRENT_AGENT || '').trim() === '1'
+}
+
+function shouldSkipDevStandaloneBinary(candidate: string): boolean {
+  if (app?.isPackaged) return false
+
+  if (shouldForcePythonTorrentAgent()) {
+    console.log('[torrent-agent] OF_FORCE_PYTHON_TORRENT_AGENT=1, skipping dev standalone binary')
+    return true
+  }
+
+  const sourceScript = path.join(process.cwd(), 'services', 'torrent-agent', 'libtorrent_rpc.py')
+  try {
+    if (!fs.existsSync(sourceScript)) return false
+    const sourceStat = fs.statSync(sourceScript)
+    const binaryStat = fs.statSync(candidate)
+    if (sourceStat.mtimeMs > binaryStat.mtimeMs) {
+      console.log('[torrent-agent] Dev source script is newer than standalone binary, using Python sidecar')
+      return true
+    }
+  } catch {
+    return false
+  }
+
+  return false
+}
 
 function registerActive(record: ActiveTorrent) {
   for (const key of record.aliases) activeTorrents.set(key, record)
@@ -111,6 +142,7 @@ function getStandaloneBinaryPath(): string | null {
     const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'torrent-agent', exeName)
     console.log('[torrent-agent] Checking dev path:', devPath)
     if (fs.existsSync(devPath)) {
+      if (shouldSkipDevStandaloneBinary(devPath)) continue
       console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
       return devPath
     }
@@ -121,6 +153,7 @@ function getStandaloneBinaryPath(): string | null {
     const devPath = path.join(process.cwd(), 'services', 'torrent-agent', 'dist', exeName)
     console.log('[torrent-agent] Checking legacy dev path:', devPath)
     if (fs.existsSync(devPath)) {
+      if (shouldSkipDevStandaloneBinary(devPath)) continue
       console.log('[torrent-agent] ✓ Found dev binary at:', devPath)
       return devPath
     }
@@ -532,6 +565,7 @@ class TransmissionRpcClient {
     if (method === 'add') {
       const source = String(p.source || '').trim()
       const savePath = String(p.savePath || '').trim()
+      const mode = String(p.mode || '').trim()
       if (!source) throw new Error('source required')
       if (!savePath) throw new Error('savePath required')
 
@@ -550,6 +584,53 @@ class TransmissionRpcClient {
       const added = res?.arguments?.['torrent-added'] || res?.arguments?.['torrent-duplicate']
       const infoHash = String(added?.hashString || '').trim()
       if (!infoHash) throw new Error('transmission: missing hashString')
+
+      if (mode === 'updates') {
+        try {
+          const filesRes = await this.request({
+            method: 'torrent-get',
+            arguments: {
+              ids: [infoHash],
+              fields: ['files']
+            }
+          })
+          const torrent = (filesRes?.arguments?.torrents || [])[0]
+          const files = Array.isArray(torrent?.files) ? torrent.files : []
+          const wanted: number[] = []
+          const unwanted: number[] = []
+          files.forEach((file: any, index: number) => {
+            const filePath = String(file?.name || '').replace(/\\/g, '/').toLowerCase()
+            const parts = filePath.split('/').filter(Boolean)
+            const name = parts[parts.length - 1] || filePath
+            const isUpdate =
+              parts.includes('updates') ||
+              filePath.includes('/updates/') ||
+              name.startsWith('update') ||
+              name.includes('.update.') ||
+              name.includes('_update_') ||
+              name.includes('-update-')
+            if (isUpdate) wanted.push(index)
+            else unwanted.push(index)
+          })
+          if (wanted.length > 0) {
+            await this.request({
+              method: 'torrent-set',
+              arguments: {
+                ids: [infoHash],
+                'files-wanted': wanted,
+                'files-unwanted': unwanted,
+                'priority-high': wanted,
+                'priority-low': unwanted
+              }
+            })
+            console.log('[torrent-agent] Transmission selected update files:', wanted.length, 'of', files.length)
+          } else {
+            console.log('[torrent-agent] Transmission found no Updates files; downloading full torrent')
+          }
+        } catch (err) {
+          console.warn('[torrent-agent] Transmission update-only file selection failed:', err)
+        }
+      }
       return { infoHash }
     }
 
@@ -715,7 +796,8 @@ export async function downloadTorrent(
   destPath: string,
   onProgress?: (progress: number, details?: TorrentProgress & { infoHash: string }) => void,
   aliases: string[] = [],
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  mode: TorrentDownloadMode = 'all'
 ): Promise<void> {
   const lookupIds = Array.from(new Set([magnetOrTorrent, ...aliases].filter(Boolean)))
   if (hasActiveAlias(lookupIds)) throw new Error('Torrent already in progress')
@@ -724,7 +806,8 @@ export async function downloadTorrent(
     aliases: new Set(lookupIds),
     source: magnetOrTorrent,
     destPath,
-    pausedRequested: false
+    pausedRequested: false,
+    mode
   }
 
   let cleaned = false
@@ -767,7 +850,7 @@ export async function downloadTorrent(
 
   await rejectIfCancelled()
 
-  const addRes = await rpc.call('add', { source: magnetOrTorrent, savePath: destPath })
+  const addRes = await rpc.call('add', { source: magnetOrTorrent, savePath: destPath, mode })
   const infoHash = String(addRes?.infoHash || '').trim()
   if (!infoHash) throw new Error('libtorrent: missing infoHash')
 

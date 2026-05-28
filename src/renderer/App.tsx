@@ -4,11 +4,12 @@ import StoreTab from './components/StoreTab'
 import LibraryTab from './components/LibraryTab'
 import DownloadsTab from './components/DownloadsTab'
 import SettingsTab from './components/SettingsTab'
+import ToolsTab from './components/ToolsTab'
 import LoginOverlay from './components/LoginOverlay'
 import { useI18n } from './i18n'
 import './App.css'
 
-type Tab = 'store' | 'library' | 'downloads' | 'settings'
+type Tab = 'store' | 'library' | 'downloads' | 'tools' | 'settings'
 
 export default function App() {
   const { t } = useI18n()
@@ -49,7 +50,7 @@ export default function App() {
 
     // Listen for navigation events from tray menu
     const offNavigateTab = window.electronAPI.onNavigateToTab?.((tab: string) => {
-      if (tab === 'store' || tab === 'library' || tab === 'downloads' || tab === 'settings') {
+      if (tab === 'store' || tab === 'library' || tab === 'downloads' || tab === 'tools' || tab === 'settings') {
         setActiveTab(tab as Tab)
       }
     })
@@ -114,6 +115,8 @@ export default function App() {
         return t('app.tabs.library')
       case 'downloads':
         return t('app.tabs.downloads')
+      case 'tools':
+        return t('app.tabs.tools')
       case 'settings':
         return t('app.tabs.settings')
       default:
@@ -134,6 +137,8 @@ export default function App() {
         )
       case 'library':
         return <LibraryTab />
+      case 'tools':
+        return <ToolsTab />
       case 'settings':
         return <SettingsTab />
       default:

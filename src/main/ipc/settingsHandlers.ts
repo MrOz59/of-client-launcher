@@ -17,16 +17,11 @@ import {
   winetricksAvailable
 } from '../protonManager'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
-import { 
-  notifyAchievementUnlocked, 
-  notifyDownloadComplete, 
-  notifyDownloadError,
-  notifyInfo,
-  setNotificationsEnabled
-} from '../desktopNotifications'
+import { setNotificationsEnabled } from '../desktopNotifications'
 import { findEosOverlayInstallPath, getDisplayCompatibilityInfo, isEosOverlayPathValid } from '../utils'
 import { resolveLegendaryBinary } from '../legendary'
 import { resolveLudusaviBinary } from '../ludusavi'
+import { configureStoreAdBlocker, normalizeStoreAdBlockMode } from '../storeAdBlocker'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 const LANGUAGE_PACK_MAX_BYTES = 1024 * 1024
@@ -443,8 +438,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       const lanControllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
       const cloudSavesEnabled = getSetting('cloud_saves_enabled') !== 'false'
       const notificationsEnabled = getSetting('notifications_enabled') !== 'false'
-      const notificationPosition = String(getSetting('notification_position') || 'bottom-right').trim()
       const minimizeToTray = getSetting('minimize_to_tray') === 'true'
+      const storeAdBlockMode = normalizeStoreAdBlockMode(getSetting('store_ad_block_mode'))
+      const storeAdChoiceSeen = getSetting('store_ad_choice_seen') === 'true'
 
       return {
         success: true,
@@ -466,8 +462,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
           lanControllerUrl,
           cloudSavesEnabled,
           notificationsEnabled,
-          notificationPosition,
-          minimizeToTray
+          minimizeToTray,
+          storeAdBlockMode,
+          storeAdChoiceSeen
         }
       }
     } catch (err: any) {
@@ -479,9 +476,9 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
     try {
       if (typeof settings.downloadPath === 'string') setSetting('download_path', settings.downloadPath.trim())
       if (typeof settings.gamesPath === 'string') setSetting('games_path', settings.gamesPath.trim())
-      setSetting('auto_extract', settings.autoExtract ? 'true' : 'false')
-      setSetting('auto_update', settings.autoUpdate ? 'true' : 'false')
-      setSetting('parallel_downloads', String(clampInt(settings.parallelDownloads, 1, 10, 3)))
+      if (typeof settings.autoExtract === 'boolean') setSetting('auto_extract', settings.autoExtract ? 'true' : 'false')
+      if (typeof settings.autoUpdate === 'boolean') setSetting('auto_update', settings.autoUpdate ? 'true' : 'false')
+      if (settings.parallelDownloads !== undefined) setSetting('parallel_downloads', String(clampInt(settings.parallelDownloads, 1, 10, 3)))
       if (typeof settings.steamWebApiKey === 'string') setSetting('steam_web_api_key', settings.steamWebApiKey.trim())
       if (typeof settings.achievementSchemaBaseUrl === 'string') {
         setSetting('achievement_schema_base_url', normalizeOptionalHttpUrl(settings.achievementSchemaBaseUrl, ''))
@@ -513,12 +510,16 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         setSetting('notifications_enabled', settings.notificationsEnabled ? 'true' : 'false')
         setNotificationsEnabled(settings.notificationsEnabled)
       }
-      if (typeof settings.notificationPosition === 'string') {
-        const pos = settings.notificationPosition.trim()
-        setSetting('notification_position', ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(pos) ? pos : 'bottom-right')
-      }
       if (typeof settings.minimizeToTray === 'boolean') {
         setSetting('minimize_to_tray', settings.minimizeToTray ? 'true' : 'false')
+      }
+      if (typeof settings.storeAdBlockMode === 'string') {
+        const storeMode = normalizeStoreAdBlockMode(settings.storeAdBlockMode)
+        setSetting('store_ad_block_mode', storeMode)
+        void configureStoreAdBlocker(storeMode)
+      }
+      if (typeof settings.storeAdChoiceSeen === 'boolean') {
+        setSetting('store_ad_choice_seen', settings.storeAdChoiceSeen ? 'true' : 'false')
       }
       return { success: true }
     } catch (err: any) {
@@ -535,42 +536,6 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       return { success: true, diagnostics: await collectLauncherDiagnostics(currentSettings) }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao gerar diagnostico do launcher' }
-    }
-  })
-
-  // Test notification handler (dev/debug)
-  ipcMain.handle('test-notification', async (_event, type: string) => {
-    try {
-      console.log('[Notifications] Testing notification type:', type)
-
-      switch (type) {
-        case 'achievement':
-          notifyAchievementUnlocked(
-            'Conquista Desbloqueada!',
-            'Você completou o tutorial do VoidLauncher'
-          )
-          break
-
-        case 'download':
-          notifyDownloadComplete('Cyberpunk 2077')
-          break
-
-        case 'error':
-          notifyDownloadError('Elden Ring', 'Espaço em disco insuficiente')
-          break
-
-        case 'info':
-          notifyInfo('Sistema de Notificações', 'As notificações estão funcionando corretamente!')
-          break
-
-        default:
-          notifyInfo('Teste de Notificação', `Tipo: ${type}`)
-      }
-
-      return { success: true }
-    } catch (error: any) {
-      console.error('[Notifications] Test failed:', error)
-      return { success: false, error: error?.message || String(error) }
     }
   })
 }

@@ -1,8 +1,8 @@
 import React from 'react'
-import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight, Wrench } from 'lucide-react'
 import { useI18n } from '../i18n'
 
-type Tab = 'store' | 'library' | 'downloads' | 'settings'
+type Tab = 'store' | 'library' | 'downloads' | 'tools' | 'settings'
 
 interface SidebarProps {
   activeTab: Tab
@@ -89,6 +89,15 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         >
           <Download />
           <span>{t('app.tabs.downloads')}</span>
+        </div>
+
+        <div
+          className={`nav-item ${activeTab === 'tools' ? 'active' : ''}`}
+          onClick={() => onTabChange('tools')}
+          title={t('app.tabs.tools')}
+        >
+          <Wrench />
+          <span>{t('app.tabs.tools')}</span>
         </div>
 
         <div

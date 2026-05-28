@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { AlertCircle, Bell, Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2, Terminal } from 'lucide-react'
+import { AlertCircle, Bell, Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2, Terminal, Shield, ExternalLink, Heart } from 'lucide-react'
 import { useI18n, type SupportedLanguage } from '../i18n'
 
 interface Settings {
@@ -19,7 +19,8 @@ interface Settings {
   cloudSavesEnabled: boolean
   minimizeToTray: boolean
   notificationsEnabled: boolean
-  notificationPosition: string
+  storeAdBlockMode: 'popups' | 'all'
+  storeAdChoiceSeen?: boolean
 }
 
 type DriveFile = { id: string; name: string; modifiedTime?: string }
@@ -32,6 +33,9 @@ type LauncherDiagnostics = {
   tools?: { torrentAgentPath?: string | null; ludusaviPath?: string | null }
   checks?: LauncherDiagnosticCheck[]
 }
+
+const APP_VERSION = '0.3.0'
+const LAUNCHER_DONATE_URL = 'https://ko-fi.com/mroz59'
 
 function formatMaybeDate(s?: string) {
   if (!s) return '—'
@@ -56,7 +60,7 @@ function settingsSnapshot(settings: Settings) {
     cloudSavesEnabled: !!settings.cloudSavesEnabled,
     minimizeToTray: !!settings.minimizeToTray,
     notificationsEnabled: !!settings.notificationsEnabled,
-    notificationPosition: String(settings.notificationPosition || 'bottom-right').trim()
+    storeAdBlockMode: settings.storeAdBlockMode === 'all' ? 'all' : 'popups'
   })
 }
 
@@ -82,7 +86,8 @@ export default function SettingsTab() {
     cloudSavesEnabled: true,
     minimizeToTray: false,
     notificationsEnabled: true,
-    notificationPosition: 'bottom-right',
+    storeAdBlockMode: 'popups',
+    storeAdChoiceSeen: false,
   })
 
   const [runtimes, setRuntimes] = useState<Array<{ name: string; path: string; runner: string; source: string }>>([])
@@ -150,7 +155,8 @@ export default function SettingsTab() {
             ...raw,
             gamesPath: typeof raw?.gamesPath === 'string' ? raw.gamesPath : prev.gamesPath,
             notificationsEnabled: raw?.notificationsEnabled !== false,
-            notificationPosition: typeof raw?.notificationPosition === 'string' ? raw.notificationPosition : prev.notificationPosition,
+            storeAdBlockMode: raw?.storeAdBlockMode === 'all' ? 'all' : 'popups',
+            storeAdChoiceSeen: raw?.storeAdChoiceSeen === true,
             protonDefaultRuntimePath: typeof raw?.protonDefaultRuntimePath === 'string'
               ? raw.protonDefaultRuntimePath
               : (typeof raw?.protonPath === 'string' ? raw.protonPath : prev.protonDefaultRuntimePath),
@@ -268,6 +274,11 @@ export default function SettingsTab() {
       if (!res.success) {
         setSaveStatus({ state: 'error', message: res.error || t('settings.save.error') })
       } else {
+        try {
+          localStorage.setItem('of_store_ad_block_mode', settings.storeAdBlockMode === 'all' ? 'all' : 'popups')
+        } catch {
+          // ignore
+        }
         await loadSettings()
         if (platformInfo.isLinux) {
           refreshRuntimes()
@@ -480,28 +491,36 @@ export default function SettingsTab() {
 
           <div className="settings-card-item">
             <div className="settings-card-info">
-              <div className="settings-card-title">{t('settings.notificationPosition.title')}</div>
+              <div className="settings-card-title">
+                <Shield size={16} />
+                {t('settings.storeAdBlock.title')}
+              </div>
               <div className="settings-card-description">
-                {t('settings.notificationPosition.description')}
+                {t('settings.storeAdBlock.description')}
               </div>
             </div>
             <div className="settings-card-control settings-actions-column">
               <div className="settings-select-wrapper">
                 <select
                   className="settings-select settings-select-compact"
-                  value={settings.notificationPosition || 'bottom-right'}
-                  onChange={(e) => setSettings({ ...settings, notificationPosition: e.target.value })}
+                  value={settings.storeAdBlockMode || 'popups'}
+                  onChange={(e) => setSettings({
+                    ...settings,
+                    storeAdBlockMode: e.target.value === 'all' ? 'all' : 'popups',
+                    storeAdChoiceSeen: true
+                  })}
                 >
-                  <option value="bottom-right">{t('settings.notificationPosition.bottomRight')}</option>
-                  <option value="bottom-left">{t('settings.notificationPosition.bottomLeft')}</option>
-                  <option value="top-right">{t('settings.notificationPosition.topRight')}</option>
-                  <option value="top-left">{t('settings.notificationPosition.topLeft')}</option>
+                  <option value="popups">{t('settings.storeAdBlock.popupsOnly')}</option>
+                  <option value="all">{t('settings.storeAdBlock.allAds')}</option>
                 </select>
                 <ChevronDown size={16} className="settings-select-icon" />
               </div>
-              <button className="settings-btn ghost" onClick={() => window.electronAPI.testNotification('info')}>
-                <Bell size={14} />
-                {t('common.test')}
+              <button
+                className="settings-btn ghost"
+                onClick={() => window.electronAPI.openExternal('https://online-fix.me/guides/17009-kak-poluchit-rol-how-to-obtain-role-mecenat.html')}
+              >
+                <ExternalLink size={14} />
+                {t('settings.storeAdBlock.donatorLink')}
               </button>
             </div>
           </div>
@@ -1025,7 +1044,28 @@ export default function SettingsTab() {
                 {t('settings.about.version')}
               </div>
             </div>
-            <div className="settings-version-badge">v0.2.0</div>
+            <div className="settings-version-badge">v{APP_VERSION}</div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Heart size={16} />
+                {t('settings.donate.title')}
+              </div>
+              <div className="settings-card-description">
+                {t('settings.donate.description')}
+              </div>
+            </div>
+            <div className="settings-card-control">
+              <button
+                className="settings-btn primary"
+                onClick={() => window.electronAPI.openExternal(LAUNCHER_DONATE_URL)}
+              >
+                <Heart size={14} />
+                {t('settings.donate.button')}
+              </button>
+            </div>
           </div>
         </div>
       </div>

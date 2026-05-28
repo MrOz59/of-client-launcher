@@ -1074,8 +1074,11 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
         console.log('[DownloadManager] .torrent file saved to:', torrentPath)
       }
 
-      // Now download the torrent content directly to games folder
+      // Now download the torrent content directly to games folder.
+      // Existing installs only need the Updates folder when the torrent provides it.
+      const torrentDownloadMode = firstInstall ? 'all' : 'updates'
       console.log('[DownloadManager] Starting torrent download to:', installPath)
+      console.log('[DownloadManager] Torrent file mode:', torrentDownloadMode)
       let lastDbProgressWriteAt = 0
       let lastDbProgressValue = -1
       let infoHashSaved = false
@@ -1101,7 +1104,7 @@ fs.mkdirSync(downloadDestPath, { recursive: true })
           updateDownloadProgress(Number(downloadId), progress)
         }
         onProgress?.(progress, details)
-      }, aliases)
+      }, aliases, undefined, torrentDownloadMode)
 
       // Move downloaded content from temp download folder to final install folder
       moveDirContents(downloadDestPath, installPath)

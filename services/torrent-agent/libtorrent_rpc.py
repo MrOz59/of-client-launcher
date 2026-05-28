@@ -343,7 +343,94 @@ def _tune_handle_for_download(handle):
         pass
 
 
-def add_torrent(source, save_path):
+def _torrent_file_paths_from_info(ti):
+    paths = []
+    try:
+        fs_obj = ti.files()
+        count = int(fs_obj.num_files())
+        for i in range(count):
+            try:
+                paths.append(str(fs_obj.file_path(i) or ""))
+            except Exception:
+                paths.append("")
+    except Exception:
+        pass
+    return paths
+
+
+def _is_update_file_path(file_path):
+    p = str(file_path or "").replace("\\", "/").lower()
+    parts = [x for x in p.split("/") if x]
+    name = parts[-1] if parts else p
+    return (
+        "updates" in parts
+        or "/updates/" in p
+        or name.startswith("update")
+        or ".update." in name
+        or "_update_" in name
+        or "-update-" in name
+    )
+
+
+def _select_update_files_if_available(atp, ti, mode):
+    if str(mode or "").lower() != "updates":
+        return {"selected": False, "wanted": 0, "total": 0}
+
+    paths = _torrent_file_paths_from_info(ti)
+    if not paths:
+        _log("[torrent-agent] update-only requested, but torrent file list is unavailable; downloading full torrent")
+        return {"selected": False, "wanted": 0, "total": 0}
+
+    priorities = [4 if _is_update_file_path(p) else 0 for p in paths]
+    wanted = sum(1 for p in priorities if p > 0)
+    total = len(priorities)
+    if wanted <= 0:
+        _log("[torrent-agent] update-only requested, but no Updates files were found; downloading full torrent")
+        return {"selected": False, "wanted": 0, "total": total}
+
+    try:
+        atp.file_priorities = priorities
+        _log("[torrent-agent] selected update files: %d of %d" % (wanted, total))
+        return {"selected": True, "wanted": wanted, "total": total}
+    except Exception:
+        _log("[torrent-agent] failed to set update file priorities; downloading full torrent")
+        return {"selected": False, "wanted": wanted, "total": total}
+
+
+def _apply_update_file_priorities(handle, mode):
+    if str(mode or "").lower() != "updates":
+        return {"selected": False, "wanted": 0, "total": 0}
+
+    try:
+        ti = handle.get_torrent_info()
+    except Exception:
+        return {"selected": False, "wanted": 0, "total": 0}
+
+    paths = _torrent_file_paths_from_info(ti)
+    if not paths:
+        _log("[torrent-agent] update-only requested, but torrent file list is unavailable; downloading full torrent")
+        return {"selected": False, "wanted": 0, "total": 0}
+
+    priorities = [4 if _is_update_file_path(p) else 0 for p in paths]
+    wanted = sum(1 for p in priorities if p > 0)
+    total = len(priorities)
+    if wanted <= 0:
+        _log("[torrent-agent] update-only requested, but no Updates files were found; downloading full torrent")
+        return {"selected": False, "wanted": 0, "total": total}
+
+    try:
+        if hasattr(handle, "prioritize_files"):
+            handle.prioritize_files(priorities)
+        else:
+            handle.set_file_priorities(priorities)
+        _log("[torrent-agent] selected update files: %d of %d" % (wanted, total))
+        return {"selected": True, "wanted": wanted, "total": total}
+    except Exception:
+        _log("[torrent-agent] failed to set update file priorities; downloading full torrent")
+        return {"selected": False, "wanted": wanted, "total": total}
+
+
+def add_torrent(source, save_path, mode=None):
     if not source:
         raise _rpc_error("source required", "INVALID_SOURCE")
 
@@ -367,6 +454,7 @@ def add_torrent(source, save_path):
         torrent_info_hash = _info_hash_str(ti.info_hash())
         existing = _find_handle_by_info_hash(torrent_info_hash)
         if existing is not None:
+            _apply_update_file_priorities(existing, mode)
             _ensure_unmanaged(existing)
             _tune_handle_for_download(existing)
             try:
@@ -378,6 +466,7 @@ def add_torrent(source, save_path):
             atp = lt.add_torrent_params()
             atp.ti = ti
             atp.save_path = save_path
+            _select_update_files_if_available(atp, ti, mode)
         except Exception:
             atp = {"ti": ti, "save_path": save_path}
     else:
@@ -389,6 +478,7 @@ def add_torrent(source, save_path):
         torrent_info_hash = _params_info_hash(atp)
         existing = _find_handle_by_info_hash(torrent_info_hash)
         if existing is not None:
+            _apply_update_file_priorities(existing, mode)
             _ensure_unmanaged(existing)
             _tune_handle_for_download(existing)
             try:
@@ -420,6 +510,7 @@ def add_torrent(source, save_path):
         torrent_info_hash = _params_info_hash(atp)
         existing = _find_handle_by_info_hash(torrent_info_hash)
         if existing is not None:
+            _apply_update_file_priorities(existing, mode)
             _ensure_unmanaged(existing)
             _tune_handle_for_download(existing)
             try:
@@ -430,6 +521,7 @@ def add_torrent(source, save_path):
         raise _rpc_error("Could not add torrent: %s" % e, "ADD_TORRENT_FAILED")
 
     # Ensure we are not auto-managed and not paused.
+    _apply_update_file_priorities(h, mode)
     _ensure_unmanaged(h)
     _tune_handle_for_download(h)
     try:
@@ -624,7 +716,7 @@ def ping():
 
 METHODS = {
     "ping": lambda params: ping(),
-    "add": lambda params: {"infoHash": add_torrent(params.get("source"), params.get("savePath"))},
+    "add": lambda params: {"infoHash": add_torrent(params.get("source"), params.get("savePath"), params.get("mode"))},
     "pause": lambda params: pause_torrent(params.get("torrentId")),
     "resume": lambda params: resume_torrent(params.get("torrentId")),
     "remove": lambda params: remove_torrent(params.get("torrentId"), bool(params.get("deleteFiles", False))),
