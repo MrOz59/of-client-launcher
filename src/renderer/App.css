@@ -666,6 +666,54 @@ body {
   font-weight: 600;
 }
 
+.launcher-update-banner {
+  margin: 12px 24px 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.11);
+}
+
+.launcher-update-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.launcher-update-banner__main svg {
+  color: #a78bfa;
+  flex: 0 0 auto;
+}
+
+.launcher-update-banner__main strong,
+.launcher-update-banner__main span {
+  display: block;
+}
+
+.launcher-update-banner__main strong {
+  color: #f5f3ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.launcher-update-banner__main span {
+  margin-top: 2px;
+  color: #c4b5fd;
+  font-size: 12px;
+}
+
+.launcher-update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .content-body {
   flex: 1;
   overflow: auto;
@@ -2402,6 +2450,25 @@ body {
   color: #a78bfa;
 }
 
+.launcher-update-meta {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #8b95a7;
+  font-size: 12px;
+}
+
+.launcher-update-message {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.08);
+  color: #c4b5fd;
+  font-size: 12px;
+}
+
 /* Settings Footer */
 .settings-footer {
   margin-top: 32px;
@@ -2414,6 +2481,15 @@ body {
 }
 
 @media (max-width: 760px) {
+  .launcher-update-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .launcher-update-banner__actions {
+    justify-content: space-between;
+  }
+
   .settings-card-item {
     flex-direction: column;
     gap: 14px;

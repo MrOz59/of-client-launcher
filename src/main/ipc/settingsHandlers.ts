@@ -22,6 +22,7 @@ import { findEosOverlayInstallPath, getDisplayCompatibilityInfo, isEosOverlayPat
 import { resolveLegendaryBinary } from '../legendary'
 import { resolveLudusaviBinary } from '../ludusavi'
 import { configureStoreAdBlocker, normalizeStoreAdBlockMode } from '../storeAdBlocker'
+import { checkLauncherUpdate, getLauncherVersion, installAppImageUpdate } from '../appUpdates'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 const LANGUAGE_PACK_MAX_BYTES = 1024 * 1024
@@ -356,7 +357,7 @@ async function collectLauncherDiagnostics(settings: any) {
   return {
     generatedAt: Date.now(),
     app: {
-      version: app.getVersion(),
+      version: getLauncherVersion(),
       platform: process.platform,
       packaged: app.isPackaged,
       userData: app.getPath('userData')
@@ -536,6 +537,23 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       return { success: true, diagnostics: await collectLauncherDiagnostics(currentSettings) }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao gerar diagnostico do launcher' }
+    }
+  })
+
+  ipcMain.handle('get-launcher-update-status', async (_event, payload?: { force?: boolean }) => {
+    try {
+      const status = await checkLauncherUpdate({ force: payload?.force === true })
+      return { success: true, status }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao verificar atualização do launcher' }
+    }
+  })
+
+  ipcMain.handle('install-launcher-appimage-update', async () => {
+    try {
+      return await installAppImageUpdate()
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao instalar atualização do AppImage' }
     }
   })
 }

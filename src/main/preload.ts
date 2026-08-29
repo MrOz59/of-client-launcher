@@ -137,6 +137,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
+  getLauncherUpdateStatus: (force?: boolean) => ipcRenderer.invoke('get-launcher-update-status', { force }),
+  installLauncherAppImageUpdate: () => ipcRenderer.invoke('install-launcher-appimage-update'),
   getToolsStatus: () => ipcRenderer.invoke('tools-status'),
   listToolReleases: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', limit?: number, force?: boolean) =>
     ipcRenderer.invoke('tools-list-releases', { tool, limit, force }),

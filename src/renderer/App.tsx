@@ -7,9 +7,19 @@ import SettingsTab from './components/SettingsTab'
 import ToolsTab from './components/ToolsTab'
 import LoginOverlay from './components/LoginOverlay'
 import { useI18n } from './i18n'
+import { Download, ExternalLink, X } from 'lucide-react'
 import './App.css'
 
 type Tab = 'store' | 'library' | 'downloads' | 'tools' | 'settings'
+type LauncherUpdateStatus = {
+  currentVersion: string
+  latestVersion?: string
+  latestTag?: string
+  releaseUrl?: string
+  canAutoUpdate?: boolean
+  updatePackage?: 'appimage' | 'manual'
+  updateAvailable: boolean
+}
 
 export default function App() {
   const { t } = useI18n()
@@ -20,6 +30,15 @@ export default function App() {
   const [loginOverlayOpen, setLoginOverlayOpen] = useState(false)
   const [storeWebviewResetKey, setStoreWebviewResetKey] = useState(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [launcherUpdate, setLauncherUpdate] = useState<LauncherUpdateStatus | null>(null)
+  const [launcherUpdateInstalling, setLauncherUpdateInstalling] = useState(false)
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('voidlauncher.dismissedUpdateVersion')
+    } catch {
+      return null
+    }
+  })
 
   useEffect(() => {
     // Check if user has cookies (is logged in)
@@ -65,6 +84,26 @@ export default function App() {
       try { offCleared?.() } catch {}
       try { offNavigateTab?.() } catch {}
       try { offNavigateGame?.() } catch {}
+    }
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+
+    async function checkLauncherUpdate() {
+      try {
+        const res = await window.electronAPI.getLauncherUpdateStatus(false)
+        if (!disposed && res?.success && res.status) {
+          setLauncherUpdate(res.status)
+        }
+      } catch (err) {
+        console.warn('Failed to check launcher update:', err)
+      }
+    }
+
+    checkLauncherUpdate()
+    return () => {
+      disposed = true
     }
   }, [])
 
@@ -146,6 +185,36 @@ export default function App() {
     }
   }
 
+  const updateVersion = launcherUpdate?.latestVersion || launcherUpdate?.latestTag || ''
+  const showUpdateBanner = Boolean(launcherUpdate?.updateAvailable && updateVersion && dismissedUpdateVersion !== updateVersion)
+  const dismissUpdateBanner = () => {
+    if (!updateVersion) return
+    setDismissedUpdateVersion(updateVersion)
+    try {
+      localStorage.setItem('voidlauncher.dismissedUpdateVersion', updateVersion)
+    } catch {
+      // ignore
+    }
+  }
+  const installLauncherUpdate = async () => {
+    if (!launcherUpdate?.canAutoUpdate) {
+      if (launcherUpdate?.releaseUrl) await window.electronAPI.openExternal(launcherUpdate.releaseUrl)
+      return
+    }
+
+    setLauncherUpdateInstalling(true)
+    try {
+      const res = await window.electronAPI.installLauncherAppImageUpdate()
+      if (!res?.success) {
+        window.alert(res?.error || t('app.updateBanner.installFailed'))
+        setLauncherUpdateInstalling(false)
+      }
+    } catch (err: any) {
+      window.alert(err?.message || String(err))
+      setLauncherUpdateInstalling(false)
+    }
+  }
+
   return (
     <div className="app-container">
       <LoginOverlay
@@ -174,6 +243,32 @@ export default function App() {
         <div className="content-header">
           <h2>{getTabTitle(activeTab)}</h2>
         </div>
+        {showUpdateBanner && (
+          <div className="launcher-update-banner">
+            <div className="launcher-update-banner__main">
+              <Download size={17} />
+              <div>
+                <strong>{t('app.updateBanner.title', { version: updateVersion.replace(/^v/i, '') })}</strong>
+                <span>{t('app.updateBanner.description', { current: launcherUpdate?.currentVersion || '' })}</span>
+              </div>
+            </div>
+            <div className="launcher-update-banner__actions">
+              <button
+                className="settings-btn primary sm"
+                disabled={launcherUpdateInstalling || (!launcherUpdate?.canAutoUpdate && !launcherUpdate?.releaseUrl)}
+                onClick={installLauncherUpdate}
+              >
+                {launcherUpdate?.canAutoUpdate ? <Download size={13} className={launcherUpdateInstalling ? 'of-spin' : ''} /> : <ExternalLink size={13} />}
+                {launcherUpdate?.canAutoUpdate
+                  ? launcherUpdateInstalling ? t('app.updateBanner.installing') : t('app.updateBanner.install')
+                  : t('app.updateBanner.open')}
+              </button>
+              <button className="settings-btn-icon" onClick={dismissUpdateBanner} title={t('app.updateBanner.dismiss')}>
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="content-body">
           {activeTab !== 'downloads' && renderTabContent()}
           <div style={{ display: activeTab === 'downloads' ? 'block' : 'none', height: '100%' }}>

@@ -141,6 +141,30 @@ declare global {
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
       getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      getLauncherUpdateStatus: (force?: boolean) => Promise<{
+        success: boolean
+        status?: {
+          currentVersion: string
+          latestVersion?: string
+          latestTag?: string
+          releaseName?: string
+          releaseUrl?: string
+          publishedAt?: string
+          canAutoUpdate?: boolean
+          updatePackage?: 'appimage' | 'manual'
+          appImageAsset?: {
+            name: string
+            downloadUrl: string
+            size?: number
+          }
+          updateAvailable: boolean
+          fromCache?: boolean
+          checkedAt?: string
+          error?: string
+        }
+        error?: string
+      }>
+      installLauncherAppImageUpdate: () => Promise<{ success: boolean; message?: string; error?: string }>
       getToolsStatus: () => Promise<{ success: boolean; status?: any; error?: string }>
       listToolReleases: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', limit?: number, force?: boolean) => Promise<{ success: boolean; releases?: Array<{ tag: string; name: string; publishedAt?: string; assetName?: string; downloadUrl?: string }>; fromCache?: boolean; warning?: string; error?: string }>
       installTool: (tool: 'proton-ge' | 'proton-cachyos' | 'legendary' | 'ludusavi' | 'eos-overlay', version?: string) => Promise<{ success: boolean; status?: any; path?: string; downloaded?: boolean; error?: string }>

@@ -33,8 +33,26 @@ type LauncherDiagnostics = {
   tools?: { torrentAgentPath?: string | null; ludusaviPath?: string | null }
   checks?: LauncherDiagnosticCheck[]
 }
+type LauncherUpdateStatus = {
+  currentVersion: string
+  latestVersion?: string
+  latestTag?: string
+  releaseName?: string
+  releaseUrl?: string
+  publishedAt?: string
+  canAutoUpdate?: boolean
+  updatePackage?: 'appimage' | 'manual'
+  appImageAsset?: {
+    name: string
+    downloadUrl: string
+    size?: number
+  }
+  updateAvailable: boolean
+  fromCache?: boolean
+  checkedAt?: string
+  error?: string
+}
 
-const APP_VERSION = '0.3.0'
 const LAUNCHER_DONATE_URL = 'https://ko-fi.com/mroz59'
 
 function formatMaybeDate(s?: string) {
@@ -97,6 +115,11 @@ export default function SettingsTab() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: 'idle', message: t('settings.save.idle') })
   const [launcherDiagnostics, setLauncherDiagnostics] = useState<LauncherDiagnostics | null>(null)
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
+  const [launcherUpdate, setLauncherUpdate] = useState<LauncherUpdateStatus | null>(null)
+  const [launcherVersion, setLauncherVersion] = useState('—')
+  const [launcherUpdateLoading, setLauncherUpdateLoading] = useState(false)
+  const [launcherUpdateInstalling, setLauncherUpdateInstalling] = useState(false)
+  const [launcherUpdateMessage, setLauncherUpdateMessage] = useState<string | null>(null)
 
   // Drive UI state
   const [driveFiles, setDriveFiles] = useState<DriveFile[] | null>(null)
@@ -131,6 +154,7 @@ export default function SettingsTab() {
         // ignore
       }
       loadLauncherDiagnostics()
+      loadLauncherUpdate(false)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -202,6 +226,54 @@ export default function SettingsTab() {
       setLauncherDiagnostics({ error: err?.message || String(err), checks: [] })
     } finally {
       setDiagnosticsLoading(false)
+    }
+  }
+
+  const loadLauncherUpdate = async (force = false) => {
+    setLauncherUpdateLoading(true)
+    setLauncherUpdateMessage(null)
+    try {
+      const res = await window.electronAPI.getLauncherUpdateStatus(force)
+      if (res.success && res.status) {
+        setLauncherUpdate(res.status)
+        setLauncherVersion(res.status.currentVersion || '—')
+      } else {
+        setLauncherUpdate({
+          currentVersion: launcherVersion !== '—' ? launcherVersion : '',
+          updateAvailable: false,
+          error: res.error || t('settings.launcherUpdate.failed')
+        })
+      }
+    } catch (err: any) {
+      setLauncherUpdate({
+        currentVersion: launcherVersion !== '—' ? launcherVersion : '',
+        updateAvailable: false,
+        error: err?.message || String(err)
+      })
+    } finally {
+      setLauncherUpdateLoading(false)
+    }
+  }
+
+  const installLauncherUpdate = async () => {
+    if (!launcherUpdate?.canAutoUpdate) {
+      if (launcherUpdate?.releaseUrl) await window.electronAPI.openExternal(launcherUpdate.releaseUrl)
+      return
+    }
+
+    setLauncherUpdateInstalling(true)
+    setLauncherUpdateMessage(t('settings.launcherUpdate.installing'))
+    try {
+      const res = await window.electronAPI.installLauncherAppImageUpdate()
+      if (!res.success) {
+        setLauncherUpdateMessage(res.error || t('settings.launcherUpdate.installFailed'))
+        setLauncherUpdateInstalling(false)
+      } else {
+        setLauncherUpdateMessage(res.message || t('settings.launcherUpdate.restarting'))
+      }
+    } catch (err: any) {
+      setLauncherUpdateMessage(err?.message || String(err))
+      setLauncherUpdateInstalling(false)
     }
   }
 
@@ -1041,10 +1113,56 @@ export default function SettingsTab() {
             <div className="settings-card-info">
               <div className="settings-card-title">VoidLauncher</div>
               <div className="settings-card-description">
-                {t('settings.about.version')}
+                {t('settings.about.version', { version: launcherVersion })}
               </div>
             </div>
-            <div className="settings-version-badge">v{APP_VERSION}</div>
+            <div className="settings-version-badge">v{launcherVersion}</div>
+          </div>
+
+          <div className="settings-card-item">
+            <div className="settings-card-info">
+              <div className="settings-card-title">
+                <Download size={16} />
+                {t('settings.launcherUpdate.title')}
+              </div>
+              <div className="settings-card-description">
+                {launcherUpdate?.updateAvailable
+                  ? t('settings.launcherUpdate.available', { version: launcherUpdate.latestVersion || launcherUpdate.latestTag || '' })
+                  : launcherUpdate?.error
+                    ? t('settings.launcherUpdate.failed')
+                    : t('settings.launcherUpdate.upToDate')}
+                {launcherUpdate?.fromCache ? ` ${t('settings.launcherUpdate.fromCache')}` : ''}
+                {launcherUpdate?.updateAvailable && !launcherUpdate?.canAutoUpdate ? ` ${t('settings.launcherUpdate.manualOnly')}` : ''}
+              </div>
+              <div className="launcher-update-meta">
+                <span>{t('settings.launcherUpdate.current')}: v{launcherUpdate?.currentVersion || launcherVersion}</span>
+                <span>{t('settings.launcherUpdate.latest')}: {launcherUpdate?.latestVersion ? `v${launcherUpdate.latestVersion}` : '—'}</span>
+                <span>{t('settings.launcherUpdate.package')}: {launcherUpdate?.canAutoUpdate ? 'AppImage' : t('settings.launcherUpdate.manual')}</span>
+                {launcherUpdate?.appImageAsset?.name && <span>{launcherUpdate.appImageAsset.name}</span>}
+                {launcherUpdate?.checkedAt && <span>{t('settings.launcherUpdate.checked')}: {formatMaybeDate(launcherUpdate.checkedAt)}</span>}
+              </div>
+              {launcherUpdateMessage && <div className="launcher-update-message">{launcherUpdateMessage}</div>}
+            </div>
+            <div className="settings-card-control settings-btn-row">
+              <button
+                className="settings-btn secondary"
+                onClick={() => loadLauncherUpdate(true)}
+                disabled={launcherUpdateLoading || launcherUpdateInstalling}
+              >
+                <RefreshCw size={14} className={launcherUpdateLoading ? 'of-spin' : ''} />
+                {t('settings.launcherUpdate.check')}
+              </button>
+              <button
+                className="settings-btn primary"
+                disabled={launcherUpdateInstalling || (!launcherUpdate?.releaseUrl && !launcherUpdate?.canAutoUpdate)}
+                onClick={installLauncherUpdate}
+              >
+                {launcherUpdate?.canAutoUpdate ? <Download size={14} className={launcherUpdateInstalling ? 'of-spin' : ''} /> : <ExternalLink size={14} />}
+                {launcherUpdate?.canAutoUpdate
+                  ? launcherUpdateInstalling ? t('settings.launcherUpdate.installingShort') : t('settings.launcherUpdate.installAppImage')
+                  : t('settings.launcherUpdate.openRelease')}
+              </button>
+            </div>
           </div>
 
           <div className="settings-card-item">
