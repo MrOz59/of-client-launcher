@@ -540,7 +540,7 @@ fn position_toast_window(win: &WebviewWindow) {
 #[cfg(target_os = "linux")]
 fn apply_no_focus_hints(win: &WebviewWindow) {
     use gtk::gdk::WindowTypeHint;
-    use gtk::prelude::GtkWindowExt;
+    use gtk::prelude::{GtkWindowExt, WidgetExt};
 
     let gtk_win = match win.gtk_window() {
         Ok(gtk_win) => gtk_win,
@@ -556,6 +556,70 @@ fn apply_no_focus_hints(win: &WebviewWindow) {
     gtk_win.set_skip_taskbar_hint(true);
     gtk_win.set_skip_pager_hint(true);
     gtk_win.set_keep_above(true);
+
+    // Precisa da janela X criada (sem mapear) pra poder escrever a propriedade.
+    gtk_win.realize();
+    set_critical_notification_type(&gtk_win);
+}
+
+// ── Camada acima de janelas em tela cheia ─────────────────────────────────────
+//
+// `_NET_WM_WINDOW_TYPE_NOTIFICATION` sozinho não basta: no KWin a camada de
+// notificações fica ABAIXO da ActiveLayer, que é onde vive a janela fullscreen
+// focada — ou seja, o toast some atrás do jogo. Antes ele aparecia só porque
+// roubava o foco e tirava o jogo dessa camada.
+//
+// A propriedade `_NET_WM_WINDOW_TYPE` é uma lista ordenada e o WM usa o primeiro
+// tipo que reconhece (EWMH), então pedimos a camada de notificação crítica do
+// KDE — feita exatamente para avisos que precisam aparecer sobre fullscreen — e
+// deixamos o tipo padrão logo atrás, para os WMs que não conhecem o átomo do KDE.
+
+#[cfg(target_os = "linux")]
+fn set_critical_notification_type(gtk_win: &gtk::ApplicationWindow) {
+    use gtk::prelude::{Cast, WidgetExt};
+    use x11::xlib;
+
+    let Some(gdk_win) = gtk_win.window() else {
+        eprintln!("[void-toast] janela GDK indisponível; mantendo tipo notification");
+        return;
+    };
+
+    let Ok(x11_win) = gdk_win.downcast::<gdkx11::X11Window>() else {
+        // Backend Wayland nativo: nada a fazer aqui.
+        return;
+    };
+
+    let xid = x11_win.xid();
+
+    unsafe {
+        let display = xlib::XOpenDisplay(std::ptr::null());
+        if display.is_null() {
+            eprintln!("[void-toast] não foi possível abrir o display X11");
+            return;
+        }
+
+        let intern = |name: &[u8]| xlib::XInternAtom(display, name.as_ptr() as *const _, 0);
+
+        let property = intern(b"_NET_WM_WINDOW_TYPE\0");
+        let atoms: [xlib::Atom; 2] = [
+            intern(b"_KDE_NET_WM_WINDOW_TYPE_CRITICAL_NOTIFICATION\0"),
+            intern(b"_NET_WM_WINDOW_TYPE_NOTIFICATION\0"),
+        ];
+
+        xlib::XChangeProperty(
+            display,
+            xid,
+            property,
+            xlib::XA_ATOM,
+            32,
+            xlib::PropModeReplace,
+            atoms.as_ptr() as *const u8,
+            atoms.len() as i32,
+        );
+
+        xlib::XFlush(display);
+        xlib::XCloseDisplay(display);
+    }
 }
 
 #[cfg(not(target_os = "linux"))]

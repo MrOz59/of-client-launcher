@@ -23,6 +23,8 @@ serde_json = "1"
 # janela (accept-focus / focus-on-map / type hint) que impedem o roubo de foco.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+gdkx11 = "0.18"
+x11 = { version = "2", features = ["xlib"] }
 
 [profile.release-fast]
 inherits = "release"
