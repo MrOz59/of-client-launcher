@@ -120,6 +120,8 @@ export default function SettingsTab() {
   const [launcherUpdateLoading, setLauncherUpdateLoading] = useState(false)
   const [launcherUpdateInstalling, setLauncherUpdateInstalling] = useState(false)
   const [launcherUpdateMessage, setLauncherUpdateMessage] = useState<string | null>(null)
+  const [notificationTestCountdown, setNotificationTestCountdown] = useState(0)
+  const [notificationTestError, setNotificationTestError] = useState<string | null>(null)
 
   // Drive UI state
   const [driveFiles, setDriveFiles] = useState<DriveFile[] | null>(null)
@@ -252,6 +254,28 @@ export default function SettingsTab() {
       })
     } finally {
       setLauncherUpdateLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (notificationTestCountdown <= 0) return
+    const id = setTimeout(() => setNotificationTestCountdown((n) => n - 1), 1000)
+    return () => clearTimeout(id)
+  }, [notificationTestCountdown])
+
+  const runNotificationTest = async () => {
+    setNotificationTestError(null)
+    try {
+      const res = await window.electronAPI.testNotification()
+      if (!res?.success) {
+        setNotificationTestError(res?.error === 'notifications-disabled'
+          ? t('settings.notifications.testDisabled')
+          : t('settings.notifications.testFailed'))
+        return
+      }
+      setNotificationTestCountdown(Math.max(1, Math.round((res.delayMs || 5000) / 1000)))
+    } catch {
+      setNotificationTestError(t('settings.notifications.testFailed'))
     }
   }
 
@@ -548,8 +572,14 @@ export default function SettingsTab() {
               <div className="settings-card-description">
                 {t('settings.notifications.description')}
               </div>
+              <div className="settings-status-message">
+                {notificationTestError
+                  || (notificationTestCountdown > 0
+                    ? t('settings.notifications.testPending', { seconds: String(notificationTestCountdown) })
+                    : t('settings.notifications.testHint'))}
+              </div>
             </div>
-            <div className="settings-card-control">
+            <div className="settings-card-control settings-actions-column">
               <label className="settings-toggle">
                 <input
                   type="checkbox"
@@ -558,6 +588,14 @@ export default function SettingsTab() {
                 />
                 <span className="settings-toggle-slider"></span>
               </label>
+              <button
+                className="settings-btn ghost"
+                onClick={runNotificationTest}
+                disabled={notificationTestCountdown > 0 || settings.notificationsEnabled === false}
+              >
+                <Bell size={14} />
+                {t('settings.notifications.test')}
+              </button>
             </div>
           </div>
 

@@ -17,7 +17,7 @@ import {
   winetricksAvailable
 } from '../protonManager'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
-import { setNotificationsEnabled } from '../desktopNotifications'
+import { notifyAchievementUnlocked, setNotificationsEnabled } from '../desktopNotifications'
 import { findEosOverlayInstallPath, getDisplayCompatibilityInfo, isEosOverlayPathValid } from '../utils'
 import { resolveLegendaryBinary } from '../legendary'
 import { resolveLudusaviBinary } from '../ludusavi'
@@ -25,6 +25,9 @@ import { configureStoreAdBlocker, normalizeStoreAdBlockMode } from '../storeAdBl
 import { checkLauncherUpdate, getLauncherVersion, installAppImageUpdate } from '../appUpdates'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
+const TEST_NOTIFICATION_DELAY_MS = 5000
+
+let testNotificationTimer: NodeJS.Timeout | null = null
 const LANGUAGE_PACK_MAX_BYTES = 1024 * 1024
 const LANGUAGE_PACK_FILE_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*\.json$/
 
@@ -538,6 +541,31 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao gerar diagnostico do launcher' }
     }
+  })
+
+  ipcMain.handle('test-notification', async () => {
+    if (getSetting('notifications_enabled') === 'false') {
+      return { success: false, error: 'notifications-disabled' }
+    }
+
+    // O atraso vive no processo principal de propósito: o usuário vai alternar
+    // para o jogo, e aí os timers do renderer ficam limitados pelo Chromium.
+    if (testNotificationTimer) clearTimeout(testNotificationTimer)
+    testNotificationTimer = setTimeout(() => {
+      testNotificationTimer = null
+      try {
+        notifyAchievementUnlocked(
+          'Conquista de teste',
+          'Se você está vendo isto durante o jogo, as notificações estão funcionando.',
+          undefined,
+          'VoidLauncher'
+        )
+      } catch (err) {
+        console.error('[Settings] Failed to send test notification:', err)
+      }
+    }, TEST_NOTIFICATION_DELAY_MS)
+
+    return { success: true, delayMs: TEST_NOTIFICATION_DELAY_MS }
   })
 
   ipcMain.handle('get-launcher-update-status', async (_event, payload?: { force?: boolean }) => {
