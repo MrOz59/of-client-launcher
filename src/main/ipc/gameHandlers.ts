@@ -1,7 +1,7 @@
 /**
  * IPC Handlers for Game Management
  */
-import { ipcMain, dialog, shell, BrowserWindow, app } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, app, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -17,7 +17,7 @@ import {
   extractGameIdFromUrl
 } from '../db'
 import { fetchGameUpdateInfo } from '../scraper'
-import { ensureGamePrefixFromDefault, findProtonRuntime } from '../protonManager'
+import { ensureGamePrefixFromDefault, findProtonRuntime, installExtraComponents, listProtonRuntimes, winetricksAvailable } from '../protonManager'
 import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
 import {
   findEosOverlayInstallPath,
@@ -53,6 +53,259 @@ const DEFAULT_PROTON_OPTIONS = {
   launchArgs: '',
   useGamescope: false,
   wineDllOverrides: ''
+}
+
+type CommunityGameFix = {
+  kind: 'voidlauncher.gameFix'
+  schemaVersion: 1
+  id: string
+  title: string
+  description?: string
+  author?: string
+  createdAt: string
+  launcherVersion?: string
+  game: {
+    id?: string | null
+    title?: string | null
+    url?: string | null
+    installedVersion?: string | null
+  }
+  proton?: {
+    runtimeName?: string | null
+    options?: Record<string, any>
+    steamAppId?: string | null
+  }
+  components?: {
+    winetricks?: string[]
+    protontricks?: string[]
+  }
+  notes?: string[]
+}
+
+const FIX_KIND = 'voidlauncher.gameFix'
+
+function safeFileName(value: string) {
+  return String(value || 'game-fix')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'game-fix'
+}
+
+function safeText(value: unknown, max = 500) {
+  return typeof value === 'string' ? value.trim().slice(0, max) : ''
+}
+
+function safeComponentList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(value
+    .map(v => safeText(v, 64))
+    .filter(v => /^[a-z0-9_.+-]+$/i.test(v))
+  )).slice(0, 40)
+}
+
+function safeProtonOptions(input: any) {
+  const src = input && typeof input === 'object' ? input : {}
+  return {
+    esync: src.esync !== false,
+    fsync: src.fsync !== false,
+    dxvk: src.dxvk !== false,
+    mesa_glthread: !!src.mesa_glthread,
+    locale: safeText(src.locale, 64),
+    gamemode: !!src.gamemode,
+    mangohud: !!src.mangohud,
+    logging: !!src.logging,
+    steamOverlay: src.steamOverlay !== false,
+    launchArgs: safeText(src.launchArgs, 512),
+    useGamescope: !!src.useGamescope,
+    wineDllOverrides: safeText(src.wineDllOverrides, 1024)
+  }
+}
+
+function parseFixProtonOptions(raw: unknown) {
+  try {
+    if (!raw) return { ...DEFAULT_PROTON_OPTIONS }
+    return safeProtonOptions(typeof raw === 'string' ? JSON.parse(raw) : raw)
+  } catch {
+    return { ...DEFAULT_PROTON_OPTIONS }
+  }
+}
+
+function normalizeGameFix(raw: any): CommunityGameFix {
+  if (!raw || typeof raw !== 'object') throw new Error('Arquivo de fix inválido')
+  if (raw.kind && raw.kind !== FIX_KIND) throw new Error('Este JSON não é um fix do VoidLauncher')
+
+  const proton = raw.proton && typeof raw.proton === 'object' ? raw.proton : {}
+  const components = raw.components && typeof raw.components === 'object' ? raw.components : {}
+  const game = raw.game && typeof raw.game === 'object' ? raw.game : {}
+  const createdAt = safeText(raw.createdAt, 64) || new Date().toISOString()
+  const id = safeText(raw.id, 120) || safeFileName(`${safeText(raw.title, 100) || 'community-fix'}-${createdAt}`)
+
+  return {
+    kind: FIX_KIND,
+    schemaVersion: 1,
+    id,
+    title: safeText(raw.title, 120) || 'Community fix',
+    description: safeText(raw.description, 1000),
+    author: safeText(raw.author, 80),
+    createdAt,
+    launcherVersion: safeText(raw.launcherVersion, 40),
+    game: {
+      id: safeText(game.id, 80) || null,
+      title: safeText(game.title, 160) || null,
+      url: safeText(game.url, 500) || null,
+      installedVersion: safeText(game.installedVersion, 80) || null
+    },
+    proton: {
+      runtimeName: safeText(proton.runtimeName || proton.version || proton.name, 160) || null,
+      options: safeProtonOptions(proton.options || raw.protonOptions || {}),
+      steamAppId: safeText(proton.steamAppId, 32).replace(/[^\d]/g, '') || null
+    },
+    components: {
+      winetricks: safeComponentList(components.winetricks),
+      protontricks: safeComponentList(components.protontricks)
+    },
+    notes: Array.isArray(raw.notes) ? raw.notes.map((n: unknown) => safeText(n, 300)).filter(Boolean).slice(0, 12) : []
+  }
+}
+
+function buildGameFix(game: any): CommunityGameFix {
+  const gameId = (game?.game_id as string | null) || extractGameIdFromUrl(game?.url || '')
+  const runtimePath = String(game?.proton_runtime || '').trim()
+  const runtimeName = runtimePath ? path.basename(runtimePath) : null
+  const createdAt = new Date().toISOString()
+  const title = `${game?.title || 'Game'} Proton fix`
+
+  return {
+    kind: FIX_KIND,
+    schemaVersion: 1,
+    id: `${gameId || safeFileName(game?.title || 'game')}-${Date.now()}`,
+    title,
+    description: '',
+    author: '',
+    createdAt,
+    launcherVersion: app.getVersion?.() || undefined,
+    game: {
+      id: gameId || null,
+      title: game?.title || null,
+      url: game?.url || null,
+      installedVersion: game?.installed_version || null
+    },
+    proton: {
+      runtimeName,
+      options: parseFixProtonOptions(game?.proton_options),
+      steamAppId: game?.steam_app_id ? String(game.steam_app_id) : null
+    },
+    components: {
+      winetricks: [],
+      protontricks: []
+    },
+    notes: [
+      'Este fix compartilha apenas configuracoes. Prefixo Wine, paths locais e saves nao sao incluidos.'
+    ]
+  }
+}
+
+function resolveRuntimePathFromFix(fix: CommunityGameFix): { runtimePath?: string | null; warning?: string } {
+  const wanted = safeText(fix.proton?.runtimeName, 160)
+  if (!wanted) return { runtimePath: null }
+
+  const wantedLower = wanted.toLowerCase()
+  const runtimes = listProtonRuntimes()
+  const match = runtimes.find(rt =>
+    rt.name.toLowerCase() === wantedLower ||
+    path.basename(rt.path).toLowerCase() === wantedLower ||
+    rt.path.toLowerCase().endsWith(`/${wantedLower}`)
+  )
+  if (match) return { runtimePath: match.path }
+  return { warning: `Runtime Proton nao encontrado: ${wanted}` }
+}
+
+function getGameFixesRoot() {
+  return path.join(app.getPath('userData'), 'game-fixes')
+}
+
+function gameFixFolderName(game: any) {
+  const gameId = (game?.game_id as string | null) || extractGameIdFromUrl(game?.url || '')
+  return safeFileName(gameId ? `game_${gameId}` : game?.title || game?.url || 'game')
+}
+
+function normalizeMatchText(value: unknown) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+function fixMatchesGame(fix: CommunityGameFix, game: any) {
+  const gameId = (game?.game_id as string | null) || extractGameIdFromUrl(game?.url || '')
+  const fixGameId = safeText(fix.game?.id, 80)
+  if (gameId && fixGameId && gameId === fixGameId) return true
+  if (fix.game?.url && game?.url && fix.game.url === game.url) return true
+  const fixTitle = normalizeMatchText(fix.game?.title)
+  const gameTitle = normalizeMatchText(game?.title)
+  return !!(fixTitle && gameTitle && fixTitle === gameTitle)
+}
+
+function localFixPath(game: any, fix: CommunityGameFix) {
+  const dir = path.join(getGameFixesRoot(), gameFixFolderName(game))
+  const file = `${safeFileName(fix.id || fix.title)}.json`
+  return path.join(dir, file)
+}
+
+function saveLocalGameFix(game: any, rawFix: any) {
+  const fix = normalizeGameFix(rawFix)
+  const filePath = localFixPath(game, fix)
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify(fix, null, 2))
+  return { fix, path: filePath }
+}
+
+function collectLocalFixFiles(root: string): string[] {
+  const out: string[] = []
+  const walk = (dir: string, depth: number) => {
+    if (depth < 0 || out.length >= 300) return
+    let entries: fs.Dirent[] = []
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const p = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(p, depth - 1)
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith('.json')) out.push(p)
+    }
+  }
+  walk(root, 2)
+  return out
+}
+
+function listLocalGameFixes(game: any) {
+  const root = getGameFixesRoot()
+  const files = collectLocalFixFiles(root)
+  const fixes: Array<{ fix: CommunityGameFix; path: string; updatedAt?: string }> = []
+  for (const filePath of files) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8')
+      if (raw.length > 256 * 1024) continue
+      const fix = normalizeGameFix(JSON.parse(raw))
+      if (!fixMatchesGame(fix, game)) continue
+      let updatedAt: string | undefined
+      try { updatedAt = fs.statSync(filePath).mtime.toISOString() } catch {}
+      fixes.push({ fix, path: filePath, updatedAt })
+    } catch {
+      // ignore invalid local fixes
+    }
+  }
+  fixes.sort((a, b) => String(b.updatedAt || b.fix.createdAt).localeCompare(String(a.updatedAt || a.fix.createdAt)))
+  return fixes
+}
+
+function getFixWinetricksComponents(fix: CommunityGameFix) {
+  return Array.from(new Set([
+    ...(fix.components?.winetricks || []),
+    // Backward compatibility for early fix files. Protontricks component names are
+    // winetricks verbs, and our managed prefixes are targeted more reliably via winetricks.
+    ...(fix.components?.protontricks || [])
+  ])).filter(Boolean)
 }
 
 function pathInfo(p?: string | null, baseDir?: string | null) {
@@ -744,6 +997,195 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('export-game-fix', async (_event, gameUrl: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+
+      const fix = buildGameFix(game)
+      const defaultPath = `${safeFileName(`${game.title || 'game'}-fix`)}.json`
+      const saveOptions: SaveDialogOptions = {
+        title: 'Exportar fix do jogo',
+        defaultPath,
+        filters: [
+          { name: 'VoidLauncher game fix', extensions: ['json'] },
+          { name: 'JSON', extensions: ['json'] }
+        ]
+      }
+      const owner = ctx.getMainWindow?.() || null
+      const res = owner
+        ? await dialog.showSaveDialog(owner, saveOptions)
+        : await dialog.showSaveDialog(saveOptions)
+      if (res.canceled || !res.filePath) return { success: false, canceled: true }
+
+      fs.writeFileSync(res.filePath, JSON.stringify(fix, null, 2))
+      return { success: true, fix, path: res.filePath }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao exportar fix' }
+    }
+  })
+
+  ipcMain.handle('import-game-fix', async () => {
+    try {
+      const openOptions: OpenDialogOptions = {
+        title: 'Importar fix do jogo',
+        properties: ['openFile'],
+        filters: [
+          { name: 'VoidLauncher game fix', extensions: ['json'] },
+          { name: 'JSON', extensions: ['json'] }
+        ]
+      }
+      const owner = ctx.getMainWindow?.() || null
+      const res = owner
+        ? await dialog.showOpenDialog(owner, openOptions)
+        : await dialog.showOpenDialog(openOptions)
+      if (res.canceled || !res.filePaths?.[0]) return { success: false, canceled: true }
+
+      const raw = fs.readFileSync(res.filePaths[0], 'utf8')
+      if (raw.length > 256 * 1024) return { success: false, error: 'Arquivo de fix muito grande' }
+
+      const fix = normalizeGameFix(JSON.parse(raw))
+      return { success: true, fix, path: res.filePaths[0] }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao importar fix' }
+    }
+  })
+
+  ipcMain.handle('list-game-fixes', async (_event, gameUrl: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      const fixes = listLocalGameFixes(game).map(item => ({
+        fix: item.fix,
+        path: item.path,
+        updatedAt: item.updatedAt
+      }))
+      return { success: true, fixes, directory: getGameFixesRoot() }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao listar fixes' }
+    }
+  })
+
+  ipcMain.handle('save-game-fix', async (_event, gameUrl: string, rawFix: any) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      const saved = saveLocalGameFix(game, rawFix)
+      return { success: true, fix: saved.fix, path: saved.path }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao salvar fix' }
+    }
+  })
+
+  ipcMain.handle('delete-game-fix', async (_event, gameUrl: string, fixId: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      const cleanId = safeText(fixId, 120)
+      if (!cleanId) return { success: false, error: 'Fix inválido' }
+      const match = listLocalGameFixes(game).find(item => item.fix.id === cleanId)
+      if (!match) return { success: false, error: 'Fix não encontrado' }
+
+      const root = path.resolve(getGameFixesRoot())
+      const target = path.resolve(match.path)
+      if (!target.startsWith(root + path.sep)) return { success: false, error: 'Path de fix inválido' }
+      fs.rmSync(target, { force: true })
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao remover fix' }
+    }
+  })
+
+  ipcMain.handle('apply-game-fix', async (_event, gameUrl: string, rawFix: any) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+
+      const fix = normalizeGameFix(rawFix)
+      const runtime = resolveRuntimePathFromFix(fix)
+      const patch: any = {}
+      const warnings: string[] = []
+
+      if (runtime.warning) warnings.push(runtime.warning)
+      if (runtime.runtimePath !== undefined) patch.proton_runtime = runtime.runtimePath || null
+
+      if (fix.proton?.options) patch.proton_options = JSON.stringify(safeProtonOptions(fix.proton.options))
+      if (fix.proton?.steamAppId !== undefined) patch.steam_app_id = fix.proton.steamAppId || null
+
+      if (Object.keys(patch).length) updateGameInfo(gameUrl, patch)
+
+      return {
+        success: true,
+        fix,
+        patch,
+        warnings,
+        pendingComponents: fix.components || { winetricks: [], protontricks: [] }
+      }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao aplicar fix' }
+    }
+  })
+
+  ipcMain.handle('install-game-fix-components', async (_event, gameUrl: string, rawFix: any) => {
+    try {
+      if (process.platform !== 'linux') return { success: false, error: 'Apenas disponível no Linux' }
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+
+      const fix = normalizeGameFix(rawFix)
+      const components = getFixWinetricksComponents(fix)
+      const warnings: string[] = []
+
+      if (!components.length) {
+        return { success: true, installed: [], warnings }
+      }
+      if (!winetricksAvailable()) {
+        return { success: false, error: 'winetricks não está instalado' }
+      }
+      if (ctx.inFlightPrefixJobs.has(gameUrl)) {
+        return { success: false, error: 'Já existe uma operação de prefixo em andamento para este jogo' }
+      }
+
+      if ((fix.components?.protontricks || []).length) {
+        warnings.push('Componentes protontricks do fix foram executados via winetricks no prefixo gerenciado.')
+      }
+
+      const runtimeFromFix = resolveRuntimePathFromFix(fix)
+      if (runtimeFromFix.warning) warnings.push(runtimeFromFix.warning)
+      const runtimePath = runtimeFromFix.runtimePath || game.proton_runtime || findProtonRuntime() || undefined
+      const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
+      const slug = stableId ? `game_${stableId}` : slugify(game?.title || gameUrl || 'game')
+
+      ctx.inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
+      let prefix = String(game.proton_prefix || '').trim()
+      if (!prefix || !fs.existsSync(prefix)) {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Criando prefixo para instalar componentes...' })
+        prefix = await ensureGamePrefixFromDefault(slug, runtimePath, undefined, false, (msg) => {
+          ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
+        })
+        updateGameInfo(gameUrl, { proton_prefix: prefix })
+      }
+
+      ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: `Instalando componentes do fix: ${components.join(' ')}`, prefix })
+      const ok = await installExtraComponents(prefix, components, (msg) => {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg, prefix })
+      })
+
+      ctx.inFlightPrefixJobs.delete(gameUrl)
+      if (ok) {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Componentes do fix instalados', prefix })
+      } else {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: 'Falha ao instalar componentes do fix', prefix })
+      }
+
+      return { success: ok, prefix, installed: ok ? components : [], warnings, error: ok ? undefined : 'Falha ao instalar componentes do fix' }
+    } catch (err: any) {
+      try { ctx.inFlightPrefixJobs.delete(gameUrl) } catch {}
+      ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
+      return { success: false, error: err?.message || 'Falha ao instalar componentes do fix' }
     }
   })
 

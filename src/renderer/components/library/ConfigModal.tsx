@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X } from 'lucide-react'
-import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom } from './types'
+import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X, Upload, Download, SlidersHorizontal } from 'lucide-react'
+import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom, CommunityGameFix } from './types'
 import { useI18n } from '../../i18n'
 
 export interface ConfigModalProps {
@@ -58,6 +58,7 @@ export interface ConfigModalProps {
   onSteamAppIdChange: (value: string) => void
   protonOptions: ProtonOptions
   onProtonOptionsChange: (options: ProtonOptions) => void
+  onGameFixApplied: (patch: Partial<Game>) => void
 
   // LAN tab
   lanMode: LanMode
@@ -151,6 +152,10 @@ export function ConfigModal(props: ConfigModalProps) {
               <Monitor size={14} />
               <span>Proton</span>
             </button>}
+            <button className={configTab === 'fixes' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('fixes')} type="button">
+              <SlidersHorizontal size={14} />
+              <span>{t('library.configModal.tabs.fixes')}</span>
+            </button>
             <button className={configTab === 'diagnostico' ? 'config-tab-btn active' : 'config-tab-btn'} onClick={() => onTabChange('diagnostico')} type="button">
               <Terminal size={14} />
               <span>{t('library.configModal.tabs.diagnostics')}</span>
@@ -164,6 +169,7 @@ export function ConfigModal(props: ConfigModalProps) {
           {configTab === 'geral' && <GeneralTab {...props} />}
           {configTab === 'onlinefix' && <OnlineFixTab {...props} />}
           {isLinux && configTab === 'proton' && <ProtonTab {...props} />}
+          {configTab === 'fixes' && <FixesTab {...props} />}
           {configTab === 'diagnostico' && <DiagnosticsTab {...props} />}
           {configTab === 'lan' && <LanTab {...props} />}
         </div>
@@ -967,6 +973,390 @@ function ProtonTab(props: ConfigModalProps) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function FixesTab(props: ConfigModalProps) {
+  const { game, protonVersion, protonRuntimes, protonOptions, steamAppId, onGameFixApplied } = props
+  const { t } = useI18n()
+  const [fix, setFix] = useState<CommunityGameFix | null>(null)
+  const [localFixes, setLocalFixes] = useState<Array<{ fix: CommunityGameFix; path?: string; updatedAt?: string }>>([])
+  const [busy, setBusy] = useState<'export' | 'import' | 'apply' | 'install' | 'save' | 'delete' | 'list' | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [pendingComponents, setPendingComponents] = useState<{ winetricks?: string[]; protontricks?: string[] } | null>(null)
+
+  const currentRuntime = protonRuntimes.find(rt => rt.path === protonVersion)
+  const currentRuntimeName = currentRuntime?.name || (protonVersion ? protonVersion.split(/[\\/]/).filter(Boolean).pop() : t('library.configModal.proton.autoExperimental'))
+  const targetRuntimeName = fix?.proton?.runtimeName || t('library.configModal.proton.autoExperimental')
+  const targetOptions = fix?.proton?.options || {}
+  const fixComponents = Array.from(new Set([
+    ...(fix?.components?.winetricks || []),
+    ...(fix?.components?.protontricks || [])
+  ]))
+
+  const optionRows: Array<[string, any, any]> = [
+    ['ESYNC', protonOptions.esync, targetOptions.esync],
+    ['FSYNC', protonOptions.fsync, targetOptions.fsync],
+    ['DXVK', protonOptions.dxvk, targetOptions.dxvk],
+    ['GameMode', protonOptions.gamemode, targetOptions.gamemode],
+    ['MangoHUD', protonOptions.mangohud, targetOptions.mangohud],
+    ['Steam Overlay', protonOptions.steamOverlay, targetOptions.steamOverlay],
+    ['Gamescope', protonOptions.useGamescope, targetOptions.useGamescope],
+    ['MESA GL Thread', protonOptions.mesa_glthread, targetOptions.mesa_glthread],
+    ['Locale', protonOptions.locale, targetOptions.locale],
+    [t('library.configModal.proton.launchArgs'), protonOptions.launchArgs, targetOptions.launchArgs],
+    ['WINEDLLOVERRIDES', protonOptions.wineDllOverrides, targetOptions.wineDllOverrides]
+  ].filter(([, , next]) => next !== undefined)
+
+  const renderValue = (value: any) => {
+    if (value === null || value === undefined || value === '') return '—'
+    if (typeof value === 'boolean') return value ? t('common.yes') : t('common.no')
+    return String(value)
+  }
+
+  const loadLocalFixes = React.useCallback(async () => {
+    setBusy((cur) => cur || 'list')
+    try {
+      const res = await window.electronAPI.listGameFixes(game.url)
+      if (res.success) {
+        setLocalFixes((res.fixes || []) as Array<{ fix: CommunityGameFix; path?: string; updatedAt?: string }>)
+      }
+    } catch {
+      // ignore; manual import still works
+    } finally {
+      setBusy((cur) => cur === 'list' ? null : cur)
+    }
+  }, [game.url])
+
+  React.useEffect(() => {
+    void loadLocalFixes()
+  }, [loadLocalFixes])
+
+  const exportFix = async () => {
+    setBusy('export')
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.electronAPI.exportGameFix(game.url)
+      if (res.canceled) return
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.exportFailed'))
+        return
+      }
+      setFix(res.fix || null)
+      setMessage(res.path ? t('library.configModal.fixes.exportedTo', { path: res.path }) : t('library.configModal.fixes.exported'))
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.exportFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const importFix = async () => {
+    setBusy('import')
+    setError(null)
+    setMessage(null)
+    setWarnings([])
+    setPendingComponents(null)
+    try {
+      const res = await window.electronAPI.importGameFix()
+      if (res.canceled) return
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.importFailed'))
+        return
+      }
+      setFix(res.fix || null)
+      setMessage(t('library.configModal.fixes.imported'))
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.importFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const saveLoadedFix = async () => {
+    if (!fix) return
+    setBusy('save')
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.electronAPI.saveGameFix(game.url, fix)
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.saveFailed'))
+        return
+      }
+      setFix(res.fix || fix)
+      setMessage(t('library.configModal.fixes.saved'))
+      await loadLocalFixes()
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.saveFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const deleteLocalFix = async (target: CommunityGameFix) => {
+    setBusy('delete')
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.electronAPI.deleteGameFix(game.url, target.id)
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.deleteFailed'))
+        return
+      }
+      if (fix?.id === target.id) setFix(null)
+      setMessage(t('library.configModal.fixes.deleted'))
+      await loadLocalFixes()
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.deleteFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const applyFix = async () => {
+    if (!fix) return
+    setBusy('apply')
+    setError(null)
+    setMessage(null)
+    setWarnings([])
+    setPendingComponents(null)
+    try {
+      const res = await window.electronAPI.applyGameFix(game.url, fix)
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.applyFailed'))
+        return
+      }
+      onGameFixApplied(res.patch || {})
+      setWarnings(res.warnings || [])
+      setPendingComponents(res.pendingComponents || null)
+      setMessage(t('library.configModal.fixes.applied'))
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.applyFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const applyAndInstallFix = async () => {
+    if (!fix) return
+    setBusy('install')
+    setError(null)
+    setMessage(null)
+    setWarnings([])
+    setPendingComponents(null)
+    try {
+      const applyRes = await window.electronAPI.applyGameFix(game.url, fix)
+      if (!applyRes.success) {
+        setError(applyRes.error || t('library.configModal.fixes.applyFailed'))
+        return
+      }
+      onGameFixApplied(applyRes.patch || {})
+
+      const installRes = await window.electronAPI.installGameFixComponents(game.url, fix)
+      if (!installRes.success) {
+        setWarnings([...(applyRes.warnings || []), ...(installRes.warnings || [])])
+        setError(installRes.error || t('library.configModal.fixes.installFailed'))
+        return
+      }
+
+      setWarnings([...(applyRes.warnings || []), ...(installRes.warnings || [])])
+      setMessage(installRes.installed?.length
+        ? t('library.configModal.fixes.appliedInstalled', { components: installRes.installed.join(' ') })
+        : t('library.configModal.fixes.appliedNoComponents'))
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.installFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="modal-section">
+      <div className="config-section">
+        <div className="config-section-header">
+          <SlidersHorizontal size={18} />
+          <h4>{t('library.configModal.fixes.title')}</h4>
+        </div>
+        <div className="config-section-content">
+          <div className="config-danger-card">
+            <div className="config-danger-info">
+              <span className="config-danger-title">{t('library.configModal.fixes.shareTitle')}</span>
+              <span className="config-danger-desc">{t('library.configModal.fixes.shareDesc')}</span>
+            </div>
+            <div className="config-btn-group">
+              <button className="config-btn secondary" onClick={exportFix} disabled={!!busy}>
+                {busy === 'export' ? <RefreshCw size={14} className="of-spin" /> : <Download size={14} />}
+                {t('library.configModal.fixes.export')}
+              </button>
+              <button className="config-btn primary" onClick={importFix} disabled={!!busy}>
+                {busy === 'import' ? <RefreshCw size={14} className="of-spin" /> : <Upload size={14} />}
+                {t('library.configModal.fixes.import')}
+              </button>
+            </div>
+          </div>
+
+          {message ? (
+            <div className="diagnostic-repair-empty">
+              <Check size={14} />
+              <span>{message}</span>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="config-error">
+              <AlertCircle size={14} />
+              <span>{error}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <div className="config-section-header">
+          <FileText size={18} />
+          <h4>{t('library.configModal.fixes.localLibrary')}</h4>
+          <button className="config-section-action" onClick={() => loadLocalFixes()} disabled={busy === 'list'} title={t('common.refresh')}>
+            <RefreshCw size={14} className={busy === 'list' ? 'of-spin' : ''} />
+          </button>
+        </div>
+        <div className="config-section-content">
+          {localFixes.length === 0 ? (
+            <div className="config-ini-empty">
+              <p>{t('library.configModal.fixes.noLocalFixes')}</p>
+            </div>
+          ) : (
+            <div className="diagnostic-check-list">
+              {localFixes.map((item) => {
+                const itemFix = item.fix
+                const componentCount = (itemFix.components?.winetricks?.length || 0) + (itemFix.components?.protontricks?.length || 0)
+                return (
+                  <div className={`diagnostic-check ${fix?.id === itemFix.id ? 'diagnostic-check--ok' : 'diagnostic-check--warn'}`} key={itemFix.id}>
+                    <div className="diagnostic-check-status">
+                      {fix?.id === itemFix.id ? <Check size={14} /> : <FileText size={14} />}
+                    </div>
+                    <div className="diagnostic-check-body">
+                      <strong>{itemFix.title}</strong>
+                      <span>
+                        {itemFix.proton?.runtimeName || t('library.configModal.proton.autoExperimental')}
+                        {componentCount ? ` • ${componentCount} ${t('library.configModal.fixes.components')}` : ''}
+                      </span>
+                    </div>
+                    <div className="config-btn-group">
+                      <button className="config-btn secondary" onClick={() => { setFix(itemFix); setMessage(null); setError(null); setWarnings([]); setPendingComponents(null) }} disabled={!!busy}>
+                        {t('common.select')}
+                      </button>
+                      <button className="config-btn ghost" onClick={() => deleteLocalFix(itemFix)} disabled={!!busy}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {fix ? (
+        <>
+          <div className="config-section">
+            <div className="config-section-header">
+              <FileText size={18} />
+              <h4>{fix.title}</h4>
+            </div>
+            <div className="config-section-content">
+              <div className="diagnostic-grid">
+                <div><span>{t('library.configModal.fixes.game')}</span><strong>{renderValue(fix.game?.title || fix.game?.id)}</strong></div>
+                <div><span>{t('library.configModal.fixes.author')}</span><strong>{renderValue(fix.author)}</strong></div>
+                <div><span>{t('library.configModal.fixes.createdAt')}</span><strong>{renderValue(fix.createdAt ? new Date(fix.createdAt).toLocaleString() : '')}</strong></div>
+                <div><span>{t('library.configModal.fixes.launcherVersion')}</span><strong>{renderValue(fix.launcherVersion)}</strong></div>
+              </div>
+
+              {fix.description ? <p className="config-hint" style={{ marginTop: 12 }}>{fix.description}</p> : null}
+
+              {fix.notes?.length ? (
+                <div className="config-tips" style={{ marginTop: 12 }}>
+                  {fix.notes.map((note, idx) => <p key={idx}>{note}</p>)}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="config-section">
+            <div className="config-section-header">
+              <Monitor size={18} />
+              <h4>{t('library.configModal.fixes.preview')}</h4>
+            </div>
+            <div className="config-section-content">
+              <div className="diagnostic-paths">
+                <div>
+                  <span>{t('library.configModal.proton.version')}</span>
+                  <code>{renderValue(currentRuntimeName)} {'->'} {renderValue(targetRuntimeName)}</code>
+                </div>
+                <div>
+                  <span>Steam AppID</span>
+                  <code>{renderValue(steamAppId)} {'->'} {renderValue(fix.proton?.steamAppId)}</code>
+                </div>
+                {optionRows.map(([label, current, next]) => (
+                  <div key={label}>
+                    <span>{label}</span>
+                    <code>{renderValue(current)} {'->'} {renderValue(next)}</code>
+                  </div>
+                ))}
+              </div>
+
+              {fixComponents.length ? (
+                <div className="config-tips" style={{ marginTop: 12 }}>
+                  <p><strong>winetricks</strong> {fixComponents.join(' ')}</p>
+                  {fix.components?.protontricks?.length ? <p>{t('library.configModal.fixes.protontricksCompat')}</p> : null}
+                </div>
+              ) : null}
+
+              {warnings.length ? (
+                <div className="config-warning" style={{ marginTop: 12 }}>
+                  <AlertCircle size={14} />
+                  <span>{warnings.join(' ')}</span>
+                </div>
+              ) : null}
+
+              {pendingComponents && ((pendingComponents.winetricks?.length || 0) > 0 || (pendingComponents.protontricks?.length || 0) > 0) ? (
+                <div className="config-warning" style={{ marginTop: 12 }}>
+                  <AlertCircle size={14} />
+                  <span>{t('library.configModal.fixes.componentsManual')}</span>
+                </div>
+              ) : null}
+
+              <div className="config-btn-group" style={{ marginTop: 14 }}>
+                <button className="config-btn secondary" onClick={saveLoadedFix} disabled={!!busy || !fix}>
+                  {busy === 'save' ? <RefreshCw size={14} className="of-spin" /> : <Plus size={14} />}
+                  {t('library.configModal.fixes.saveToLibrary')}
+                </button>
+                {fixComponents.length > 0 ? (
+                  <button className="config-btn secondary" onClick={applyAndInstallFix} disabled={!!busy || !fix}>
+                    {busy === 'install' ? <RefreshCw size={14} className="of-spin" /> : <Wrench size={14} />}
+                    {t('library.configModal.fixes.applyInstall')}
+                  </button>
+                ) : null}
+                <button className="config-btn primary" onClick={applyFix} disabled={!!busy || !fix}>
+                  {busy === 'apply' ? <RefreshCw size={14} className="of-spin" /> : <Check size={14} />}
+                  {t('library.configModal.fixes.apply')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="config-empty-state">
+          <SlidersHorizontal size={40} />
+          <h4>{t('library.configModal.fixes.emptyTitle')}</h4>
+          <p>{t('library.configModal.fixes.emptyDesc')}</p>
+        </div>
+      )}
     </div>
   )
 }

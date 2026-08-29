@@ -966,6 +966,34 @@ export default function LibraryTab() {
           onSteamAppIdChange={gameConfig.setSteamAppId}
           protonOptions={gameConfig.protonOptions}
           onProtonOptionsChange={gameConfig.setProtonOptions}
+          onGameFixApplied={(patch) => {
+            setGames(prev => prev.map(g => g.url === configGame.url ? { ...g, ...patch } : g))
+            if (Object.prototype.hasOwnProperty.call(patch, 'proton_runtime')) {
+              gameConfig.setProtonVersion((patch.proton_runtime as string | null) || '')
+            }
+            if (Object.prototype.hasOwnProperty.call(patch, 'steam_app_id')) {
+              gameConfig.setSteamAppId(patch.steam_app_id ? String(patch.steam_app_id) : '')
+            }
+            if (typeof patch.proton_options === 'string') {
+              try {
+                const parsed = JSON.parse(patch.proton_options)
+                gameConfig.setProtonOptions({
+                  esync: parsed.esync !== false,
+                  fsync: parsed.fsync !== false,
+                  dxvk: parsed.dxvk !== false,
+                  mesa_glthread: !!parsed.mesa_glthread,
+                  locale: parsed.locale || '',
+                  gamemode: !!parsed.gamemode,
+                  mangohud: !!parsed.mangohud,
+                  logging: !!parsed.logging,
+                  steamOverlay: parsed.steamOverlay !== false,
+                  launchArgs: parsed.launchArgs || '',
+                  useGamescope: !!parsed.useGamescope,
+                  wineDllOverrides: parsed.wineDllOverrides || ''
+                })
+              } catch {}
+            }
+          }}
 
           // LAN tab
           lanMode={gameConfig.lanMode}

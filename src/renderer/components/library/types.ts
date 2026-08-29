@@ -27,7 +27,7 @@ export interface Game {
 
 export type LanMode = 'steam' | 'ofvpn'
 
-export type GameConfigTab = 'geral' | 'onlinefix' | 'proton' | 'diagnostico' | 'lan'
+export type GameConfigTab = 'geral' | 'onlinefix' | 'proton' | 'fixes' | 'diagnostico' | 'lan'
 
 export interface ProtonOptions {
   esync: boolean
@@ -49,6 +49,33 @@ export interface ProtonRuntime {
   path: string
   runner: string
   source: string
+}
+
+export interface CommunityGameFix {
+  kind: 'voidlauncher.gameFix'
+  schemaVersion: 1
+  id: string
+  title: string
+  description?: string
+  author?: string
+  createdAt: string
+  launcherVersion?: string
+  game: {
+    id?: string | null
+    title?: string | null
+    url?: string | null
+    installedVersion?: string | null
+  }
+  proton?: {
+    runtimeName?: string | null
+    options?: Partial<ProtonOptions>
+    steamAppId?: string | null
+  }
+  components?: {
+    winetricks?: string[]
+    protontricks?: string[]
+  }
+  notes?: string[]
 }
 
 export interface LaunchState {
