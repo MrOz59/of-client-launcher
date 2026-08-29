@@ -1,6 +1,6 @@
 {
   "name": "voidlauncher",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Desktop launcher and updater for online-fix.me games",
   "homepage": "https://github.com/MrOz59/of-client-launcher",
   "repository": {
@@ -29,7 +29,14 @@
     "dist:pacman": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
     "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:windows && npm run build && electron-builder --win --publish never",
     "start": "electron .",
-    "test:scraper": "node scripts/test-scraper-dist.js"
+    "test:scraper": "node scripts/test-scraper-dist.js",
+    "version:show": "node -p \"require('./package.json').version\"",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "version:beta": "npm version prerelease --preid=beta --no-git-tag-version",
+    "version:preminor": "npm version preminor --preid=beta --no-git-tag-version",
+    "version:rc": "npm version prerelease --preid=rc --no-git-tag-version"
   },
   "keywords": [],
   "author": "",

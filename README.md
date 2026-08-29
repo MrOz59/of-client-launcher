@@ -2,7 +2,7 @@
 
 Desktop launcher and updater for games from **online-fix.me**.
 
-**Current version:** 0.3.0
+[![Latest release](https://img.shields.io/github/v/release/MrOz59/of-client-launcher?label=stable)](https://github.com/MrOz59/of-client-launcher/releases/latest)
 
 > Status: active desktop launcher. Some features depend on host tools, bundled sidecars, and the current OnlineFix page structure.
 
@@ -189,15 +189,42 @@ Packaging commands fetch or build the resources that electron-builder includes a
 
 Nightly builds are published automatically from `main` by the **Nightly** workflow.
 
+VoidLauncher uses SemVer:
+
+- `PATCH` (`0.3.1`) for bug fixes and small build/runtime fixes.
+- `MINOR` (`0.4.0`) for new user-visible features.
+- `MAJOR` (`1.0.0`) for breaking changes or large migrations.
+- Prereleases use suffixes such as `0.4.0-beta.1` or `0.4.0-rc.1`.
+
+`package.json` is the single source of truth for the launcher version. The app UI, diagnostics, and update checker read the version from the packaged `package.json`, so README text and renderer strings should not hardcode the current version.
+
+Useful version commands:
+
+```bash
+npm run version:show
+npm run version:patch
+npm run version:minor
+npm run version:major
+npm run version:preminor
+npm run version:beta
+npm run version:rc
+```
+
 Stable releases use the **Release** workflow. The easiest path is:
 
-1. Update `package.json`, `package-lock.json`, visible version strings, and README.
+1. Bump the version with one of the `npm run version:*` commands.
 2. Merge the tested changes into `main`.
-3. Open GitHub Actions, run **Release** manually, and set `release_tag` to a version tag such as `v0.3.0`.
+3. Open GitHub Actions, run **Release** manually, and set `release_tag` to the matching version tag, such as `v0.4.0`.
 4. Keep `draft=true` for the first run so the generated release can be reviewed before publishing.
 5. After checking the uploaded AppImage, deb, rpm, pacman, and Windows installer assets, publish the draft release from GitHub.
 
 The manual release workflow creates the tag if it does not exist, builds all release artifacts, uploads them to the GitHub release, and can optionally mark the release as latest. Pushing a `v*` tag still triggers the same workflow for tag-based releases.
+
+Recommended channels:
+
+- **Nightly:** automatic builds from `main`; useful for quick testing.
+- **Beta/RC:** GitHub prereleases such as `v0.4.0-beta.1`; useful before promoting a feature release.
+- **Stable:** normal GitHub releases such as `v0.4.0`; used by the launcher update checker.
 
 ## Language Packs
 
