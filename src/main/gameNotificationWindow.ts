@@ -81,7 +81,8 @@ class GameNotificationManager {
       maximizable: false,
       closable: true,
       hasShadow: false,
-      type: 'toolbar',         // Utility window type for Linux
+      show: false,             // Never map the window focused
+      type: 'notification',    // Stacks above fullscreen games without activating
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -116,6 +117,11 @@ class GameNotificationManager {
         // Fallback: load inline HTML
         win.loadURL(`data:text/html,${encodeURIComponent(this.generateFallbackHTML(notification))}`)
       })
+
+    // showInactive() keeps the focus on the game; show() would steal it.
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) win.showInactive()
+    })
 
     // Auto-close after duration
     const duration = notification.duration_ms || 5000

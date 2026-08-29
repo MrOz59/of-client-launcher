@@ -18,11 +18,9 @@ const DEFAULT_DURATION_MS: u64 = 5000;
 const MIN_DURATION_MS: u64 = 1000;
 const MAX_DURATION_MS: u64 = 60000;
 
-// Fallback para 1920x1080:
-// x = 1920 - 352 - 16 = 1552
-// y = 1080 - 116 - 48 = 916
-const FALLBACK_TOAST_X: i32 = 1552;
-const FALLBACK_TOAST_Y: i32 = 916;
+// Usado quando o xrandr não responde (ex.: sessão sem X11).
+const FALLBACK_SCREEN_WIDTH: i32 = 1920;
+const FALLBACK_SCREEN_HEIGHT: i32 = 1080;
 
 // ── Estrutura de dados da notificação ─────────────────────────────────────────
 
@@ -402,12 +400,12 @@ fn parse_xrandr_geometry(token: &str) -> Option<(i32, i32, i32, i32)> {
     Some((width, height, x, y))
 }
 
-// ── Obtém posição do toast usando xrandr no Linux/X11 ─────────────────────────
+// ── Obtém a geometria (largura, altura, x, y) do monitor via xrandr ───────────
 //
 // Evita usar primary_monitor/current_monitor do Tauri/Tao no Linux,
 // porque essa área foi justamente onde o protótipo estava quebrando.
 
-fn calculate_toast_position_from_xrandr() -> Option<(i32, i32)> {
+fn monitor_geometry_from_xrandr() -> Option<(i32, i32, i32, i32)> {
     let output = Command::new("xrandr").arg("--current").output().ok()?;
 
     if !output.status.success() {
@@ -439,16 +437,14 @@ fn calculate_toast_position_from_xrandr() -> Option<(i32, i32)> {
         }
     }
 
-    let (screen_width, screen_height, screen_x, screen_y) =
-        primary_connected.or(first_connected)?;
-
-    let x = screen_x + screen_width - TOAST_WIDTH - MARGIN_RIGHT;
-    let y = screen_y + screen_height - TOAST_HEIGHT - MARGIN_BOTTOM;
-
-    Some((x, y))
+    primary_connected.or(first_connected)
 }
 
-fn calculate_toast_position() -> (i32, i32) {
+// Canto inferior direito, usando o tamanho real da janela (em pixels físicos).
+// Usar as constantes aqui erra a conta sempre que a janela não sai exatamente do
+// tamanho pedido — HiDPI, altura mínima do webview — e o toast vaza pra fora da
+// tela, já que uma janela de notificação não é reencaixada pelo WM.
+fn calculate_toast_position(toast_width: i32, toast_height: i32) -> (i32, i32) {
     let env_x = std::env::var("VOID_TOAST_X")
         .ok()
         .and_then(|v| v.parse::<i32>().ok());
@@ -461,18 +457,61 @@ fn calculate_toast_position() -> (i32, i32) {
         return (x, y);
     }
 
-    calculate_toast_position_from_xrandr().unwrap_or((FALLBACK_TOAST_X, FALLBACK_TOAST_Y))
+    let Some((screen_width, screen_height, screen_x, screen_y)) = monitor_geometry_from_xrandr()
+    else {
+        return (
+            FALLBACK_SCREEN_WIDTH - toast_width - MARGIN_RIGHT,
+            FALLBACK_SCREEN_HEIGHT - toast_height - MARGIN_BOTTOM,
+        );
+    };
+
+    let x = screen_x + screen_width - toast_width - MARGIN_RIGHT;
+    let y = screen_y + screen_height - toast_height - MARGIN_BOTTOM;
+
+    // Nunca deixa a janela sair do monitor, mesmo que ela seja maior do que o esperado.
+    (
+        x.clamp(screen_x, (screen_x + screen_width - toast_width).max(screen_x)),
+        y.clamp(screen_y, (screen_y + screen_height - toast_height).max(screen_y)),
+    )
 }
 
 // ── Posiciona janela toast no canto inferior direito e força always-on-top ─────
 
+fn toast_physical_size(win: &WebviewWindow) -> (i32, i32) {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let fallback = (
+        (TOAST_WIDTH as f64 * scale).round() as i32,
+        (TOAST_HEIGHT as f64 * scale).round() as i32,
+    );
+
+    // Nada de `outer_size()` aqui: no backend GTK do tao ele é inicializado com a
+    // *posição* da janela (root_origin), então devolve lixo até a primeira
+    // configure. A janela não tem decoração, logo inner == outer.
+    match win.inner_size() {
+        Ok(size) => {
+            let (w, h) = (size.width as i32, size.height as i32);
+            let plausible = w > 0 && h > 0 && w <= fallback.0 * 4 && h <= fallback.1 * 4;
+            if plausible {
+                (w, h)
+            } else {
+                fallback
+            }
+        }
+        Err(_) => fallback,
+    }
+}
+
 fn position_toast_window(win: &WebviewWindow) {
-    let (x, y) = calculate_toast_position();
+    let (width, height) = toast_physical_size(win);
+    let (x, y) = calculate_toast_position(width, height);
 
     match win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
         x, y,
     ))) {
-        Ok(_) => eprintln!("[void-toast] toast posicionado em ({}, {})", x, y),
+        Ok(_) => eprintln!(
+            "[void-toast] toast {}x{} posicionado em ({}, {})",
+            width, height, x, y
+        ),
         Err(err) => eprintln!("[void-toast] erro ao posicionar toast: {:?}", err),
     }
 
@@ -488,14 +527,48 @@ fn position_toast_window(win: &WebviewWindow) {
     }
 }
 
+// ── Impede que o toast roube o foco do jogo ───────────────────────────────────
+//
+// Comportamento esperado (igual ao overlay da Steam): a notificação aparece por
+// cima do jogo — inclusive em tela cheia / janela sem borda — sem nunca ativar a
+// própria janela. No X11/XWayland isso depende de três coisas:
+//
+//   WM_HINTS.input = False              -> o WM não entrega foco pra janela
+//   _NET_WM_USER_TIME = 0               -> mapear a janela não a ativa
+//   _NET_WM_WINDOW_TYPE_NOTIFICATION    -> fica acima de fullscreen sem ativar
+
+#[cfg(target_os = "linux")]
+fn apply_no_focus_hints(win: &WebviewWindow) {
+    use gtk::gdk::WindowTypeHint;
+    use gtk::prelude::GtkWindowExt;
+
+    let gtk_win = match win.gtk_window() {
+        Ok(gtk_win) => gtk_win,
+        Err(err) => {
+            eprintln!("[void-toast] erro ao obter gtk_window: {:?}", err);
+            return;
+        }
+    };
+
+    gtk_win.set_accept_focus(false);
+    gtk_win.set_focus_on_map(false);
+    gtk_win.set_type_hint(WindowTypeHint::Notification);
+    gtk_win.set_skip_taskbar_hint(true);
+    gtk_win.set_skip_pager_hint(true);
+    gtk_win.set_keep_above(true);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_no_focus_hints(_win: &WebviewWindow) {}
+
 // ── Cria janela toast ─────────────────────────────────────────────────────────
 
 fn create_toast_window(app: &tauri::App) -> tauri::Result<WebviewWindow> {
-    let (x, y) = calculate_toast_position();
+    let (x, y) = calculate_toast_position(TOAST_WIDTH, TOAST_HEIGHT);
 
     eprintln!("[void-toast] criando janela toast em ({}, {})", x, y);
 
-    WebviewWindowBuilder::new(
+    let win = WebviewWindowBuilder::new(
         app,
         "toast",
         WebviewUrl::App(format!("toast.html?v={}", env!("CARGO_PKG_VERSION")).into()),
@@ -510,8 +583,15 @@ fn create_toast_window(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     .always_on_top(true)
     .visible_on_all_workspaces(true)
     .focused(false)
+    // Sem `focusable(false)` o tao devolve accept-focus pra janela no primeiro
+    // draw, e aí o `show()` tira o foco do jogo.
+    .focusable(false)
     .visible(false)
-    .build()
+    .build()?;
+
+    apply_no_focus_hints(&win);
+
+    Ok(win)
 }
 
 // ── Comandos IPC chamados pelo toast.html ─────────────────────────────────────
@@ -525,12 +605,14 @@ fn toast_ready(app: AppHandle, state: State<'_, Mutex<AppState>>) -> Option<Toas
 
     if let Some(win) = app.get_webview_window("toast") {
         position_toast_window(&win);
+        apply_no_focus_hints(&win);
 
         if let Err(err) = win.show() {
             eprintln!("[void-toast] erro ao mostrar toast: {:?}", err);
         }
 
         position_toast_window(&win);
+        apply_no_focus_hints(&win);
     } else {
         eprintln!("[void-toast] janela toast não encontrada");
     }
@@ -563,6 +645,11 @@ pub fn run() {
 
         // Evita bug visual comum com WebKitGTK/AMD em janelas transparentes.
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
+        // Herdados do launcher: fazem o WM tratar o toast como "app recém-aberto"
+        // e mover o foco pra ele, tirando o jogo da frente.
+        std::env::remove_var("DESKTOP_STARTUP_ID");
+        std::env::remove_var("XDG_ACTIVATION_TOKEN");
     }
 
     let args: Vec<String> = std::env::args().collect();
@@ -588,6 +675,7 @@ pub fn run() {
             // No Linux/Tao 0.35.2, isso pode causar panic quando a janela ainda
             // não está completamente realizada.
             position_toast_window(&toast_win);
+            apply_no_focus_hints(&toast_win);
 
             let _ = toast_win.set_always_on_top(true);
             let _ = toast_win.set_visible_on_all_workspaces(true);

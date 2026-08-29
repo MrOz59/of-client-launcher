@@ -49,7 +49,8 @@ class DesktopNotificationManager {
       maximizable: false,
       closable: true,
       hasShadow: false,
-      type: 'toolbar',
+      show: false,             // Never map the window focused
+      type: 'notification',    // Stacks above fullscreen games without activating
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -83,6 +84,8 @@ class DesktopNotificationManager {
       } catch {
         // ignore
       }
+      // showInactive() keeps the focus on whatever is running (game included).
+      if (!win.isDestroyed()) win.showInactive()
     })
 
     const htmlPath = path.join(__dirname, '..', '..', 'resources', 'notification.html')

@@ -105,6 +105,8 @@ export class AchievementOverlay {
       alwaysOnTop: true,
       skipTaskbar: true,
       hasShadow: false,
+      show: false,
+      type: process.platform === 'linux' ? 'notification' : undefined,
       webPreferences: {
         sandbox: false,
         contextIsolation: false,

@@ -159,15 +159,22 @@ export function showStandaloneToast(notification: NotificationMessage): boolean 
     return false
   }
 
+  // DESKTOP_STARTUP_ID/XDG_ACTIVATION_TOKEN herdados do launcher fazem o
+  // gerenciador de janelas ativar o toast como se fosse um app recém-aberto,
+  // tirando o foco do jogo. O toast nunca deve receber foco.
+  const toastEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    VOID_TOAST_X: process.env.VOID_TOAST_X || '',
+    VOID_TOAST_Y: process.env.VOID_TOAST_Y || '',
+  }
+  delete toastEnv.DESKTOP_STARTUP_ID
+  delete toastEnv.XDG_ACTIVATION_TOKEN
+
   let child: ChildProcess
   try {
     child = spawn(binary, ['--stdin'], {
       stdio: ['pipe', 'ignore', 'pipe'],
-      env: {
-        ...process.env,
-        VOID_TOAST_X: process.env.VOID_TOAST_X || '',
-        VOID_TOAST_Y: process.env.VOID_TOAST_Y || '',
-      },
+      env: toastEnv,
     })
   } catch (err) {
     console.error('[StandaloneToast] Failed to start toast binary:', err)
