@@ -2086,12 +2086,21 @@ export async function ensurePrefixDefaults(
 
     const shouldAttempt = (attempts: number | undefined, max: number) => (attempts || 0) < max
 
-    const canVcredist = winetricksAvailable()
-    const needsVcredist = meta.vcredist?.ok !== true
-    const shouldVcredist = needsVcredist && canVcredist && shouldAttempt(meta.vcredist?.attempts, 2)
-    const shouldDotnet = detectedReqs?.dotnet && detectedReqs.dotnet.length > 0
+    const canWinetricks = winetricksAvailable()
+    const canProtontricks = protontricksAvailable()
+    const detectedWinetricksComponents = useSmartInstall && detectedReqs
+      ? requirementsToWinetricks(detectedReqs)
+      : []
+    const fallbackWinetricksComponents = !useSmartInstall ? COMMON_PREREQUISITES.winetricks : []
+    const pendingWinetricksComponents = detectedWinetricksComponents.length > 0
+      ? detectedWinetricksComponents
+      : fallbackWinetricksComponents
+    const needsWinetricksDeps = pendingWinetricksComponents.length > 0 && meta.vcredist?.ok !== true
+    const shouldRunWinetricksDeps = needsWinetricksDeps && canWinetricks && shouldAttempt(meta.vcredist?.attempts, 2)
+    const needsDotnet = !!(detectedReqs?.dotnet && detectedReqs.dotnet.length > 0 && meta.dotnet?.ok !== true)
+    const shouldRunDotnet = needsDotnet && canProtontricks && shouldAttempt(meta.dotnet?.attempts, 2)
 
-    if (meta.winebootDone && !needsVcredist && !shouldDotnet && prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch) {
+    if (meta.winebootDone && !shouldRunWinetricksDeps && !shouldRunDotnet && prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch) {
       console.log('[Proton] Prefix dependencies already satisfied; nothing to do')
       return true
     }
@@ -2143,13 +2152,10 @@ export async function ensurePrefixDefaults(
     }
 
     // Steam-like smart dependency installation based on detected requirements.
-    if (useSmartInstall && detectedReqs && winetricksAvailable()) {
-      // Convert detected requirements to winetricks components
-      const smartComponents = requirementsToWinetricks(detectedReqs)
-
-      if (smartComponents.length > 0) {
-        onProgress?.(`Instalando ${smartComponents.length} dependências detectadas...`)
-        console.log('[Proton] Step 2: Smart install - installing detected dependencies:', smartComponents)
+    if (useSmartInstall && detectedReqs && canWinetricks) {
+      if (detectedWinetricksComponents.length > 0 && shouldRunWinetricksDeps) {
+        onProgress?.(`Instalando ${detectedWinetricksComponents.length} dependências detectadas...`)
+        console.log('[Proton] Step 2: Smart install - installing detected dependencies:', detectedWinetricksComponents)
 
         meta.vcredist = {
           attempts: (meta.vcredist?.attempts || 0) + 1,
@@ -2160,7 +2166,7 @@ export async function ensurePrefixDefaults(
         meta.updatedAt = nowIso()
         writeDefaultDepsMeta(compatDataPath, meta)
 
-        const ok = await runWinetricks(runner, compatDataPath, smartComponents, env, onProgress, protonDir)
+        const ok = await runWinetricks(runner, compatDataPath, detectedWinetricksComponents, env, onProgress, protonDir)
         meta.vcredist.ok = ok
         meta.updatedAt = nowIso()
         writeDefaultDepsMeta(compatDataPath, meta)
@@ -2170,10 +2176,14 @@ export async function ensurePrefixDefaults(
         } else {
           console.warn('[Proton] ⚠️ Some smart install components may have failed')
         }
+      } else if (detectedWinetricksComponents.length > 0 && meta.vcredist?.ok === true) {
+        console.log('[Proton] Smart install dependencies already installed; skipping')
+      } else if (detectedWinetricksComponents.length > 0) {
+        console.log('[Proton] Smart install dependencies unavailable or already attempted; skipping')
       }
 
       // Install .NET only if detected
-      if (detectedReqs.dotnet.length > 0 && protontricksAvailable()) {
+      if (detectedReqs.dotnet.length > 0 && shouldRunDotnet) {
         onProgress?.(`Instalando .NET (${detectedReqs.dotnet.join(', ')})...`)
         console.log('[Proton] Step 3: Installing detected .NET versions:', detectedReqs.dotnet)
 
@@ -2186,13 +2196,17 @@ export async function ensurePrefixDefaults(
         }
         meta.updatedAt = nowIso()
         writeDefaultDepsMeta(compatDataPath, meta)
+      } else if (detectedReqs.dotnet.length > 0 && meta.dotnet?.ok === true) {
+        console.log('[Proton] .NET dependencies already installed; skipping')
+      } else if (detectedReqs.dotnet.length > 0) {
+        console.log('[Proton] .NET dependencies unavailable or already attempted; skipping')
       }
 
     } else {
       // FALLBACK MODE: Install basic dependencies if smart detection wasn't available
 
       // Step 2: Install VC++ Runtimes via winetricks (prefix is compatible with Proton)
-      if (meta.vcredist?.ok !== true && winetricksAvailable() && shouldAttempt(meta.vcredist?.attempts, 2)) {
+      if (shouldRunWinetricksDeps) {
         meta.vcredist = {
           attempts: (meta.vcredist?.attempts || 0) + 1,
           lastAttemptAt: nowIso(),
@@ -2210,7 +2224,7 @@ export async function ensurePrefixDefaults(
         meta.vcredist.ok = ok
         meta.updatedAt = nowIso()
         writeDefaultDepsMeta(compatDataPath, meta)
-      } else if (!winetricksAvailable()) {
+      } else if (!canWinetricks) {
         onProgress?.('Dependências VC++: winetricks não encontrado')
         console.log('[Proton] ⚠️ winetricks not installed - skipping VC++ runtimes')
         console.log('[Proton] CachyOS/Arch: sudo pacman -S winetricks')
