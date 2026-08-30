@@ -103,10 +103,5 @@ __pycache__/
 *.orig
 *~
 
-# Temporary/debug files
-sys
-json
-sys,json,re
-
 # Local Tauri migration sandbox
 tauri-migration/

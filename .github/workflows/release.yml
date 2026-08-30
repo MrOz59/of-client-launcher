@@ -214,6 +214,7 @@ jobs:
     name: Publish Release
     runs-on: ubuntu-latest
     needs: [windows, linux, pacman]
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -341,7 +342,20 @@ jobs:
           if [ ${#files[@]} -eq 0 ]; then
             echo "No artifacts downloaded"; exit 1
           fi
-          gh release upload "${{ steps.release_options.outputs.tag }}" "${files[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          # Same reason as the nightly: cap each attempt so a stalled upload
+          # cannot hold the job, and retry it.
+          for file in "${files[@]}"; do
+            attempt=1
+            until timeout 600 gh release upload "${{ steps.release_options.outputs.tag }}" "$file" \
+              --repo "${GITHUB_REPOSITORY}" --clobber; do
+              if [ "$attempt" -ge 3 ]; then
+                echo "::error::giving up on $(basename "$file")"; exit 1
+              fi
+              echo "::warning::upload of $(basename "$file") failed (attempt ${attempt}/3)"
+              sleep $((attempt * 15))
+              attempt=$((attempt + 1))
+            done
+          done
 
       - name: Apply final release flags
         shell: bash

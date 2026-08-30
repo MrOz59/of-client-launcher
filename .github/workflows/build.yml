@@ -240,6 +240,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [windows, linux, pacman]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # A stalled asset upload would otherwise hold the runner for the 6h default.
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
@@ -258,6 +260,23 @@ jobs:
         shell: bash
         run: |
           shopt -s globstar nullglob
+
+          # `gh` has no read timeout, so a stalled upload hangs forever: cap each
+          # attempt and retry it instead of waiting on a dead connection.
+          upload_asset() {
+            local file="$1" attempt=1
+            while [ "$attempt" -le 3 ]; do
+              if timeout 600 gh release upload "${NIGHTLY_TAG}" "$file" \
+                --repo "${GITHUB_REPOSITORY}" --clobber; then
+                return 0
+              fi
+              echo "::warning::upload of $(basename "$file") failed (attempt ${attempt}/3)"
+              sleep $((attempt * 15))
+              attempt=$((attempt + 1))
+            done
+            echo "::error::giving up on $(basename "$file")"
+            return 1
+          }
 
           # Collect files, excluding debug/metadata files and deduplicating by basename
           declare -A seen
@@ -281,10 +300,19 @@ jobs:
           fi
 
           echo "Uploading ${#files[@]} files..."
+
+          # Create it as a draft first: a half-uploaded nightly is never visible
+          # as a published release.
           gh release create "${NIGHTLY_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --prerelease \
+            --draft \
             --title "${NIGHTLY_TITLE}" \
             --notes "Automated build for ${GITHUB_SHA}" \
-            --target "${GITHUB_SHA}" \
-            "${files[@]}"
+            --target "${GITHUB_SHA}"
+
+          for file in "${files[@]}"; do
+            upload_asset "$file"
+          done
+
+          gh release edit "${NIGHTLY_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
