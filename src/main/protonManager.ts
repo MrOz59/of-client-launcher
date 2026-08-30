@@ -312,8 +312,9 @@ function writeDefaultDepsMeta(prefixCompatDataPath: string, meta: DefaultDepsMet
   try {
     const sentinel = path.join(prefixCompatDataPath, DEFAULT_DEPS_SENTINEL)
     fs.writeFileSync(sentinel, JSON.stringify(meta, null, 2))
-  } catch {
-    // ignore
+  } catch (err) {
+    // Without the sentinel the prefix dependencies get reinstalled every launch.
+    console.warn('[Proton] Failed to write prefix dependency metadata:', err)
   }
 }
 

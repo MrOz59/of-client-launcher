@@ -688,8 +688,9 @@ function writeLauncherMarker(installPath: string, data: Record<string, any>) {
       updatedAt: Date.now()
     }
     fs.writeFileSync(markerPath, JSON.stringify(next, null, 2))
-  } catch {
-    // ignore
+  } catch (err) {
+    // Without the marker a resumed download cannot be reconciled on restart.
+    console.warn('[Downloads] Failed to write download marker:', err)
   }
 }
 

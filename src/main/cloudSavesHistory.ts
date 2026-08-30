@@ -28,8 +28,8 @@ function safeReadJson(filePath: string): any {
 function safeWriteJson(filePath: string, value: any) {
   try {
     fs.writeFileSync(filePath, JSON.stringify(value, null, 2))
-  } catch {
-    // ignore
+  } catch (err) {
+    console.warn('[CloudSaves] Failed to write history file:', filePath, err)
   }
 }
 

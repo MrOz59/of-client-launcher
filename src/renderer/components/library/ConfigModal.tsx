@@ -997,7 +997,7 @@ function FixesTab(props: ConfigModalProps) {
     ...(fix?.components?.protontricks || [])
   ]))
 
-  const optionRows: Array<[string, any, any]> = [
+  const optionRows = ([
     ['ESYNC', protonOptions.esync, targetOptions.esync],
     ['FSYNC', protonOptions.fsync, targetOptions.fsync],
     ['DXVK', protonOptions.dxvk, targetOptions.dxvk],
@@ -1009,7 +1009,7 @@ function FixesTab(props: ConfigModalProps) {
     ['Locale', protonOptions.locale, targetOptions.locale],
     [t('library.configModal.proton.launchArgs'), protonOptions.launchArgs, targetOptions.launchArgs],
     ['WINEDLLOVERRIDES', protonOptions.wineDllOverrides, targetOptions.wineDllOverrides]
-  ].filter(([, , next]) => next !== undefined)
+  ] as Array<[string, any, any]>).filter(([, , next]) => next !== undefined)
 
   const renderValue = (value: any) => {
     if (value === null || value === undefined || value === '') return '—'
