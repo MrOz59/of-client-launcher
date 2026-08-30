@@ -222,7 +222,10 @@ function createProxyAuth(token: any) {
         // Persist refreshed token
         try {
           fs.writeFileSync(TOKEN_FILE, JSON.stringify(currentToken, null, 2))
-        } catch {}
+        } catch (err) {
+          // Silence here shows up much later as an unexplained sign-out.
+          console.warn('[Drive] Failed to persist refreshed token:', err)
+        }
       }
     }
     return currentToken.access_token
@@ -256,7 +259,7 @@ function loadOAuthClient(): { auth: any; drive: any } | null {
 async function ensureAppFolder(drive: any) {
   // check for folder named APP_FOLDER_NAME in root
   const res = await drive.files.list({
-    q: `mimeType='application/vnd.google-apps.folder' and name='${APP_FOLDER_NAME}' and trashed=false`,
+    q: `mimeType='application/vnd.google-apps.folder' and name='${escapeDriveQueryValue(APP_FOLDER_NAME)}' and trashed=false`,
     fields: 'files(id, name)'
   })
   if (res.data.files && res.data.files.length > 0) return res.data.files[0].id
@@ -274,8 +277,8 @@ export async function listSaves(realAppId?: string): Promise<{ id: string; name:
     const folderId = await ensureAppFolder(client.drive)
     // If realAppId provided, filter by filename prefix to only include that game's backups
     const prefix = realAppId ? `ofsave_${String(realAppId)}_` : null
-    const qParts = [`'${folderId}' in parents`, 'trashed=false']
-    if (prefix) qParts.push(`name contains '${prefix}'`)
+    const qParts = [`'${escapeDriveQueryValue(folderId)}' in parents`, 'trashed=false']
+    if (prefix) qParts.push(`name contains '${escapeDriveQueryValue(prefix)}'`)
     const q = qParts.join(' and ')
     const res = await client.drive.files.list({
       q,
@@ -292,8 +295,8 @@ export async function listFilesByNamePrefix(prefix: string): Promise<{ id: strin
   if (!client) return { error: 'Missing credentials or token. Authenticate first.' }
   try {
     const folderId = await ensureAppFolder(client.drive)
-    const safePrefix = String(prefix || '').replace(/'/g, "\\'")
-    const q = [`'${folderId}' in parents`, 'trashed=false', `name contains '${safePrefix}'`].join(' and ')
+    const safePrefix = escapeDriveQueryValue(String(prefix || ''))
+    const q = [`'${escapeDriveQueryValue(folderId)}' in parents`, 'trashed=false', `name contains '${safePrefix}'`].join(' and ')
     const res = await client.drive.files.list({
       q,
       fields: 'files(id, name, modifiedTime, appProperties)'
@@ -313,7 +316,7 @@ export async function listFilesByAppProperties(props: Record<string, string>): P
   if (!client) return { error: 'Missing credentials or token. Authenticate first.' }
   try {
     const folderId = await ensureAppFolder(client.drive)
-    const qParts = [`'${folderId}' in parents`, 'trashed=false']
+    const qParts = [`'${escapeDriveQueryValue(folderId)}' in parents`, 'trashed=false']
     const entries = Object.entries(props || {}).filter(([, v]) => String(v || '').trim() !== '')
     for (const [k, v] of entries) {
       const key = escapeDriveQueryValue(k)
@@ -846,8 +849,8 @@ export async function getNewestRemoteSave(realAppId?: string): Promise<{ id: str
   try {
     const folderId = await ensureAppFolder(client.drive)
     const prefix = realAppId ? `ofsave_${String(realAppId)}_` : null
-    const qParts = [`'${folderId}' in parents`, 'trashed=false']
-    if (prefix) qParts.push(`name contains '${prefix}'`)
+    const qParts = [`'${escapeDriveQueryValue(folderId)}' in parents`, 'trashed=false']
+    if (prefix) qParts.push(`name contains '${escapeDriveQueryValue(prefix)}'`)
     const q = qParts.join(' and ')
     const res = await client.drive.files.list({ q, fields: 'files(id, name, modifiedTime)' })
     const files = (res.data.files || []) as any[]
