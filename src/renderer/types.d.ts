@@ -164,7 +164,27 @@ declare global {
           releaseDate?: string
           torrentUrl?: string
           directUrl?: string
+          instructions?: string[]
           description?: string
+        }
+        error?: string
+        errorCode?: string
+      }>
+      storeGameMetadata: (url: string, title: string, steamAppId?: string) => Promise<{
+        success: boolean
+        metadata?: {
+          source: 'steam' | 'none'
+          steamAppId?: string
+          name?: string
+          description?: string
+          headerImage?: string
+          backgroundImage?: string
+          screenshots?: string[]
+          genres?: string[]
+          categories?: string[]
+          developers?: string[]
+          publishers?: string[]
+          releaseDate?: string
         }
         error?: string
         errorCode?: string

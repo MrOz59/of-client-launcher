@@ -46,6 +46,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
   const [error, setError] = useState<string | null>(null)
   const [library, setLibrary] = useState<Record<string, LibraryEntry>>({})
   const [selected, setSelected] = useState<StoreItem | null>(null)
+  const [brokenCovers, setBrokenCovers] = useState<Record<string, true>>({})
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const loadingRef = useRef(false)
 
@@ -221,8 +222,16 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
               title={t('storeNext.card.details')}
               aria-label={t('storeNext.card.open', { title: item.title })}
             >
-              {item.imageUrl
-                ? <img src={item.imageUrl} alt="" loading="lazy" decoding="async" />
+              {item.imageUrl && !brokenCovers[item.id]
+                ? (
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => setBrokenCovers((current) => ({ ...current, [item.id]: true }))}
+                  />
+                )
                 : <div className="store-next-cover-placeholder">{item.title.slice(0, 1)}</div>}
               {badgeFor(item)}
             </button>
@@ -297,10 +306,33 @@ type StoreGameDetails = {
   releaseDate?: string
   torrentUrl?: string
   directUrl?: string
+  instructions?: string[]
   description?: string
 }
 
-/** Detail view: reads the game page and offers the existing download flow. */
+type StoreGameMetadata = {
+  source: 'steam' | 'none'
+  steamAppId?: string
+  name?: string
+  description?: string
+  headerImage?: string
+  backgroundImage?: string
+  screenshots?: string[]
+  genres?: string[]
+  categories?: string[]
+  developers?: string[]
+  publishers?: string[]
+  releaseDate?: string
+}
+
+/**
+ * The game page, composed rather than mirrored.
+ *
+ * The site supplies what only it has — the version, the torrent and the
+ * instructions for the fix. Everything that makes a page worth looking at —
+ * artwork, description, screenshots, genres — comes from Steam, matched by
+ * title. When there is no match the page still works, just plainer.
+ */
 function StoreGameDialog({
   item,
   libraryEntry,
@@ -317,28 +349,32 @@ function StoreGameDialog({
   const dialogRef = useModalA11y<HTMLDivElement>(onClose)
 
   const [details, setDetails] = useState<StoreGameDetails | null>(null)
+  const [metadata, setMetadata] = useState<StoreGameMetadata | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [showInstructions, setShowInstructions] = useState(false)
 
   useEffect(() => {
     let disposed = false
 
     window.electronAPI.storeGame(item.url).then((res) => {
       if (disposed) return
-      if (!res?.success || !res.game) {
-        setError(ipcErrorText(t, res, t('storeNext.error.details')))
-      } else {
-        setDetails(res.game)
-      }
+      if (!res?.success || !res.game) setError(ipcErrorText(t, res, t('storeNext.error.details')))
+      else setDetails(res.game)
     }).catch((err: any) => {
       if (!disposed) setError(err?.message || t('storeNext.error.details'))
     }).finally(() => {
       if (!disposed) setLoading(false)
     })
 
+    // Independent of the page read: a slow Steam lookup must not hold the page.
+    window.electronAPI.storeGameMetadata(item.url, item.title).then((res) => {
+      if (!disposed && res?.success && res.metadata) setMetadata(res.metadata)
+    }).catch(() => {})
+
     return () => { disposed = true }
-  }, [item.url, t])
+  }, [item.url, item.title, t])
 
   const startDownload = async () => {
     if (!details?.torrentUrl) return
@@ -358,8 +394,17 @@ function StoreGameDialog({
     }
   }
 
-  // The article carries no poster, only a trailer, so the cover comes from the listing.
-  const cover = item.imageUrl || details?.imageUrl
+  const hero = metadata?.headerImage || item.imageUrl || details?.imageUrl
+  const release = metadata?.releaseDate || details?.releaseDate || (item.publishedAt ? formatDate(item.publishedAt) : undefined)
+  const facts: Array<[string, string]> = [
+    [t('storeNext.detail.version'), loading ? '…' : details?.version || t('storeNext.card.noVersion')],
+    ...(release ? [[t('storeNext.detail.release'), release] as [string, string]] : []),
+    ...(item.updatedAt ? [[t('storeNext.detail.updated'), item.updatedAt] as [string, string]] : []),
+    ...(metadata?.developers?.length ? [[t('storeNext.detail.developer'), metadata.developers.join(', ')] as [string, string]] : []),
+    ...(libraryEntry?.installed
+      ? [[t('storeNext.detail.library'), libraryEntry.hasUpdate ? t('storeNext.card.update') : t('storeNext.card.installed')] as [string, string]]
+      : [])
+  ]
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -370,42 +415,66 @@ function StoreGameDialog({
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-header">
-          <h3>{item.title}</h3>
-          <button className="settings-btn-icon" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
+        <div className="store-next-hero" style={hero ? { backgroundImage: `url("${hero}")` } : undefined}>
+          <div className="store-next-hero-shade">
+            <h3>{metadata?.name || item.title}</h3>
+            {metadata?.genres && metadata.genres.length > 0 && (
+              <div className="store-next-chips">
+                {metadata.genres.map((genre) => <span key={genre}>{genre}</span>)}
+              </div>
+            )}
+          </div>
+          <button className="settings-btn-icon store-next-close" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
             <X size={16} aria-hidden="true" />
           </button>
         </div>
 
         <div className="store-next-detail-body">
-          {cover && <img className="store-next-detail-cover" src={cover} alt="" />}
+          {metadata?.description && <p className="store-next-detail-description">{metadata.description}</p>}
 
           <dl className="store-next-detail-facts">
-            <div>
-              <dt>{t('storeNext.detail.version')}</dt>
-              <dd>{loading ? '…' : details?.version || t('storeNext.card.noVersion')}</dd>
-            </div>
-            {(details?.releaseDate || item.publishedAt) && (
-              <div>
-                <dt>{t('storeNext.detail.release')}</dt>
-                <dd>{details?.releaseDate || formatDate(item.publishedAt || '')}</dd>
+            {facts.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
               </div>
-            )}
-            {item.updatedAt && (
-              <div>
-                <dt>{t('storeNext.detail.updated')}</dt>
-                <dd>{item.updatedAt}</dd>
-              </div>
-            )}
-            {libraryEntry?.installed && (
-              <div>
-                <dt>{t('storeNext.detail.library')}</dt>
-                <dd>{libraryEntry.hasUpdate ? t('storeNext.card.update') : t('storeNext.card.installed')}</dd>
-              </div>
-            )}
+            ))}
           </dl>
 
-          {error && <div className="store-next-notice error" role="alert"><AlertCircle size={15} aria-hidden="true" /><span>{error}</span></div>}
+          {metadata?.screenshots && metadata.screenshots.length > 0 && (
+            <div className="store-next-shots">
+              {metadata.screenshots.slice(0, 6).map((shot) => (
+                <img key={shot} src={shot} alt="" loading="lazy" decoding="async" />
+              ))}
+            </div>
+          )}
+
+          {details?.instructions && details.instructions.length > 0 && (
+            <div className="store-next-instructions">
+              <button
+                className="settings-btn ghost sm"
+                onClick={() => setShowInstructions((current) => !current)}
+                aria-expanded={showInstructions}
+              >
+                {t('storeNext.detail.howTo')}
+              </button>
+              {showInstructions && (
+                <>
+                  <ol>
+                    {details.instructions.map((step, index) => <li key={index}>{step}</li>)}
+                  </ol>
+                  <p className="store-next-source">{t('storeNext.detail.instructionsSource')}</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div className="store-next-notice error" role="alert">
+              <AlertCircle size={15} aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
         </div>
 
         <div className="modal-footer store-next-detail-actions">

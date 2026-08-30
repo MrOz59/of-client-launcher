@@ -7,6 +7,7 @@
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { captureStoreFixture, clearStoreCache, getStoreGame, getStoreListing } from '../store/catalog'
+import { getStoreGameMetadata } from '../store/metadata'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => {
@@ -46,6 +47,25 @@ export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => 
         return { success: true, ...result }
       } catch (err: any) {
         return { success: false, error: err?.message || String(err), errorCode: 'store-capture-failed' }
+      }
+    }
+  )
+
+  // Artwork, description and screenshots for the game page: the site provides
+  // none of that, so it comes from Steam.
+  ipcMain.handle(
+    'store-game-metadata',
+    async (_event: IpcMainInvokeEvent, payload: { url: string; title: string; steamAppId?: string }) => {
+      try {
+        const metadata = await getStoreGameMetadata({
+          gameUrl: String(payload?.url || ''),
+          title: String(payload?.title || ''),
+          steamAppId: payload?.steamAppId
+        })
+        return { success: true, metadata }
+      } catch (err: any) {
+        console.warn('[Store] Metadata failed:', err?.message || err)
+        return { success: false, error: err?.message || String(err), errorCode: 'store-metadata-failed' }
       }
     }
   )

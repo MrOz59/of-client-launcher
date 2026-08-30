@@ -85,6 +85,7 @@ import { downloadFile, downloadTorrent } from './downloader.js'
 import { addOrUpdateGame, updateGameVersion, getSetting, getActiveDownloads, getDownloadByUrl, getCompletedDownloads, getDownloadById, markGameInstalled, setSetting, getAllGames, updateGameInfo, deleteGame, deleteDownload, getGame, getGameByGameId, extractGameIdFromUrl, updateDownloadProgress, updateDownloadStatus, updateDownloadInstallPath, setGameFavorite, toggleGameFavorite, updateGamePlayTime } from './db.js'
 import { shouldBlockRequest } from './easylist-filters.js'
 import { initializeStoreAdBlocker } from './storeAdBlocker.js'
+import { registerStoreImageProtocol, registerStoreImageScheme } from './store/imageProxy.js'
 import { startGameDownload, pauseDownloadByTorrentId, resumeDownloadByTorrentId, cancelDownloadByTorrentId, parseVersionFromName, processUpdateExtraction, readOnlineFixIni, writeOnlineFixIni, normalizeGameInstallDir, reconcileDownloadState, hasExistingGameInstall } from './downloadManager.js'
 import axios from 'axios'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResolver.js'
@@ -120,6 +121,9 @@ import {
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 
 app.setName('VoidLauncher')
+
+// Must happen before the app is ready: the store grid loads artwork through it.
+registerStoreImageScheme()
 if (process.platform === 'linux') {
   const maybeSetDesktopName = (app as any).setDesktopName
   if (typeof maybeSetDesktopName === 'function') maybeSetDesktopName.call(app, 'voidlauncher.desktop')
@@ -1288,6 +1292,8 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(async () => {
+  registerStoreImageProtocol()
+
   ensureLinuxDesktopEntry()
   await importCookies('https://online-fix.me')
 

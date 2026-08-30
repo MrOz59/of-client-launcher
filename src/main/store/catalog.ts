@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { STORE_HOME_URL, isOnlineFixHost } from '../../shared/allowedHosts'
 import { parseGamePage, parseListing, type StoreGameDetails, type StoreListing } from './parser'
+import { toStoreImageUrl } from './imageProxy'
 
 /**
  * Data layer for the native store.
@@ -108,7 +109,10 @@ export async function getStoreListing(options?: {
   const html = await fetchStoreHtml(sourceUrl, { force: options?.force })
   const listing = parseListing(html, sourceUrl)
 
-  return { ...listing, page, query, sourceUrl }
+  // The renderer cannot load these directly (see store/imageProxy).
+  const items = listing.items.map((item) => ({ ...item, imageUrl: toStoreImageUrl(item.imageUrl) }))
+
+  return { ...listing, items, page, query, sourceUrl }
 }
 
 export async function getStoreGame(url: string, options?: { force?: boolean }): Promise<StoreGameDetails> {

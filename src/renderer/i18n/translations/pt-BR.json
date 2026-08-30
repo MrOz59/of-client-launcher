@@ -745,5 +745,8 @@
   "storeNext.detail.downloadStarted": "Download de {title} iniciado.",
   "storeNext.detail.downloadFailed": "Não foi possível iniciar o download.",
   "storeNext.detail.noTorrent": "Nenhum torrent encontrado nesta página.",
-  "storeNext.detail.trailer": "Trailer"
+  "storeNext.detail.trailer": "Trailer",
+  "storeNext.detail.developer": "Desenvolvedora",
+  "storeNext.detail.howTo": "Como rodar",
+  "storeNext.detail.instructionsSource": "Instruções retiradas da página do jogo no online-fix.me."
 }

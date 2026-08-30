@@ -68,6 +68,8 @@ export type StoreGameDetails = {
   torrentUrl?: string
   /** "Fix from the server": a direct file, not a torrent. */
   directUrl?: string
+  /** How to run the fix, in the site's own words — shown with attribution. */
+  instructions?: string[]
   description?: string
 }
 
@@ -289,6 +291,7 @@ export function parseGamePage(html: string, url: string): StoreGameDetails {
     releaseDate: findLabelled($, ['Релиз игры', 'Release date']),
     torrentUrl: downloads.torrentUrl,
     directUrl: downloads.directUrl,
+    instructions: findInstructions($),
     description: cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined
   }
 }
@@ -333,6 +336,35 @@ function findVideo($: cheerio.CheerioAPI): string | undefined {
   const thumb = $('meta[property="og:image"]').attr('content') || ''
   const id = /img\.youtube\.com\/vi\/([\w-]{6,})\//.exec(thumb)?.[1]
   return id ? `https://www.youtube.com/watch?v=${id}` : undefined
+}
+
+/**
+ * The steps live as <br>-separated lines in a single block, mixed with the
+ * labelled metadata. Keep the prose lines, drop the labels, and cap the result:
+ * this is the site's text, quoted in the app, not something to store.
+ */
+const METADATA_LABELS = /^(Релиз игры|Игра через|Режимы|Версия игры|Файлы для игры|Информация о игре|Страница игры|Release date|Game version)\s*:/i
+
+function findInstructions($: cheerio.CheerioAPI): string[] | undefined {
+  const block = $('.full-story-content').first()
+  if (block.length === 0) return undefined
+
+  const lines = block
+    .html()
+    ?.split(/<br\s*\/?>/i)
+    .map((chunk) => cleanText(cheerio.load(`<div>${chunk}</div>`)('div').text()))
+    .filter((line) => line.length >= 12 && !METADATA_LABELS.test(line)) ?? []
+
+  const steps: string[] = []
+  let budget = 1200
+
+  for (const line of lines) {
+    if (steps.length >= 12 || budget <= 0) break
+    steps.push(line.slice(0, 240))
+    budget -= line.length
+  }
+
+  return steps.length > 0 ? steps : undefined
 }
 
 /** Reads "<label>: <value>" lines, which survive layout changes. */

@@ -5586,3 +5586,84 @@ textarea:focus-visible,
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ── Native game page ────────────────────────────────────────────────────── */
+
+.store-next-detail {
+  width: min(860px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.store-next-hero {
+  position: relative;
+  min-height: 190px;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--bg-2);
+}
+
+.store-next-hero-shade {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 190px;
+  padding: 20px;
+  background: linear-gradient(180deg, rgba(10, 10, 12, 0.25) 0%, rgba(10, 10, 12, 0.92) 100%);
+}
+
+.store-next-hero-shade h3 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; }
+
+.store-next-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.store-next-chips span {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid var(--border);
+}
+
+.store-next-close { position: absolute; top: 12px; right: 12px; }
+
+.store-next-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.store-next-detail-description { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+
+.store-next-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.store-next-detail-facts div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.store-next-detail-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-2); }
+.store-next-detail-facts dd { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+
+.store-next-shots { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+
+.store-next-shots img {
+  height: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.store-next-instructions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.store-next-instructions ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.store-next-instructions li { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.store-next-source { margin: 0; font-size: 11px; color: var(--muted-2); }
+
+.store-next-detail-actions { display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }

@@ -140,6 +140,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeListing: (payload?: { page?: number; query?: string; force?: boolean }) =>
     ipcRenderer.invoke('store-listing', payload || {}),
   storeGame: (url: string, force?: boolean) => ipcRenderer.invoke('store-game', { url, force }),
+  storeGameMetadata: (url: string, title: string, steamAppId?: string) =>
+    ipcRenderer.invoke('store-game-metadata', { url, title, steamAppId }),
   storeCaptureFixture: (url: string, name?: string) => ipcRenderer.invoke('store-capture-fixture', { url, name }),
   storeClearCache: () => ipcRenderer.invoke('store-clear-cache'),
   setUiLanguage: (language: string) => ipcRenderer.invoke('set-ui-language', language),
