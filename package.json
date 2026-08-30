@@ -33,6 +33,7 @@
     "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:windows && npm run build && electron-builder --win --publish never",
     "start": "electron .",
     "test:scraper": "node scripts/test-scraper-dist.js",
+    "test:store-parser": "tsc -p tsconfig.build.json && node scripts/test-store-parser.js",
     "version:show": "node -p \"require('./package.json').version\"",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",

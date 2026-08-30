@@ -1,8 +1,8 @@
 import React from 'react'
-import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight, Wrench } from 'lucide-react'
+import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight, Wrench, Sparkles } from 'lucide-react'
 import { useI18n } from '../i18n'
 
-type Tab = 'store' | 'library' | 'downloads' | 'tools' | 'settings'
+type Tab = 'store' | 'store-next' | 'library' | 'downloads' | 'tools' | 'settings'
 
 interface SidebarProps {
   activeTab: Tab
@@ -67,6 +67,9 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'store' ? 'active' : ''}`}
           onClick={() => onTabChange('store')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('store') } }}
+          role="button"
+          tabIndex={0}
           title={t('app.tabs.store')}
         >
           <Store />
@@ -74,8 +77,23 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         </div>
 
         <div
+          className={`nav-item ${activeTab === 'store-next' ? 'active' : ''}`}
+          onClick={() => onTabChange('store-next')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('store-next') } }}
+          role="button"
+          tabIndex={0}
+          title={t('app.tabs.storeNext')}
+        >
+          <Sparkles />
+          <span>{t('app.tabs.storeNext')}</span>
+        </div>
+
+        <div
           className={`nav-item ${activeTab === 'library' ? 'active' : ''}`}
           onClick={() => onTabChange('library')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('library') } }}
+          role="button"
+          tabIndex={0}
           title={t('app.tabs.library')}
         >
           <Library />
@@ -85,6 +103,9 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'downloads' ? 'active' : ''} ${hasDownloadActivity ? 'downloading' : ''}`}
           onClick={() => onTabChange('downloads')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('downloads') } }}
+          role="button"
+          tabIndex={0}
           title={t('app.tabs.downloads')}
         >
           <Download />
@@ -94,6 +115,9 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'tools' ? 'active' : ''}`}
           onClick={() => onTabChange('tools')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('tools') } }}
+          role="button"
+          tabIndex={0}
           title={t('app.tabs.tools')}
         >
           <Wrench />
@@ -103,6 +127,9 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
         <div
           className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => onTabChange('settings')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('settings') } }}
+          role="button"
+          tabIndex={0}
           title={t('app.tabs.settings')}
         >
           <Settings />

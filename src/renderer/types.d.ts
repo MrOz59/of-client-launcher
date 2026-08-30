@@ -141,6 +141,26 @@ declare global {
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
       getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      storeListing: (payload?: { page?: number; query?: string; force?: boolean }) => Promise<{
+        success: boolean
+        listing?: {
+          items: Array<{ id: string; url: string; title: string; imageUrl?: string; publishedAt?: string }>
+          nextPageUrl?: string
+          page: number
+          query?: string
+          sourceUrl: string
+        }
+        error?: string
+        errorCode?: string
+      }>
+      storeGame: (url: string, force?: boolean) => Promise<{
+        success: boolean
+        game?: { url: string; title: string; version?: string; imageUrl?: string; description?: string }
+        error?: string
+        errorCode?: string
+      }>
+      storeCaptureFixture: (url: string, name?: string) => Promise<{ success: boolean; path?: string; bytes?: number; error?: string }>
+      storeClearCache: () => Promise<{ success: boolean }>
       setUiLanguage: (language: string) => Promise<{ success: boolean; language?: string; error?: string }>
       testNotification: () => Promise<{ success: boolean; delayMs?: number; error?: string }>
       getLauncherUpdateStatus: (force?: boolean) => Promise<{

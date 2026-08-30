@@ -14,6 +14,7 @@ export { registerTorrentHandlers } from './torrentHandlers'
 export { registerLaunchHandlers } from './launchHandlers'
 export { registerTaskHandlers } from './taskHandlers'
 export { registerToolsHandlers } from './toolsHandlers'
+export { registerStoreHandlers } from './storeHandlers'
 
 import type { IpcContext } from './types'
 import { registerDriveHandlers } from './driveHandlers'
@@ -28,6 +29,7 @@ import { registerTorrentHandlers } from './torrentHandlers'
 import { registerLaunchHandlers } from './launchHandlers'
 import { registerTaskHandlers } from './taskHandlers'
 import { registerToolsHandlers } from './toolsHandlers'
+import { registerStoreHandlers } from './storeHandlers'
 
 /**
  * Register all IPC handlers
@@ -46,4 +48,5 @@ export function registerAllIpcHandlers(context: IpcContext): void {
   registerLaunchHandlers(context)
   registerTaskHandlers(context)
   registerToolsHandlers(context)
+  registerStoreHandlers(context)
 }

@@ -1,0 +1,64 @@
+<!doctype html>
+<!--
+  Synthetic listing shaped like a DLE / FixLand index page.
+  Written from the structures the launcher already relies on (#dle-content,
+  article blocks, /<id>-<slug>.html article URLs, lazy-loaded covers) so the
+  parser can be tested before real pages are captured with `npm run store:capture`.
+  Replace it with a captured page whenever the template changes.
+-->
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Онлайн фиксы</title>
+</head>
+<body>
+  <div class="speedbar">
+    <a href="/">Главная</a> &raquo; <a href="/games/">Игры</a>
+  </div>
+
+  <nav class="topmenu">
+    <a href="/9999-nao-e-jogo.html">Link de menu que aponta para artigo</a>
+  </nav>
+
+  <div id="dle-content">
+    <article class="short-story">
+      <a href="/1234-nome-do-jogo.html" class="short-img">
+        <img data-src="/uploads/posts/2026-01/1234.jpg" src="data:image/gif;base64,R0lGOD" alt="Nome Do Jogo" />
+      </a>
+      <div class="short-info">
+        <a href="/1234-nome-do-jogo.html">Nome Do Jogo</a>
+        <span class="date">12 января 2026</span>
+      </div>
+    </article>
+
+    <article class="short-story">
+      <a href="https://online-fix.me/5678-outro-jogo.html" class="short-img">
+        <img src="https://online-fix.me/uploads/posts/2026-02/5678.jpg" alt="Outro Jogo" />
+      </a>
+      <div class="short-info">
+        <a href="https://online-fix.me/5678-outro-jogo.html" title="Outro Jogo Com Titulo Longo">Outro Jogo</a>
+        <time datetime="2026-02-03T10:00:00+03:00">3 февраля 2026</time>
+      </div>
+    </article>
+
+    <article class="short-story">
+      <div class="short-info">
+        <a href="/4242-jogo-sem-capa.html">Jogo Sem Capa</a>
+      </div>
+    </article>
+  </div>
+
+  <div id="dle-comments">
+    <div class="comment">
+      <a href="/1111-jogo-citado-em-comentario.html">um jogo citado num comentário</a>
+    </div>
+  </div>
+
+  <div class="bottom-nav">
+    <span>1</span>
+    <a href="/page/2/">2</a>
+    <a href="/page/3/">3</a>
+    <a href="/page/2/" class="pnext">Вперед</a>
+  </div>
+</body>
+</html>

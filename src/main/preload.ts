@@ -137,6 +137,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
+  storeListing: (payload?: { page?: number; query?: string; force?: boolean }) =>
+    ipcRenderer.invoke('store-listing', payload || {}),
+  storeGame: (url: string, force?: boolean) => ipcRenderer.invoke('store-game', { url, force }),
+  storeCaptureFixture: (url: string, name?: string) => ipcRenderer.invoke('store-capture-fixture', { url, name }),
+  storeClearCache: () => ipcRenderer.invoke('store-clear-cache'),
   setUiLanguage: (language: string) => ipcRenderer.invoke('set-ui-language', language),
   testNotification: () => ipcRenderer.invoke('test-notification'),
   getLauncherUpdateStatus: (force?: boolean) => ipcRenderer.invoke('get-launcher-update-status', { force }),

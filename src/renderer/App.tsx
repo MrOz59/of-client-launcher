@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import StoreTab from './components/StoreTab'
 import LibraryTab from './components/LibraryTab'
+import StoreNextTab from './components/StoreNextTab'
 import DownloadsTab from './components/DownloadsTab'
 import SettingsTab from './components/SettingsTab'
 import ToolsTab from './components/ToolsTab'
@@ -11,7 +12,7 @@ import { useToast } from './components/ToastHost'
 import { Download, ExternalLink, X } from 'lucide-react'
 import './App.css'
 
-type Tab = 'store' | 'library' | 'downloads' | 'tools' | 'settings'
+type Tab = 'store' | 'store-next' | 'library' | 'downloads' | 'tools' | 'settings'
 type LauncherUpdateStatus = {
   currentVersion: string
   latestVersion?: string
@@ -156,6 +157,8 @@ export default function App() {
     switch (tab) {
       case 'store':
         return t('app.tabs.store')
+      case 'store-next':
+        return t('app.tabs.storeNext')
       case 'library':
         return t('app.tabs.library')
       case 'downloads':
@@ -182,6 +185,15 @@ export default function App() {
         )
       case 'library':
         return <LibraryTab />
+      case 'store-next':
+        return (
+          <StoreNextTab
+            onOpenInClassicStore={(url) => {
+              if (url) setStoreTargetUrl(url)
+              handleTabChange('store')
+            }}
+          />
+        )
       case 'tools':
         return <ToolsTab />
       case 'settings':
