@@ -7,6 +7,7 @@ import { google } from 'googleapis'
 import crypto from 'crypto'
 import db from './db.js'
 import { extractRealAppIdFromIniText } from './utils/onlinefixIni.js'
+import { driveRequest } from './driveRequest.js'
 
 const REDIRECT_PORT = 42813
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`
@@ -245,12 +246,7 @@ function loadOAuthClient(): { auth: any; drive: any } | null {
   // Create a minimal auth object compatible with googleapis
   const authClient = {
     getAccessToken: async () => ({ token: await proxyAuth.getAccessToken() }),
-    request: async (opts: any) => {
-      const accessToken = await proxyAuth.getAccessToken()
-      const headers = { ...opts.headers, Authorization: `Bearer ${accessToken}` }
-      const response = await fetch(opts.url, { ...opts, headers })
-      return { data: await response.json(), status: response.status }
-    }
+    request: (opts: any) => driveRequest(opts, () => proxyAuth.getAccessToken())
   }
 
   const drive = google.drive({ version: 'v3', auth: authClient as any })
