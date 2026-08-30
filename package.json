@@ -146,6 +146,10 @@
         ]
       },
       {
+        "from": "resources/notification.html",
+        "to": "notification.html"
+      },
+      {
         "from": "resources/notifications",
         "to": "notifications",
         "filter": [

@@ -693,7 +693,6 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
     runningGames,
     inFlightPrefixJobs,
     achievementsManager,
-    achievementOverlay,
     sendGameLaunchStatus,
     sendCloudSavesStatus
   } = ctx

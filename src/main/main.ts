@@ -94,7 +94,6 @@ import { spawn } from 'child_process'
 import { vpnControllerCreateRoom, vpnControllerJoinRoom, vpnControllerListPeers, vpnControllerStatus } from './vpnControllerClient.js'
 import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestEffort } from './ofVpnManager.js'
 import { AchievementsManager } from './achievements/manager.js'
-import { AchievementOverlay } from './achievements/overlay.js'
 import { notifyDownloadComplete } from './desktopNotifications.js'
 import { resolveAppIconPath } from './appIcon.js'
 import { monitorEventLoopDelay } from 'perf_hooks'
@@ -512,7 +511,6 @@ try {
 }
 
 const achievementsManager = new AchievementsManager()
-const achievementOverlay = new AchievementOverlay()
 
 type RunningGameProc = {
   pid: number
@@ -1068,7 +1066,6 @@ const ipcContext: IpcContext = {
   setUpdateQueueCurrent: (v: string | null) => { updateQueueCurrent = v },
   setUpdateQueueLastError: (v: string | null) => { updateQueueLastError = v },
   achievementsManager,
-  achievementOverlay,
   sendDownloadProgress,
   sendTaskStatus: (payload: Partial<LauncherTask> & { id: string; kind: LauncherTask['kind']; status: LauncherTask['status'] }) => {
     upsertTask({

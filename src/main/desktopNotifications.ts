@@ -1,7 +1,12 @@
 import { Notification as ElectronNotification } from 'electron'
 import type { NotificationMessage } from './overlayIPC'
-import { showGameNotification, isGamescopeAvailable, closeAllGameNotifications } from './gameNotificationWindow'
-import { showDesktopOverlayNotification, closeAllDesktopNotifications } from './desktopNotificationWindow'
+import {
+  closeAllDesktopNotifications,
+  closeAllGameNotifications,
+  isGamescopeAvailable,
+  showDesktopOverlayNotification,
+  showGameNotification
+} from './electronToastWindow'
 import { showStandaloneToast, closeAllStandaloneToasts } from './standaloneToast'
 import { getSetting } from './db'
 

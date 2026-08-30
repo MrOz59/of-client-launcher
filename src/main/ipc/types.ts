@@ -3,7 +3,6 @@
  */
 import type { BrowserWindow } from 'electron'
 import type { AchievementsManager } from '../achievements/manager'
-import type { AchievementOverlay } from '../achievements/overlay'
 import type { LauncherTask } from '../taskManager'
 
 // ============================================================================
@@ -111,7 +110,6 @@ export interface IpcContext {
 
   // Achievement managers
   achievementsManager: AchievementsManager
-  achievementOverlay: AchievementOverlay
 
   // Notification helpers
   sendDownloadProgress: (payload: DownloadProgressPayload) => void
