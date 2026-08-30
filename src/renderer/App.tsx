@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import StoreTab from './components/StoreTab'
 import LibraryTab from './components/LibraryTab'
@@ -24,6 +24,9 @@ type LauncherUpdateStatus = {
 export default function App() {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('store')
+  const [settingsDirty, setSettingsDirty] = useState(false)
+  // Listeners registered once would otherwise capture a stale dirty flag.
+  const canLeaveSettingsRef = useRef<(tab: Tab) => boolean>(() => true)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hasDownloadActivity, setHasDownloadActivity] = useState(false)
   const [storeTargetUrl, setStoreTargetUrl] = useState<string | null>(null)
@@ -70,6 +73,7 @@ export default function App() {
     // Listen for navigation events from tray menu
     const offNavigateTab = window.electronAPI.onNavigateToTab?.((tab: string) => {
       if (tab === 'store' || tab === 'library' || tab === 'downloads' || tab === 'tools' || tab === 'settings') {
+        if (!canLeaveSettingsRef.current(tab as Tab)) return
         setActiveTab(tab as Tab)
       }
     })
@@ -179,7 +183,7 @@ export default function App() {
       case 'tools':
         return <ToolsTab />
       case 'settings':
-        return <SettingsTab />
+        return <SettingsTab onDirtyChange={setSettingsDirty} />
       default:
         return null
     }
@@ -215,6 +219,23 @@ export default function App() {
     }
   }
 
+  // Leaving Settings with pending edits used to drop them without a word.
+  const canLeaveSettings = useCallback((tab: Tab) => {
+    if (activeTab !== 'settings' || tab === 'settings' || !settingsDirty) return true
+    if (!window.confirm(t('settings.unsaved.confirmLeave'))) return false
+    setSettingsDirty(false)
+    return true
+  }, [activeTab, settingsDirty, t])
+
+  useEffect(() => {
+    canLeaveSettingsRef.current = canLeaveSettings
+  }, [canLeaveSettings])
+
+  const handleTabChange = (tab: Tab) => {
+    if (!canLeaveSettings(tab)) return
+    setActiveTab(tab)
+  }
+
   return (
     <div className="app-container">
       <LoginOverlay
@@ -229,12 +250,12 @@ export default function App() {
       />
       <Sidebar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         isLoggedIn={isLoggedIn}
         onLoginClick={handleLoginClick}
         onLogoutClick={handleLogoutClick}
         hasDownloadActivity={hasDownloadActivity}
-        onProfileNavigate={(url) => { setStoreTargetUrl(url); setActiveTab('store') }}
+        onProfileNavigate={(url) => { setStoreTargetUrl(url); handleTabChange('store') }}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebar}
       />

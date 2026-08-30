@@ -83,10 +83,10 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-get', async (_event, gameUrl: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
 
       const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+      if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
       // Resolve install dir similarly to launch-game
       let exePath = (game.executable_path as string | null) || null
@@ -122,7 +122,7 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-import-schema', async (_event, gameUrl: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
 
       const res = await dialog.showOpenDialog({
         title: 'Selecione um schema de conquistas (JSON)',
@@ -130,9 +130,9 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
         filters: [{ name: 'JSON', extensions: ['json'] }]
       })
 
-      if (res.canceled || !res.filePaths?.length) return { success: false, error: 'Nenhum arquivo selecionado' }
+      if (res.canceled || !res.filePaths?.length) return { success: false, error: 'Nenhum arquivo selecionado', errorCode: 'no-file-selected' }
       const filePath = String(res.filePaths[0] || '').trim()
-      if (!filePath) return { success: false, error: 'Arquivo inválido' }
+      if (!filePath) return { success: false, error: 'Arquivo inválido', errorCode: 'file-invalid' }
 
       const raw = fs.readFileSync(filePath, 'utf8')
       const json = JSON.parse(raw)
@@ -149,9 +149,9 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-save-schema', async (_event, gameUrl: string, rawJson: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
       const raw = typeof rawJson === 'string' ? rawJson : JSON.stringify(rawJson)
-      if (!raw || !raw.trim()) return { success: false, error: 'JSON vazio' }
+      if (!raw || !raw.trim()) return { success: false, error: 'JSON vazio', errorCode: 'json-empty' }
       let json: any
       try {
         json = JSON.parse(raw)
@@ -171,7 +171,7 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-clear-schema', async (_event, gameUrl: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
       const { clearCustomAchievementSchemaForGame } = require('../achievements/schema.js') as typeof import('../achievements/schema')
       const out = clearCustomAchievementSchemaForGame(url)
       if (!out.success) return { success: false, error: out.error || 'Falha ao remover schema' }
@@ -184,10 +184,10 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-force-refresh', async (_event, gameUrl: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
 
       const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+      if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
       let exePath = (game.executable_path as string | null) || null
       let installDir: string = process.cwd()
@@ -201,7 +201,7 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
 
       const detectedSteamAppId = detectSteamAppIdFromInstall(installDir)
       const steamAppId = String(detectedSteamAppId || game.steam_app_id || '').trim()
-      if (!steamAppId) return { success: false, error: 'Steam AppID não detectado/configurado' }
+      if (!steamAppId) return { success: false, error: 'Steam AppID não detectado/configurado', errorCode: 'steam-appid-missing' }
 
       const { clearCachedSchema } = require('../achievements/schema.js') as typeof import('../achievements/schema')
       clearCachedSchema(steamAppId)
@@ -214,10 +214,10 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-import-epic', async (_event, gameUrl: string, offerId?: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
 
       const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+      if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
       console.log('[IPC] Importing Epic achievements for game:', game.title)
       console.log('[IPC] External IDs:', game.external_ids)
@@ -256,10 +256,10 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
   ipcMain.handle('achievements-detect-epic-offer-id', async (_event, gameUrl: string) => {
     try {
       const url = String(gameUrl || '').trim()
-      if (!url) return { success: false, error: 'gameUrl ausente' }
+      if (!url) return { success: false, error: 'gameUrl ausente', errorCode: 'game-url-missing' }
 
       const game = getAllGames().find((g: any) => g.url === url) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+      if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
       const externalIds = game.external_ids || {}
       
@@ -275,7 +275,7 @@ export const registerAchievementsHandlers: IpcHandlerRegistrar = (ctx: IpcContex
       )
 
       if (!hasEpicIds) {
-        return { success: false, error: 'Nenhum ID Epic encontrado para este jogo' }
+        return { success: false, error: 'Nenhum ID Epic encontrado para este jogo', errorCode: 'epic-id-not-found' }
       }
 
       return { 

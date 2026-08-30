@@ -9,6 +9,7 @@ import {
 } from './electronToastWindow'
 import { showStandaloneToast, closeAllStandaloneToasts } from './standaloneToast'
 import { getSetting } from './db'
+import { tMain } from './i18nMain'
 
 export const NOTIFICATIONS_ENABLED = true
 
@@ -113,8 +114,8 @@ export function notifyDownloadComplete(
 ): NotificationMessage {
   const notification: NotificationMessage = {
     type: 'download_complete',
-    title: 'Pronto para jogar',
-    description: `${gameName} foi baixado com sucesso!`,
+    title: tMain('notifications.downloadComplete.title'),
+    description: tMain('notifications.downloadComplete.description', { game: gameName }),
     game: gameName,
     icon,
     duration_ms: 4000,
@@ -130,8 +131,8 @@ export function notifyDownloadError(
 ): NotificationMessage {
   const notification: NotificationMessage = {
     type: 'download_error',
-    title: 'Erro no Download',
-    description: `${gameName}: ${error}`,
+    title: tMain('notifications.downloadError.title'),
+    description: tMain('notifications.downloadError.description', { game: gameName, error }),
     game: gameName,
     duration_ms: 6000,
   }

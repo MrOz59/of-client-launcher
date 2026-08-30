@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: any) => ipcRenderer.invoke('save-settings', settings),
   getLauncherDiagnostics: () => ipcRenderer.invoke('get-launcher-diagnostics'),
+  setUiLanguage: (language: string) => ipcRenderer.invoke('set-ui-language', language),
   testNotification: () => ipcRenderer.invoke('test-notification'),
   getLauncherUpdateStatus: (force?: boolean) => ipcRenderer.invoke('get-launcher-update-status', { force }),
   installLauncherAppImageUpdate: () => ipcRenderer.invoke('install-launcher-appimage-update'),

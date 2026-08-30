@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X, Upload, Download, SlidersHorizontal } from 'lucide-react'
 import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom, CommunityGameFix } from './types'
 import { useI18n } from '../../i18n'
+import { ipcErrorText } from '../../../shared/ipcErrors'
 
 export interface ConfigModalProps {
   game: Game
@@ -703,7 +704,7 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenTricksGui(game.url)
-                    if (!res.success) alert(res.error || t('library.configModal.proton.openWinetricksFailed'))
+                    if (!res.success) alert(ipcErrorText(t, res, t('library.configModal.proton.openWinetricksFailed')))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
                   title={t('library.configModal.proton.openWinetricks')}
@@ -714,7 +715,7 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenWinecfg(game.url)
-                    if (!res.success) alert(res.error || t('library.configModal.proton.openWinecfgFailed'))
+                    if (!res.success) alert(ipcErrorText(t, res, t('library.configModal.proton.openWinecfgFailed')))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
                   title={t('library.configModal.proton.openWinecfg')}
@@ -725,7 +726,7 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenRegedit(game.url)
-                    if (!res.success) alert(res.error || t('library.configModal.proton.openRegeditFailed'))
+                    if (!res.success) alert(ipcErrorText(t, res, t('library.configModal.proton.openRegeditFailed')))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
                   title={t('library.configModal.proton.openRegedit')}
@@ -736,7 +737,7 @@ function ProtonTab(props: ConfigModalProps) {
                   className="config-btn secondary"
                   onClick={async () => {
                     const res = await window.electronAPI.protonOpenFileManager(game.url)
-                    if (!res.success) alert(res.error || t('library.configModal.proton.openExplorerFailed'))
+                    if (!res.success) alert(ipcErrorText(t, res, t('library.configModal.proton.openExplorerFailed')))
                   }}
                   disabled={isPrefixBusy || tricksRunning}
                   title={t('library.configModal.proton.openExplorer')}
@@ -1043,7 +1044,7 @@ function FixesTab(props: ConfigModalProps) {
       const res = await window.electronAPI.exportGameFix(game.url)
       if (res.canceled) return
       if (!res.success) {
-        setError(res.error || t('library.configModal.fixes.exportFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.fixes.exportFailed')))
         return
       }
       setFix(res.fix || null)
@@ -1065,7 +1066,7 @@ function FixesTab(props: ConfigModalProps) {
       const res = await window.electronAPI.importGameFix()
       if (res.canceled) return
       if (!res.success) {
-        setError(res.error || t('library.configModal.fixes.importFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.fixes.importFailed')))
         return
       }
       setFix(res.fix || null)
@@ -1085,7 +1086,7 @@ function FixesTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.saveGameFix(game.url, fix)
       if (!res.success) {
-        setError(res.error || t('library.configModal.fixes.saveFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.fixes.saveFailed')))
         return
       }
       setFix(res.fix || fix)
@@ -1105,7 +1106,7 @@ function FixesTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.deleteGameFix(game.url, target.id)
       if (!res.success) {
-        setError(res.error || t('library.configModal.fixes.deleteFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.fixes.deleteFailed')))
         return
       }
       if (fix?.id === target.id) setFix(null)
@@ -1128,7 +1129,7 @@ function FixesTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.applyGameFix(game.url, fix)
       if (!res.success) {
-        setError(res.error || t('library.configModal.fixes.applyFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.fixes.applyFailed')))
         return
       }
       onGameFixApplied(res.patch || {})
@@ -1376,7 +1377,7 @@ function DiagnosticsTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.getGameDiagnostics(game.url)
       if (!res.success) {
-        setError(res.error || t('library.configModal.diagnostics.generateFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.diagnostics.generateFailed')))
         setDiagnostics(null)
       } else {
         setDiagnostics(res.diagnostics || null)
@@ -1407,7 +1408,7 @@ function DiagnosticsTab(props: ConfigModalProps) {
     try {
       const res = await window.electronAPI.repairGameDiagnostics(game.url)
       if (!res.success) {
-        setError(res.error || t('library.configModal.diagnostics.repairFailed'))
+        setError(ipcErrorText(t, res, t('library.configModal.diagnostics.repairFailed')))
         setRepairResult(res.actions || null)
       } else {
         setDiagnostics(res.diagnostics || null)

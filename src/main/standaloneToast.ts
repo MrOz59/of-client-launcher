@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import type { NotificationMessage } from './overlayIPC'
+import { tMain } from './i18nMain'
 
 interface ToastPayload {
   type?: NotificationMessage['type']
@@ -130,7 +131,7 @@ function sourceFor(notification: NotificationMessage): string {
 
   switch (notification.type) {
     case 'achievement_unlocked':
-      return 'Conquista desbloqueada'
+      return tMain('notifications.achievementUnlocked')
     case 'download_complete':
     case 'download_error':
     case 'friend_online':

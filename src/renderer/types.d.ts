@@ -141,6 +141,7 @@ declare global {
       getSettings: () => Promise<{ success: boolean; settings?: any; platform?: string; isLinux?: boolean; error?: string }>
       saveSettings: (settings: any) => Promise<{ success: boolean; error?: string }>
       getLauncherDiagnostics: () => Promise<{ success: boolean; diagnostics?: any; error?: string }>
+      setUiLanguage: (language: string) => Promise<{ success: boolean; language?: string; error?: string }>
       testNotification: () => Promise<{ success: boolean; delayMs?: number; error?: string }>
       getLauncherUpdateStatus: (force?: boolean) => Promise<{
         success: boolean

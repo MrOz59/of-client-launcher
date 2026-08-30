@@ -26,6 +26,7 @@ import { ProtonLogModal } from './library/ProtonLogModal'
 import { SchemaEditorModal } from './library/SchemaEditorModal'
 import { ConfigModal } from './library/ConfigModal'
 import { useI18n } from '../i18n'
+import { ipcErrorText } from '../../shared/ipcErrors'
 
 // Spinner and achievement styles
 const spinnerStyles = `
@@ -224,7 +225,7 @@ export default function LibraryTab() {
         setGames(list)
         refreshActiveUpdates(list)
       } else {
-        setError(result.error || t('library.error.loadGames'))
+        setError(ipcErrorText(t, result, t('library.error.loadGames')))
       }
     } catch (error: any) {
       console.error('Failed to load games:', error)
@@ -336,7 +337,7 @@ export default function LibraryTab() {
 
       const res = await window.electronAPI.startTorrentDownload(torrentUrl, game.url)
       if (!res.success) {
-        alert(res.error || t('library.update.startFailed'))
+        alert(ipcErrorText(t, res, t('library.update.startFailed')))
         setUpdatingGames(prev => { const next = { ...prev }; delete next[game.url]; return next })
       } else {
         setUpdatingGames(prev => ({ ...prev, [game.url]: { status: 'downloading', id: torrentUrl } }))
@@ -355,7 +356,7 @@ export default function LibraryTab() {
     setScanningInstalled(true)
     try {
       const res = await window.electronAPI.scanInstalledGames()
-      if (!res.success) throw new Error(res.error || t('library.scan.failed'))
+      if (!res.success) throw new Error(ipcErrorText(t, res, t('library.scan.failed')))
       await loadGames()
       alert(t('library.scan.completed', { added: res.added || 0, scanned: res.scanned || 0 }))
     } catch (err: any) {
@@ -370,7 +371,7 @@ export default function LibraryTab() {
     if (confirm(t('library.delete.confirm', { title: game.title }))) {
       const res = await window.electronAPI.deleteGame(game.url)
       if (res.success) setGames(prev => prev.filter(g => g.url !== game.url))
-      else alert(res.error || t('library.delete.failed'))
+      else alert(ipcErrorText(t, res, t('library.delete.failed')))
     }
   }, [t])
 
@@ -378,7 +379,7 @@ export default function LibraryTab() {
   const openGameFolder = useCallback(async (game: Game) => {
     if (!game.install_path) { alert(t('library.folder.missing')); return }
     const res = await window.electronAPI.openGameFolder(game.install_path)
-    if (!res.success) alert(res.error || t('library.folder.openFailed'))
+    if (!res.success) alert(ipcErrorText(t, res, t('library.folder.openFailed')))
   }, [t])
 
   // Configure exe
@@ -387,7 +388,7 @@ export default function LibraryTab() {
     const res = await window.electronAPI.configureGameExe(game.url)
     setConfiguring(null)
     if (res.success && res.exePath) setGames(prev => prev.map(g => g.url === game.url ? { ...g, executable_path: res.exePath } : g))
-    else alert(res.error || t('library.exe.noneConfigured'))
+    else alert(ipcErrorText(t, res, t('library.exe.noneConfigured')))
   }, [t])
 
   // Open proton log modal
@@ -456,7 +457,7 @@ export default function LibraryTab() {
     if (res.success && res.prefix) {
       gameConfig.setProtonPrefix(res.prefix)
     } else {
-      alert(res.error || t('library.prefix.createFailed'))
+      alert(ipcErrorText(t, res, t('library.prefix.createFailed')))
     }
   }, [gameConfig, t])
 

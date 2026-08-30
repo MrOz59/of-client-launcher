@@ -23,6 +23,7 @@ import { resolveLegendaryBinary } from '../legendary'
 import { resolveLudusaviBinary } from '../ludusavi'
 import { configureStoreAdBlocker, normalizeStoreAdBlockMode } from '../storeAdBlocker'
 import { checkLauncherUpdate, getLauncherVersion, installAppImageUpdate } from '../appUpdates'
+import { setUiLanguage, tMain } from '../i18nMain'
 
 const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 const TEST_NOTIFICATION_DELAY_MS = 5000
@@ -543,9 +544,19 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
     }
   })
 
+  // The renderer keeps the language in localStorage; mirror it so the main
+  // process can translate the toasts it shows itself.
+  ipcMain.handle('set-ui-language', async (_event, language: string) => {
+    try {
+      return { success: true, language: setUiLanguage(language) }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to store language' }
+    }
+  })
+
   ipcMain.handle('test-notification', async () => {
     if (getSetting('notifications_enabled') === 'false') {
-      return { success: false, error: 'notifications-disabled' }
+      return { success: false, error: 'notifications-disabled', errorCode: 'notifications-disabled' }
     }
 
     // O atraso vive no processo principal de propósito: o usuário vai alternar
@@ -555,8 +566,8 @@ export const registerSettingsHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       testNotificationTimer = null
       try {
         notifyAchievementUnlocked(
-          'Conquista de teste',
-          'Se você está vendo isto durante o jogo, as notificações estão funcionando.',
+          tMain('notifications.test.title'),
+          tMain('notifications.test.description'),
           undefined,
           'VoidLauncher'
         )

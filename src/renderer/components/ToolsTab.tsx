@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Check, Download, ExternalLink, HardDrive, Loader2, LogIn, LogOut, Package, RefreshCw, Shield, Trash2, UserCircle, Wrench } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { ipcErrorText } from '../../shared/ipcErrors'
 
 type ReleaseInfo = {
   tag: string
@@ -124,7 +125,7 @@ export default function ToolsTab() {
     try {
       const res = await window.electronAPI.getToolsStatus()
       if (res.success) setStatus(res.status || null)
-      else setMessage(res.error || t('tools.statusFailed'))
+      else setMessage(ipcErrorText(t, res, t('tools.statusFailed')))
     } catch (err: any) {
       setMessage(err?.message || String(err))
     } finally {
@@ -139,7 +140,7 @@ export default function ToolsTab() {
       const errors: string[] = []
       const results = await Promise.all(keys.map(async key => {
         const res = await window.electronAPI.listToolReleases(key, 12, force)
-        if (!res.success) errors.push(`${key}: ${res.error || t('tools.releases.failed')}`)
+        if (!res.success) errors.push(`${key}: ${ipcErrorText(t, res, t('tools.releases.failed'))}`)
         return [key, res.success ? (res.releases || []) : []] as const
       }))
       setReleases(Object.fromEntries(results))

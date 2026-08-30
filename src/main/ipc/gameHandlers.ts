@@ -448,7 +448,7 @@ function startSteamClient(command: string) {
 
 async function collectGameDiagnostics(gameUrl: string, ctx: IpcContext) {
   const game = getGame(gameUrl) as any
-  if (!game) return { success: false, error: 'Jogo não encontrado' }
+  if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
   const installPath = pathInfo(game.install_path)
   const exePath = pathInfo(game.executable_path, installPath.exists && installPath.type === 'directory' ? installPath.path : null)
@@ -489,7 +489,7 @@ async function collectGameDiagnostics(gameUrl: string, ctx: IpcContext) {
         }
       }
     } catch {
-      onlineFix = { found: false, error: 'Falha ao ler OnlineFix.ini' }
+      onlineFix = { found: false, error: 'Falha ao ler OnlineFix.ini', errorCode: 'onlinefix-ini-unreadable' }
     }
   }
 
@@ -757,7 +757,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
 
   ipcMain.handle('open-game-folder', async (_event, installPath?: string) => {
     try {
-      if (!installPath) return { success: false, error: 'Path not provided' }
+      if (!installPath) return { success: false, error: 'Path not provided', errorCode: 'path-missing' }
       const normalized = path.isAbsolute(installPath) ? installPath : path.resolve(process.cwd(), installPath)
       await shell.openPath(normalized)
       return { success: true }
@@ -773,7 +773,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         properties: ['openFile'],
         filters: [{ name: 'Executáveis', extensions: ['exe'] }]
       })
-      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhum arquivo selecionado' }
+      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhum arquivo selecionado', errorCode: 'no-file-selected' }
       const exePath = res.filePaths[0]
       updateGameInfo(gameUrl, { executable_path: exePath })
       return { success: true, exePath }
@@ -797,7 +797,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       if (!before.success) return before
 
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo não encontrado' }
+      if (!game) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
 
       for (const action of before.diagnostics?.repairActions || []) {
         try {
@@ -1003,7 +1003,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('export-game-fix', async (_event, gameUrl: string) => {
     try {
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 
       const fix = buildGameFix(game)
       const defaultPath = `${safeFileName(`${game.title || 'game'}-fix`)}.json`
@@ -1045,7 +1045,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       if (res.canceled || !res.filePaths?.[0]) return { success: false, canceled: true }
 
       const raw = fs.readFileSync(res.filePaths[0], 'utf8')
-      if (raw.length > 256 * 1024) return { success: false, error: 'Arquivo de fix muito grande' }
+      if (raw.length > 256 * 1024) return { success: false, error: 'Arquivo de fix muito grande', errorCode: 'fix-file-too-large' }
 
       const fix = normalizeGameFix(JSON.parse(raw))
       return { success: true, fix, path: res.filePaths[0] }
@@ -1057,7 +1057,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('list-game-fixes', async (_event, gameUrl: string) => {
     try {
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
       const fixes = listLocalGameFixes(game).map(item => ({
         fix: item.fix,
         path: item.path,
@@ -1072,7 +1072,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('save-game-fix', async (_event, gameUrl: string, rawFix: any) => {
     try {
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
       const saved = saveLocalGameFix(game, rawFix)
       return { success: true, fix: saved.fix, path: saved.path }
     } catch (err: any) {
@@ -1083,15 +1083,15 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('delete-game-fix', async (_event, gameUrl: string, fixId: string) => {
     try {
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
       const cleanId = safeText(fixId, 120)
-      if (!cleanId) return { success: false, error: 'Fix inválido' }
+      if (!cleanId) return { success: false, error: 'Fix inválido', errorCode: 'fix-invalid' }
       const match = listLocalGameFixes(game).find(item => item.fix.id === cleanId)
-      if (!match) return { success: false, error: 'Fix não encontrado' }
+      if (!match) return { success: false, error: 'Fix não encontrado', errorCode: 'fix-not-found' }
 
       const root = path.resolve(getGameFixesRoot())
       const target = path.resolve(match.path)
-      if (!target.startsWith(root + path.sep)) return { success: false, error: 'Path de fix inválido' }
+      if (!target.startsWith(root + path.sep)) return { success: false, error: 'Path de fix inválido', errorCode: 'fix-path-invalid' }
       fs.rmSync(target, { force: true })
       return { success: true }
     } catch (err: any) {
@@ -1102,7 +1102,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('apply-game-fix', async (_event, gameUrl: string, rawFix: any) => {
     try {
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 
       const fix = normalizeGameFix(rawFix)
       const runtime = resolveRuntimePathFromFix(fix)
@@ -1131,9 +1131,9 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
 
   ipcMain.handle('install-game-fix-components', async (_event, gameUrl: string, rawFix: any) => {
     try {
-      if (process.platform !== 'linux') return { success: false, error: 'Apenas disponível no Linux' }
+      if (process.platform !== 'linux') return { success: false, error: 'Apenas disponível no Linux', errorCode: 'linux-only' }
       const game = getGame(gameUrl) as any
-      if (!game) return { success: false, error: 'Jogo nao encontrado' }
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 
       const fix = normalizeGameFix(rawFix)
       const components = getFixWinetricksComponents(fix)
@@ -1143,10 +1143,10 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         return { success: true, installed: [], warnings }
       }
       if (!winetricksAvailable()) {
-        return { success: false, error: 'winetricks não está instalado' }
+        return { success: false, error: 'winetricks não está instalado', errorCode: 'winetricks-missing' }
       }
       if (ctx.inFlightPrefixJobs.has(gameUrl)) {
-        return { success: false, error: 'Já existe uma operação de prefixo em andamento para este jogo' }
+        return { success: false, error: 'Já existe uma operação de prefixo em andamento para este jogo', errorCode: 'prefix-operation-in-progress' }
       }
 
       if ((fix.components?.protontricks || []).length) {
@@ -1228,11 +1228,11 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         return { success: true, imageUrl: null }
       }
 
-      if (value.length > 2048) return { success: false, error: 'URL muito longa' }
+      if (value.length > 2048) return { success: false, error: 'URL muito longa', errorCode: 'url-too-long' }
 
       const allowed = value.startsWith('http://') || value.startsWith('https://') || value.startsWith('file://')
       if (!allowed) {
-        return { success: false, error: 'URL inválida (use http(s):// ou file://)' }
+        return { success: false, error: 'URL inválida (use http(s):// ou file://)', errorCode: 'url-scheme-invalid' }
       }
 
       updateGameInfo(gameUrl, { image_url: value })
@@ -1284,7 +1284,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('open-external', async (_event, target: string) => {
     try {
       const url = String(target || '').trim()
-      if (!/^https?:\/\//i.test(url)) return { success: false, error: 'URL inválida' }
+      if (!/^https?:\/\//i.test(url)) return { success: false, error: 'URL inválida', errorCode: 'url-invalid' }
       await shell.openExternal(url)
       return { success: true }
     } catch (err: any) {
@@ -1315,7 +1315,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         }
         return { success: true, path: finalPath }
       }
-      return { success: false, error: 'Invalid path' }
+      return { success: false, error: 'Invalid path', errorCode: 'path-invalid' }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
@@ -1327,7 +1327,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         title: 'Selecione uma pasta',
         properties: ['openDirectory', 'createDirectory']
       })
-      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhuma pasta selecionada' }
+      if (res.canceled || !res.filePaths.length) return { success: false, error: 'Nenhuma pasta selecionada', errorCode: 'no-folder-selected' }
       return { success: true, path: res.filePaths[0] }
     } catch (err: any) {
       return { success: false, error: err.message }

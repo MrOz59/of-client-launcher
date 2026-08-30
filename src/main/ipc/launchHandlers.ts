@@ -702,11 +702,11 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const existing = runningGames.get(gameUrl)
       if (existing?.pid && isPidAlive(existing.pid)) {
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Jogo já está em execução', pid: existing.pid })
-        return { success: false, error: 'Jogo já está em execução' }
+        return { success: false, error: 'Jogo já está em execução', errorCode: 'game-already-running' }
       }
       if (inFlightPrefixJobs.has(gameUrl)) {
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Prefixo está sendo preparado/atualizado. Aguarde.' })
-        return { success: false, error: 'Prefixo está sendo preparado/atualizado. Aguarde.' }
+        return { success: false, error: 'Prefixo está sendo preparado/atualizado. Aguarde.', errorCode: 'prefix-preparing' }
       }
 
       sendGameLaunchStatus({ gameUrl, status: 'starting' })
@@ -721,7 +721,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.error('[Launch] ❌ Game not found in database. Looking for URL:', gameUrl)
         console.error('[Launch] Available game URLs:', allGames.map((g: any) => g.url))
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Jogo não encontrado' })
-        return { success: false, error: 'Jogo não encontrado' }
+        return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
       }
 
       console.log('[Launch] 📋 Game data:', {
@@ -751,7 +751,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       if (!fs.existsSync(installDir)) {
         console.error('[Launch] ❌ Install dir not found:', installDir)
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Pasta de instalação não encontrada' })
-        return { success: false, error: 'Pasta de instalação não encontrada' }
+        return { success: false, error: 'Pasta de instalação não encontrada', errorCode: 'install-folder-not-found' }
       }
 
       // Before launching, sync saves between local and Drive
@@ -890,7 +890,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       if (!fs.existsSync(exePath)) {
         console.error('[Launch] ❌ Executable not found at', exePath)
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Executável não encontrado' })
-        return { success: false, error: 'Executável não encontrado' }
+        return { success: false, error: 'Executável não encontrado', errorCode: 'executable-not-found' }
       }
 
       let child: any
@@ -1045,13 +1045,13 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         if (!launch.runner) {
           console.error('[Launch] ❌ Proton runner not found!')
           sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Proton não encontrado. Configure nas opções do jogo.' })
-          return { success: false, error: 'Proton não encontrado. Configure nas opções do jogo.' }
+          return { success: false, error: 'Proton não encontrado. Configure nas opções do jogo.', errorCode: 'proton-not-configured' }
         }
 
         if (!launch.cmd) {
           console.error('[Launch] ❌ Proton command is empty!')
           sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Comando Proton inválido' })
-          return { success: false, error: 'Comando Proton inválido' }
+          return { success: false, error: 'Comando Proton inválido', errorCode: 'proton-command-invalid' }
         }
 
         console.log('[Launch] 🎯 Full command:', launch.cmd, launch.args?.join(' '))
@@ -1503,7 +1503,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       if (!entry || initialPids.length === 0) {
         try { runningGames.delete(gameUrl) } catch {}
         try { achievementsManager.stopWatching(gameUrl) } catch {}
-        return { success: false, error: 'Jogo não está em execução' }
+        return { success: false, error: 'Jogo não está em execução', errorCode: 'game-not-running' }
       }
 
       sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Parando jogo...', pid: entry.pid })
@@ -1544,7 +1544,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const record = gameUrl ? runningGames.get(gameUrl) : undefined
 
       if (!record && !logPath) {
-        return { success: false, error: 'Nenhum log disponível para este jogo.' }
+        return { success: false, error: 'Nenhum log disponível para este jogo.', errorCode: 'no-log-available' }
       }
 
       return buildProtonLogSnapshot(record, logPath || undefined, maxChars)

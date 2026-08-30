@@ -184,7 +184,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       const asNumber = Number(downloadId)
       const record = !Number.isNaN(asNumber) ? getDownloadById(asNumber) as any : getDownloadByUrl(String(downloadId)) as any
       const candidatePath = providedPath || record?.install_path || record?.dest_path
-      if (!candidatePath) return { success: false, error: 'Path not provided' }
+      if (!candidatePath) return { success: false, error: 'Path not provided', errorCode: 'path-missing' }
 
       const infoHash = record?.info_hash
       const idKey = infoHash || record?.download_url || String(downloadId)
@@ -275,7 +275,7 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
       // For HTTP downloads, use the standard extraction flow
       const { archivePath, destDir } = findArchive(target)
       if (!archivePath) {
-        return { success: false, error: 'Nenhum arquivo .zip/.rar/.7z encontrado para extrair' }
+        return { success: false, error: 'Nenhum arquivo .zip/.rar/.7z encontrado para extrair', errorCode: 'no-archive-to-extract' }
       }
       const firstInstall = !hasExistingGameInstall(gameUrl, destDir)
 

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { AlertCircle, Bell, Folder, Download, HardDrive, RefreshCw, Gamepad2, Cloud, Globe, Info, Settings2, ChevronDown, Trash2, Key, Link, Monitor, FolderPlus, Check, X, CloudOff, Minimize2, Terminal, Shield, ExternalLink, Heart } from 'lucide-react'
 import { useI18n, type SupportedLanguage } from '../i18n'
+import { useToast } from './ToastHost'
+import { ipcErrorText } from '../../shared/ipcErrors'
 
 interface Settings {
   downloadPath: string
@@ -82,8 +84,14 @@ function settingsSnapshot(settings: Settings) {
   })
 }
 
-export default function SettingsTab() {
+type SettingsTabProps = {
+  /** Lets the shell warn before navigating away with unsaved settings. */
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+export default function SettingsTab({ onDirtyChange }: SettingsTabProps = {}) {
   const { t, language, setLanguage, supportedLanguages } = useI18n()
+  const toast = useToast()
   const [platformInfo, setPlatformInfo] = useState<{ platform: string; isLinux: boolean }>({
     platform: 'unknown',
     isLinux: false
@@ -211,6 +219,12 @@ export default function SettingsTab() {
   }, [savedSnapshot, settings])
 
   useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges)
+  }, [hasUnsavedChanges, onDirtyChange])
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+
+  useEffect(() => {
     if (hasUnsavedChanges && saveStatus.state !== 'saving' && saveStatus.state !== 'error') {
       setSaveStatus({ state: 'pending', message: t('settings.save.pending') })
     } else if (!hasUnsavedChanges && saveStatus.state === 'pending') {
@@ -223,7 +237,7 @@ export default function SettingsTab() {
     try {
       const res = await window.electronAPI.getLauncherDiagnostics()
       if (res.success) setLauncherDiagnostics(res.diagnostics || null)
-      else setLauncherDiagnostics({ error: res.error || t('settings.launcherDiagnostics.failed'), checks: [] })
+      else setLauncherDiagnostics({ error: ipcErrorText(t, res, t('settings.launcherDiagnostics.failed')), checks: [] })
     } catch (err: any) {
       setLauncherDiagnostics({ error: err?.message || String(err), checks: [] })
     } finally {
@@ -243,7 +257,7 @@ export default function SettingsTab() {
         setLauncherUpdate({
           currentVersion: launcherVersion !== '—' ? launcherVersion : '',
           updateAvailable: false,
-          error: res.error || t('settings.launcherUpdate.failed')
+          error: ipcErrorText(t, res, t('settings.launcherUpdate.failed'))
         })
       }
     } catch (err: any) {
@@ -290,7 +304,7 @@ export default function SettingsTab() {
     try {
       const res = await window.electronAPI.installLauncherAppImageUpdate()
       if (!res.success) {
-        setLauncherUpdateMessage(res.error || t('settings.launcherUpdate.installFailed'))
+        setLauncherUpdateMessage(ipcErrorText(t, res, t('settings.launcherUpdate.installFailed')))
         setLauncherUpdateInstalling(false)
       } else {
         setLauncherUpdateMessage(res.message || t('settings.launcherUpdate.restarting'))
@@ -368,7 +382,8 @@ export default function SettingsTab() {
     try {
       const res = await window.electronAPI.saveSettings(settings)
       if (!res.success) {
-        setSaveStatus({ state: 'error', message: res.error || t('settings.save.error') })
+        setSaveStatus({ state: 'error', message: ipcErrorText(t, res, t('settings.save.error')) })
+        toast.error(t('settings.save.error'), (ipcErrorText(t, res) || undefined))
       } else {
         try {
           localStorage.setItem('of_store_ad_block_mode', settings.storeAdBlockMode === 'all' ? 'all' : 'popups')
@@ -381,9 +396,11 @@ export default function SettingsTab() {
         }
         loadLauncherDiagnostics()
         setSaveStatus({ state: 'saved', message: t('settings.save.saved') })
+        toast.success(t('settings.unsaved.saved'))
       }
     } catch (err: any) {
       setSaveStatus({ state: 'error', message: err?.message || t('settings.save.error') })
+      toast.error(t('settings.save.error'), err?.message || undefined)
     } finally {
       setSaving(false)
     }
@@ -434,10 +451,10 @@ export default function SettingsTab() {
         setDriveStatusTimed('OK')
       } else if (res && typeof res === 'object' && res.error) {
         setDriveFiles(null)
-        setDriveStatusTimed(t('settings.errorPrefix', { message: String(res.error) }))
+        setDriveStatusTimed(t('settings.errorPrefix', { message: ipcErrorText(t, res) }))
       } else if (res && typeof res === 'object' && res.success === false) {
         setDriveFiles(null)
-        setDriveStatusTimed(t('settings.errorPrefix', { message: String(res.message || res.error || t('downloads.status.error')) }))
+        setDriveStatusTimed(t('settings.errorPrefix', { message: String(res.message || ipcErrorText(t, res, t('downloads.status.error'))) }))
       } else {
         setDriveFiles(null)
         setDriveStatusTimed(t('settings.errorPrefix', { message: t('settings.cloud.unexpectedResponse') }))
@@ -1241,6 +1258,16 @@ export default function SettingsTab() {
           ) : (
             <><Check size={16} /> {t('settings.save.button')}</>
           )}
+        </button>
+        <button
+          className="settings-btn ghost lg"
+          onClick={async () => {
+            await loadSettings()
+            toast.info(t('settings.unsaved.discarded'))
+          }}
+          disabled={saving || !hasUnsavedChanges}
+        >
+          <X size={16} /> {t('settings.unsaved.discard')}
         </button>
       </div>
     </div>

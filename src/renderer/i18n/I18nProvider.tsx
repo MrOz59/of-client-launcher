@@ -80,6 +80,8 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore
     }
+    // Main shows its own toasts, so it needs to know the language too.
+    window.electronAPI?.setUiLanguage?.(language)
   }, [language])
 
   useEffect(() => {
