@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Download, ExternalLink, Loader2, RefreshCw, Search } from 'lucide-react'
+import { AlertCircle, Download, ExternalLink, Loader2, PlayCircle, RefreshCw, Search, X } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
 import { ipcErrorText } from '../../shared/ipcErrors'
+import { useModalA11y } from '../hooks/useModalA11y'
 
 /**
  * Native store (work in progress).
@@ -44,7 +45,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [library, setLibrary] = useState<Record<string, LibraryEntry>>({})
-  const [details, setDetails] = useState<Record<string, string>>({})
+  const [selected, setSelected] = useState<StoreItem | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const loadingRef = useRef(false)
 
@@ -130,19 +131,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
     setQuery(queryInput.trim())
   }
 
-  const openDetails = async (item: StoreItem) => {
-    if (details[item.url]) return
-    try {
-      const res = await window.electronAPI.storeGame(item.url)
-      if (!res?.success || !res.game) {
-        toast.error(ipcErrorText(t, res, t('storeNext.error.details')))
-        return
-      }
-      setDetails((current) => ({ ...current, [item.url]: res.game?.version || t('storeNext.card.noVersion') }))
-    } catch (err: any) {
-      toast.error(t('storeNext.error.details'), err?.message || undefined)
-    }
-  }
+  const openDetails = (item: StoreItem) => setSelected(item)
 
   const captureFixture = async () => {
     if (!sourceUrl) return
@@ -228,8 +217,8 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
           <article key={item.id} className="store-next-card">
             <button
               className="store-next-cover"
-              onClick={() => onOpenInClassicStore(item.url)}
-              title={t('storeNext.card.open', { title: item.title })}
+              onClick={() => openDetails(item)}
+              title={t('storeNext.card.details')}
               aria-label={t('storeNext.card.open', { title: item.title })}
             >
               {item.imageUrl
@@ -241,7 +230,6 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
             <div className="store-next-info">
               <h3 title={item.title}>{item.title}</h3>
               <div className="store-next-meta">
-                {details[item.url] && <span>{details[item.url]}</span>}
                 {item.updatedAt
                   ? <span title={item.updatedAt}>{item.updatedAt}</span>
                   : item.publishedAt && <span>{formatDate(item.publishedAt)}</span>}
@@ -269,6 +257,15 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
 
       <div ref={sentinelRef} aria-hidden="true" />
 
+      {selected && (
+        <StoreGameDialog
+          item={selected}
+          libraryEntry={library[selected.url]}
+          onClose={() => setSelected(null)}
+          onOpenInClassicStore={onOpenInClassicStore}
+        />
+      )}
+
       {hasMore && !loading && (
         <div className="store-next-more">
           <button className="settings-btn secondary" onClick={() => load(page + 1, query, { append: true })}>
@@ -289,4 +286,152 @@ function formatDate(value: string): string {
 function dedupe(items: StoreItem[]): StoreItem[] {
   const seen = new Set<string>()
   return items.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)))
+}
+
+type StoreGameDetails = {
+  url: string
+  title: string
+  version?: string
+  imageUrl?: string
+  videoUrl?: string
+  releaseDate?: string
+  torrentUrl?: string
+  directUrl?: string
+  description?: string
+}
+
+/** Detail view: reads the game page and offers the existing download flow. */
+function StoreGameDialog({
+  item,
+  libraryEntry,
+  onClose,
+  onOpenInClassicStore
+}: {
+  item: StoreItem
+  libraryEntry?: LibraryEntry
+  onClose: () => void
+  onOpenInClassicStore: (url: string) => void
+}) {
+  const { t } = useI18n()
+  const toast = useToast()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
+
+  const [details, setDetails] = useState<StoreGameDetails | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    let disposed = false
+
+    window.electronAPI.storeGame(item.url).then((res) => {
+      if (disposed) return
+      if (!res?.success || !res.game) {
+        setError(ipcErrorText(t, res, t('storeNext.error.details')))
+      } else {
+        setDetails(res.game)
+      }
+    }).catch((err: any) => {
+      if (!disposed) setError(err?.message || t('storeNext.error.details'))
+    }).finally(() => {
+      if (!disposed) setLoading(false)
+    })
+
+    return () => { disposed = true }
+  }, [item.url, t])
+
+  const startDownload = async () => {
+    if (!details?.torrentUrl) return
+    setDownloading(true)
+    try {
+      const res = await window.electronAPI.startTorrentDownload(details.torrentUrl, item.url)
+      if (res?.success) {
+        toast.success(t('storeNext.detail.downloadStarted', { title: item.title }))
+        onClose()
+      } else {
+        toast.error(t('storeNext.detail.downloadFailed'), ipcErrorText(t, res as any) || undefined)
+      }
+    } catch (err: any) {
+      toast.error(t('storeNext.detail.downloadFailed'), err?.message || undefined)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  // The article carries no poster, only a trailer, so the cover comes from the listing.
+  const cover = item.imageUrl || details?.imageUrl
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal store-next-detail"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h3>{item.title}</h3>
+          <button className="settings-btn-icon" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="store-next-detail-body">
+          {cover && <img className="store-next-detail-cover" src={cover} alt="" />}
+
+          <dl className="store-next-detail-facts">
+            <div>
+              <dt>{t('storeNext.detail.version')}</dt>
+              <dd>{loading ? '…' : details?.version || t('storeNext.card.noVersion')}</dd>
+            </div>
+            {(details?.releaseDate || item.publishedAt) && (
+              <div>
+                <dt>{t('storeNext.detail.release')}</dt>
+                <dd>{details?.releaseDate || formatDate(item.publishedAt || '')}</dd>
+              </div>
+            )}
+            {item.updatedAt && (
+              <div>
+                <dt>{t('storeNext.detail.updated')}</dt>
+                <dd>{item.updatedAt}</dd>
+              </div>
+            )}
+            {libraryEntry?.installed && (
+              <div>
+                <dt>{t('storeNext.detail.library')}</dt>
+                <dd>{libraryEntry.hasUpdate ? t('storeNext.card.update') : t('storeNext.card.installed')}</dd>
+              </div>
+            )}
+          </dl>
+
+          {error && <div className="store-next-notice error" role="alert"><AlertCircle size={15} aria-hidden="true" /><span>{error}</span></div>}
+        </div>
+
+        <div className="modal-footer store-next-detail-actions">
+          <button
+            className="settings-btn primary"
+            onClick={startDownload}
+            disabled={loading || downloading || !details?.torrentUrl}
+            title={!loading && !details?.torrentUrl ? t('storeNext.detail.noTorrent') : undefined}
+          >
+            {downloading ? <Loader2 size={15} className="of-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
+            {downloading ? t('storeNext.detail.downloading') : t('storeNext.detail.download')}
+          </button>
+
+          {details?.videoUrl && (
+            <button className="settings-btn ghost" onClick={() => window.electronAPI.openExternal(details.videoUrl!)}>
+              <PlayCircle size={15} aria-hidden="true" />
+              {t('storeNext.detail.trailer')}
+            </button>
+          )}
+
+          <button className="settings-btn secondary" onClick={() => { onClose(); onOpenInClassicStore(item.url) }}>
+            <ExternalLink size={15} aria-hidden="true" />
+            {t('storeNext.openClassic')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }

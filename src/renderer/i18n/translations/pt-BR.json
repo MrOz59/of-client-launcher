@@ -735,5 +735,15 @@
   "storeNext.card.update": "Atualização",
   "storeNext.capture.button": "Salvar página",
   "storeNext.capture.saved": "Página salva para os testes do parser.",
-  "storeNext.capture.failed": "Não foi possível salvar a página."
+  "storeNext.capture.failed": "Não foi possível salvar a página.",
+  "storeNext.detail.version": "Versão",
+  "storeNext.detail.release": "Lançamento",
+  "storeNext.detail.updated": "Atualizado",
+  "storeNext.detail.library": "Na sua biblioteca",
+  "storeNext.detail.download": "Baixar",
+  "storeNext.detail.downloading": "Iniciando…",
+  "storeNext.detail.downloadStarted": "Download de {title} iniciado.",
+  "storeNext.detail.downloadFailed": "Não foi possível iniciar o download.",
+  "storeNext.detail.noTorrent": "Nenhum torrent encontrado nesta página.",
+  "storeNext.detail.trailer": "Trailer"
 }

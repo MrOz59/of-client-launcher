@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio'
+import { isOnlineFixHost } from '../../shared/allowedHosts'
 
 /**
  * Parser for the store's HTML.
@@ -59,7 +60,14 @@ export type StoreGameDetails = {
   url: string
   title: string
   version?: string
+  /** The article has no poster of its own — this is the trailer thumbnail. */
   imageUrl?: string
+  videoUrl?: string
+  releaseDate?: string
+  /** Ready for the existing download flow. */
+  torrentUrl?: string
+  /** "Fix from the server": a direct file, not a torrent. */
+  directUrl?: string
   description?: string
 }
 
@@ -266,23 +274,77 @@ function pageNumberOf(url: string): number | null {
   return match ? Number(match[1]) : null
 }
 
-/** Details for a single game page. Version labels are matched by text. */
+/** Details for a single game page. Everything is matched by label or URL shape. */
 export function parseGamePage(html: string, url: string): StoreGameDetails {
   const $ = cheerio.load(html)
+  const canonical = absoluteUrl($('link[rel="canonical"]').attr('href') || $('meta[property="og:url"]').attr('content'), url)
+  const downloads = findDownloads($, url)
 
-  const title = cleanText(
-    $('h1').first().text() ||
-    $('meta[property="og:title"]').attr('content') ||
-    $('title').text()
-  )
+  return {
+    url: canonical || url,
+    title: cleanText($('h1').first().text() || $('meta[property="og:title"]').attr('content') || $('title').text()),
+    version: findVersion($),
+    imageUrl: absoluteUrl($('meta[property="og:image"]').attr('content'), url) || undefined,
+    videoUrl: findVideo($),
+    releaseDate: findLabelled($, ['Релиз игры', 'Release date']),
+    torrentUrl: downloads.torrentUrl,
+    directUrl: downloads.directUrl,
+    description: cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined
+  }
+}
 
-  const imageUrl =
-    absoluteUrl($('meta[property="og:image"]').attr('content'), url) ||
-    imageFrom($, $('.full-story-content, article, #dle-content').get(0), url)
+/**
+ * Download buttons point at the upload host: `/torrents/…` is the torrent the
+ * launcher can hand to the download flow, `/uploads/…` is the plain file.
+ */
+function findDownloads($: cheerio.CheerioAPI, baseUrl: string): { torrentUrl?: string; directUrl?: string } {
+  let torrentUrl: string | undefined
+  let directUrl: string | undefined
 
-  const description = cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined
+  $('a[href]').each((_index, element) => {
+    if (torrentUrl && directUrl) return
 
-  return { url, title, version: findVersion($), imageUrl, description }
+    const url = absoluteUrl($(element).attr('href'), baseUrl)
+    if (!url) return
+
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return
+    }
+
+    if (!isOnlineFixHost(parsed.hostname)) return
+
+    const isTorrent = parsed.pathname.includes('/torrents/') || parsed.pathname.endsWith('.torrent')
+    if (isTorrent && !torrentUrl) torrentUrl = url
+    else if (!isTorrent && parsed.pathname.includes('/uploads/') && !directUrl) directUrl = url
+  })
+
+  return { torrentUrl, directUrl }
+}
+
+/** The article's media is a YouTube trailer; there is no poster to read. */
+function findVideo($: cheerio.CheerioAPI): string | undefined {
+  const iframe = $('iframe[src*="youtube"], iframe[data-src*="youtube"]').first()
+  const fromIframe = iframe.attr('src') || iframe.attr('data-src')
+  if (fromIframe) return fromIframe.startsWith('//') ? `https:${fromIframe}` : fromIframe
+
+  const thumb = $('meta[property="og:image"]').attr('content') || ''
+  const id = /img\.youtube\.com\/vi\/([\w-]{6,})\//.exec(thumb)?.[1]
+  return id ? `https://www.youtube.com/watch?v=${id}` : undefined
+}
+
+/** Reads "<label>: <value>" lines, which survive layout changes. */
+function findLabelled($: cheerio.CheerioAPI, labels: string[]): string | undefined {
+  const text = cleanText($('.full-story-content, article, #dle-content').first().text())
+
+  for (const label of labels) {
+    const match = new RegExp(`${label}\\s*:?\\s*([0-9][0-9A-Za-z._/\\-]*)`, 'i').exec(text)
+    if (match?.[1]) return match[1]
+  }
+
+  return undefined
 }
 
 /**
@@ -290,10 +352,12 @@ export function parseGamePage(html: string, url: string): StoreGameDetails {
  * is far more stable than the element it happens to sit in.
  */
 export function findVersion($: cheerio.CheerioAPI): string | undefined {
-  const labels = [/Версия\s+игры\s*:?\s*([^\s<,;]+)/i, /Game\s+version\s*:?\s*([^\s<,;]+)/i, /\bv?(\d+\.\d+[\w.\-]*)\b/]
+  // Stop at the first character that cannot be part of a version: the page
+  // often runs the next word straight into it ("1.0.0Скачать").
+  const labels = [/Версия\s+игры\s*:?\s*v?([0-9][0-9A-Za-z._\-]*)/i, /Game\s+version\s*:?\s*v?([0-9][0-9A-Za-z._\-]*)/i]
 
   const scopeText = cleanText($('.full-story-content, article, #dle-content').first().text())
-  for (const label of labels.slice(0, 2)) {
+  for (const label of labels) {
     const match = scopeText.match(label)
     if (match?.[1]) return match[1].trim()
   }

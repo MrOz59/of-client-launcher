@@ -69,5 +69,25 @@ const details = parseGamePage(gameHtml, 'https://online-fix.me/1234-nome-do-jogo
 check(details.version === '1.0.266', 'reads the version from the labelled line', details.version)
 check(details.title === 'Test Game', 'reads the title', details.title)
 
+console.log('\ngame page captured from the real store')
+const realGame = parseGamePage(
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'game-real.html'), 'utf8'),
+  'https://online-fix.me/games/officialservers/18211-aliens-fireteam-elite-2-po-seti.html'
+)
+
+check(realGame.version === '1.0.0', 'version stops before the next word', realGame.version)
+check(realGame.releaseDate === '25.08.2026', 'reads the release date', realGame.releaseDate)
+check(
+  (realGame.torrentUrl || '').includes('/torrents/'),
+  'finds the torrent the download flow can use',
+  realGame.torrentUrl
+)
+check(
+  (realGame.directUrl || '').includes('/uploads/') && !(realGame.directUrl || '').includes('/torrents/'),
+  'keeps the direct file separate from the torrent',
+  realGame.directUrl
+)
+check((realGame.videoUrl || '').includes('KG55MXH8cME'), 'finds the trailer', realGame.videoUrl)
+
 console.log(failures === 0 ? '\nall parser checks passed' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

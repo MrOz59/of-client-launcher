@@ -735,5 +735,15 @@
   "storeNext.card.update": "Update",
   "storeNext.capture.button": "Save page",
   "storeNext.capture.saved": "Page saved for the parser tests.",
-  "storeNext.capture.failed": "Could not save the page."
+  "storeNext.capture.failed": "Could not save the page.",
+  "storeNext.detail.version": "Version",
+  "storeNext.detail.release": "Released",
+  "storeNext.detail.updated": "Updated",
+  "storeNext.detail.library": "In your library",
+  "storeNext.detail.download": "Download",
+  "storeNext.detail.downloading": "Starting…",
+  "storeNext.detail.downloadStarted": "Download of {title} started.",
+  "storeNext.detail.downloadFailed": "Could not start the download.",
+  "storeNext.detail.noTorrent": "No torrent found on this page.",
+  "storeNext.detail.trailer": "Trailer"
 }

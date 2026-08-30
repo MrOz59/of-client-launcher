@@ -155,7 +155,17 @@ declare global {
       }>
       storeGame: (url: string, force?: boolean) => Promise<{
         success: boolean
-        game?: { url: string; title: string; version?: string; imageUrl?: string; description?: string }
+        game?: {
+          url: string
+          title: string
+          version?: string
+          imageUrl?: string
+          videoUrl?: string
+          releaseDate?: string
+          torrentUrl?: string
+          directUrl?: string
+          description?: string
+        }
         error?: string
         errorCode?: string
       }>

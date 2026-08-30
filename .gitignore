@@ -108,5 +108,6 @@ tauri-migration/
 
 # Página capturada com a conta logada (dados pessoais)
 CFOF
+CFGP
 CFOF.html
 scripts/fixtures/capture-*.html
