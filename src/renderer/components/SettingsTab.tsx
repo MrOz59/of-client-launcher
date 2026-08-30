@@ -245,6 +245,17 @@ export default function SettingsTab({ onDirtyChange }: SettingsTabProps = {}) {
     }
   }
 
+  // Support threads always start with "send me your setup"; make that one click.
+  const copyDiagnostics = async () => {
+    if (!launcherDiagnostics) return
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(launcherDiagnostics, null, 2))
+      toast.success(t('settings.launcherDiagnostics.copied'))
+    } catch (err: any) {
+      toast.error(t('settings.launcherDiagnostics.copyFailed'), err?.message || undefined)
+    }
+  }
+
   const loadLauncherUpdate = async (force = false) => {
     setLauncherUpdateLoading(true)
     setLauncherUpdateMessage(null)
@@ -1111,6 +1122,14 @@ export default function SettingsTab({ onDirtyChange }: SettingsTabProps = {}) {
               <button className="settings-btn secondary" onClick={loadLauncherDiagnostics} disabled={diagnosticsLoading}>
                 <RefreshCw size={14} className={diagnosticsLoading ? 'of-spin' : ''} />
                 {t('settings.launcherDiagnostics.refresh')}
+              </button>
+              <button
+                className="settings-btn ghost"
+                onClick={copyDiagnostics}
+                disabled={diagnosticsLoading || !launcherDiagnostics}
+              >
+                <Terminal size={14} />
+                {t('settings.launcherDiagnostics.copy')}
               </button>
             </div>
 

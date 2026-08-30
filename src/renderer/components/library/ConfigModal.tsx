@@ -3,6 +3,7 @@ import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check
 import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom, CommunityGameFix } from './types'
 import { useI18n } from '../../i18n'
 import { ipcErrorText } from '../../../shared/ipcErrors'
+import { useModalA11y } from '../../hooks/useModalA11y'
 
 export interface ConfigModalProps {
   game: Game
@@ -99,10 +100,11 @@ export interface ConfigModalProps {
 export function ConfigModal(props: ConfigModalProps) {
   const { game, isLinux, configTab, onTabChange, configSaveState, onClose } = props
   const { t } = useI18n()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal config-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal config-modal" ref={dialogRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="config-modal-body">
           <div className="modal-header config-modal-header">
             <div className="config-modal-title">
@@ -134,7 +136,7 @@ export function ConfigModal(props: ConfigModalProps) {
                           ? t('downloads.status.error')
                           : t('settings.save.idle'))}
               </div>
-              <button className="config-close-btn" onClick={onClose} title={t('login.close')}>
+              <button className="config-close-btn" onClick={onClose} title={t('login.close')} aria-label={t('login.close')}>
                 <X size={18} />
               </button>
             </div>
@@ -400,7 +402,7 @@ function OnlineFixTab(props: ConfigModalProps) {
                 className="config-section-action"
                 onClick={onReloadIni}
                 disabled={iniLoading}
-                title={t('library.configModal.onlineFix.reloadFile')}
+                title={t('library.configModal.onlineFix.reloadFile')} aria-label={t('library.configModal.onlineFix.reloadFile')}
               >
                 <RefreshCw size={14} className={iniLoading ? 'of-spin' : ''} />
               </button>
@@ -1441,13 +1443,13 @@ function DiagnosticsTab(props: ConfigModalProps) {
         <div className="config-section-header">
           <Terminal size={18} />
           <h4>{t('library.configModal.diagnostics.gameDiagnostics')}</h4>
-          <button className="config-section-action" onClick={loadDiagnostics} disabled={loading} title={t('library.configModal.diagnostics.refresh')}>
+          <button className="config-section-action" onClick={loadDiagnostics} disabled={loading} title={t('library.configModal.diagnostics.refresh')} aria-label={t('library.configModal.diagnostics.refresh')}>
             <RefreshCw size={14} className={loading ? 'of-spin' : ''} />
           </button>
-          <button className="config-section-action" onClick={runRepair} disabled={!diagnostics || repairing || repairActions.length === 0} title={t('library.configModal.diagnostics.repairProblems')}>
+          <button className="config-section-action" onClick={runRepair} disabled={!diagnostics || repairing || repairActions.length === 0} title={t('library.configModal.diagnostics.repairProblems')} aria-label={t('library.configModal.diagnostics.repairProblems')}>
             <Wrench size={14} className={repairing ? 'of-spin' : ''} />
           </button>
-          <button className="config-section-action" onClick={copyJson} disabled={!diagnostics} title={t('library.configModal.diagnostics.copyJson')}>
+          <button className="config-section-action" onClick={copyJson} disabled={!diagnostics} title={t('library.configModal.diagnostics.copyJson')} aria-label={t('library.configModal.diagnostics.copyJson')}>
             <Copy size={14} />
           </button>
         </div>
@@ -1923,7 +1925,7 @@ function LanTab(props: ConfigModalProps) {
                   <div className="vpn-form-header">
                     <h4>{t('library.configModal.lan.publicRooms')}</h4>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn ghost small" onClick={onRefreshRooms} disabled={vpnLoading}>
+                      <button className="btn ghost small" onClick={onRefreshRooms} disabled={vpnLoading} title={t('common.refresh')} aria-label={t('common.refresh')}>
                         <RefreshCw size={14} className={vpnLoading ? 'of-spin' : ''} />
                       </button>
                       <button className="btn ghost small" onClick={() => setShowRoomBrowser(false)}>{t('login.close')}</button>

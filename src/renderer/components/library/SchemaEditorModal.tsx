@@ -1,5 +1,6 @@
 import React from 'react'
 import { useI18n } from '../../i18n'
+import { useModalA11y } from '../../hooks/useModalA11y'
 
 export interface SchemaEditorModalProps {
   title: string
@@ -27,11 +28,12 @@ export function SchemaEditorModal({
   onSave
 }: SchemaEditorModalProps) {
   const { t } = useI18n()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
   const format = '{ items: [{ id, name, description?, iconUrl?, hidden? }] }'
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal config-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+      <div className="modal config-modal" ref={dialogRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <div className="config-modal-body">
           <div className="modal-header">
             <div>
@@ -55,7 +57,7 @@ export function SchemaEditorModal({
               >
                 {t('library.schema.copyJson')}
               </button>
-              <button className="btn ghost" onClick={onClose} title={t('login.close')}>
+              <button className="btn ghost" onClick={onClose} title={t('login.close')} aria-label={t('login.close')}>
                 ✕
               </button>
             </div>

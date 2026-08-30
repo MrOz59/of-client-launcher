@@ -282,6 +282,7 @@ declare global {
       deleteDownload: (downloadId: number) => Promise<{ success: boolean; error?: string }>
       onGameVersionUpdate: (cb: (data: { url: string; latest?: string }) => void) => (() => void)
       onUpdateQueueStatus: (cb: (data: { running: boolean; queued: number; currentGameUrl?: string | null; lastError?: string | null; updatedAt: number }) => void) => (() => void)
+      onDownloadWarning: (cb: (data: { code: string; freeGb?: number; thresholdGb?: number }) => void) => () => void
       onDownloadDeleted: (cb: () => void) => (() => void)
       onGameLaunchStatus: (cb: (data: { gameUrl: string; status: 'starting' | 'running' | 'exited' | 'error'; pid?: number; code?: number | null; signal?: string | null; message?: string; stderrTail?: string; protonLogPath?: string }) => void) => (() => void)
       onPrefixJobStatus: (cb: (data: { gameUrl: string; status: 'starting' | 'progress' | 'done' | 'error'; message?: string; prefix?: string }) => void) => (() => void)

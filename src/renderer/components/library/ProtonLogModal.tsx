@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { ArrowDown, ArrowUp, Copy, RefreshCw, Terminal } from 'lucide-react'
 import { useI18n } from '../../i18n'
+import { useModalA11y } from '../../hooks/useModalA11y'
 
 export interface ProtonLogModalProps {
   title: string
@@ -28,6 +29,7 @@ export function ProtonLogModal({
   onClose
 }: ProtonLogModalProps) {
   const { t } = useI18n()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
   const bodyRef = useRef<HTMLPreElement | null>(null)
   const stickToBottomRef = useRef(false)
   const hasRenderedTextRef = useRef(false)
@@ -47,7 +49,7 @@ export function ProtonLogModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal config-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 1100, width: 'min(1100px, 94vw)' }}>
+      <div className="modal config-modal" ref={dialogRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 1100, width: 'min(1100px, 94vw)' }}>
         <div className="config-modal-body">
           <div className="modal-header" style={{ alignItems: 'flex-start' }}>
             <div>
@@ -62,7 +64,7 @@ export function ProtonLogModal({
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button className="btn ghost" onClick={onRefresh} disabled={loading} title={t('library.logs.refreshNow')}>
+              <button className="btn ghost" onClick={onRefresh} disabled={loading} title={t('library.logs.refreshNow')} aria-label={t('library.logs.refreshNow')}>
                 <RefreshCw size={14} className={loading ? 'of-spin' : undefined} />
               </button>
               <button
@@ -89,10 +91,10 @@ export function ProtonLogModal({
               >
                 <ArrowDown size={14} />
               </button>
-              <button className="btn ghost" onClick={onCopy} title={t('library.logs.copy')}>
+              <button className="btn ghost" onClick={onCopy} title={t('library.logs.copy')} aria-label={t('library.logs.copy')}>
                 <Copy size={14} />
               </button>
-              <button className="btn ghost" onClick={onClose} title={t('login.close')}>
+              <button className="btn ghost" onClick={onClose} title={t('login.close')} aria-label={t('login.close')}>
                 ✕
               </button>
             </div>

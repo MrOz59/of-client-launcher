@@ -72,7 +72,7 @@ export function CloudSavesBanner({ banner, games, onOpenBackups, onClose }: Clou
       <button
         className="btn ghost"
         onClick={onClose}
-        title={t('login.close')}
+        title={t('login.close')} aria-label={t('login.close')}
         style={{ paddingInline: 8, opacity: 0.7 }}
       >
         ✕

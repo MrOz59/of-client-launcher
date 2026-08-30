@@ -9,6 +9,8 @@ import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from '../torrentReso
 import { updateGameInfo, getDownloadByUrl } from '../db'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 import { isAllowedTorrentUrl, isAllowedWebviewUrl } from '../../shared/allowedHosts'
+import { isLowOnSpace, LOW_DISK_SPACE_GB } from '../diskSpace'
+import { resolveDownloadRoot } from '../downloadManager'
 
 const TORRENT_PARTITION = 'persist:online-fix'
 
@@ -25,6 +27,20 @@ export const registerTorrentHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =>
       }
       if (referer && !isAllowedWebviewUrl(referer)) {
         return { success: false, error: 'Referer não permitido' }
+      }
+
+      // Warn before a multi-GB download instead of after it fills the disk.
+      try {
+        const { low, freeGb } = isLowOnSpace(resolveDownloadRoot())
+        if (low && freeGb !== null) {
+          ctx.getMainWindow()?.webContents.send('download-warning', {
+            code: 'low-disk-space',
+            freeGb: Math.round(freeGb * 10) / 10,
+            thresholdGb: LOW_DISK_SPACE_GB
+          })
+        }
+      } catch (err) {
+        console.warn('[Main] Could not check free disk space:', err)
       }
 
       // Check if it's a torrent directory URL or direct .torrent file

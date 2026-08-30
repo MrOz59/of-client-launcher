@@ -7,6 +7,7 @@ import SettingsTab from './components/SettingsTab'
 import ToolsTab from './components/ToolsTab'
 import LoginOverlay from './components/LoginOverlay'
 import { useI18n } from './i18n'
+import { useToast } from './components/ToastHost'
 import { Download, ExternalLink, X } from 'lucide-react'
 import './App.css'
 
@@ -23,6 +24,7 @@ type LauncherUpdateStatus = {
 
 export default function App() {
   const { t } = useI18n()
+  const toast = useToast()
   const [activeTab, setActiveTab] = useState<Tab>('store')
   const [settingsDirty, setSettingsDirty] = useState(false)
   // Listeners registered once would otherwise capture a stale dirty flag.
@@ -219,6 +221,17 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    const off = window.electronAPI.onDownloadWarning?.((data) => {
+      if (data?.code !== 'low-disk-space') return
+      toast.error(t('downloads.warning.lowDiskSpace', {
+        free: String(data.freeGb ?? '?'),
+        threshold: String(data.thresholdGb ?? '?')
+      }))
+    })
+    return () => { off?.() }
+  }, [t, toast])
+
   // Leaving Settings with pending edits used to drop them without a word.
   const canLeaveSettings = useCallback((tab: Tab) => {
     if (activeTab !== 'settings' || tab === 'settings' || !settingsDirty) return true
@@ -284,7 +297,7 @@ export default function App() {
                   ? launcherUpdateInstalling ? t('app.updateBanner.installing') : t('app.updateBanner.install')
                   : t('app.updateBanner.open')}
               </button>
-              <button className="settings-btn-icon" onClick={dismissUpdateBanner} title={t('app.updateBanner.dismiss')}>
+              <button className="settings-btn-icon" onClick={dismissUpdateBanner} title={t('app.updateBanner.dismiss')} aria-label={t('app.updateBanner.dismiss')}>
                 <X size={15} />
               </button>
             </div>

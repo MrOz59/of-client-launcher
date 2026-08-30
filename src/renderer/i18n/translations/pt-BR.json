@@ -705,5 +705,14 @@
   "notifications.downloadError.description": "{game}: {error}",
   "notifications.achievementUnlocked": "Conquista desbloqueada",
   "notifications.test.title": "Conquista de teste",
-  "notifications.test.description": "Se você está vendo isto durante o jogo, as notificações estão funcionando."
+  "notifications.test.description": "Se você está vendo isto durante o jogo, as notificações estão funcionando.",
+  "library.card.playtimeHours": "{hours} h jogadas",
+  "library.card.playtimeMinutes": "{minutes} min jogados",
+  "library.card.lastPlayedToday": "jogado hoje",
+  "library.card.lastPlayedYesterday": "jogado ontem",
+  "library.card.lastPlayedDays": "há {days} d",
+  "settings.launcherDiagnostics.copy": "Copiar relatório",
+  "settings.launcherDiagnostics.copied": "Diagnóstico copiado para a área de transferência.",
+  "settings.launcherDiagnostics.copyFailed": "Não foi possível copiar o diagnóstico.",
+  "downloads.warning.lowDiskSpace": "Só {free} GB livres no disco de downloads — um jogo costuma precisar de mais de {threshold} GB."
 }

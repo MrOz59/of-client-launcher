@@ -257,6 +257,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('download-complete', handler)
   },
 
+  onDownloadWarning: (cb: (data: { code: string; freeGb?: number; thresholdGb?: number }) => void) => {
+    const handler = (_event: IpcRendererEvent, data: { code: string; freeGb?: number; thresholdGb?: number }) => cb(data)
+    ipcRenderer.on('download-warning', handler)
+    return () => ipcRenderer.removeListener('download-warning', handler)
+  },
+
   onDownloadDeleted: (cb: () => void) => {
     const handler = () => cb()
     ipcRenderer.on('download-deleted', handler)

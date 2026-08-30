@@ -1,6 +1,7 @@
 import React from 'react'
 import { CheckCircle2, Eye, FileJson, Lock, Plus, RefreshCw, Trash2, Trophy, X } from 'lucide-react'
 import { useI18n } from '../../i18n'
+import { useModalA11y } from '../../hooks/useModalA11y'
 
 export interface AchievementsModalProps {
   gameUrl: string | null
@@ -37,6 +38,7 @@ export function AchievementsModal({
   onForceRefreshSchema
 }: AchievementsModalProps) {
   const { t } = useI18n()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
   if (!gameUrl) return null
 
   const unlockedCount = items.filter((x: any) => !!x?.unlocked).length
@@ -45,7 +47,7 @@ export function AchievementsModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal config-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+      <div className="modal config-modal" ref={dialogRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <div className="config-modal-body">
           <div className="modal-header">
             <div>
@@ -89,7 +91,7 @@ export function AchievementsModal({
                 <Trash2 size={14} /> {t('library.achievements.remove')}
               </button>
 
-              <button className="btn ghost" onClick={onClose} title={t('login.close')}>
+              <button className="btn ghost" onClick={onClose} title={t('login.close')} aria-label={t('login.close')}>
                 <X size={14} />
               </button>
             </div>

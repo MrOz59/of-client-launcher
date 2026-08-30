@@ -705,5 +705,14 @@
   "notifications.downloadError.description": "{game}: {error}",
   "notifications.achievementUnlocked": "Achievement unlocked",
   "notifications.test.title": "Test achievement",
-  "notifications.test.description": "If you can read this while playing, notifications are working."
+  "notifications.test.description": "If you can read this while playing, notifications are working.",
+  "library.card.playtimeHours": "{hours} h played",
+  "library.card.playtimeMinutes": "{minutes} min played",
+  "library.card.lastPlayedToday": "played today",
+  "library.card.lastPlayedYesterday": "played yesterday",
+  "library.card.lastPlayedDays": "{days} d ago",
+  "settings.launcherDiagnostics.copy": "Copy report",
+  "settings.launcherDiagnostics.copied": "Diagnostics copied to the clipboard.",
+  "settings.launcherDiagnostics.copyFailed": "Could not copy the diagnostics.",
+  "downloads.warning.lowDiskSpace": "Only {free} GB free on the download drive — a game usually needs more than {threshold} GB."
 }

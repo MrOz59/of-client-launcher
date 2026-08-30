@@ -548,6 +548,10 @@ function resolveDefaultGamesPath(): string {
   return path.join(process.cwd(), 'games')
 }
 
+export function resolveDownloadRoot(): string {
+  return resolveDefaultDownloadPath()
+}
+
 function resolveDefaultDownloadPath(): string {
   const configured = String(getSetting('download_path') || '').trim()
   if (configured) return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured)

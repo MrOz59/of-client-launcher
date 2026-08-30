@@ -21,6 +21,7 @@ export interface Game {
 
   // DB metadata
   last_played?: string | null
+  play_time?: number | null
   file_size?: string | null
   is_favorite?: number | boolean | null
 }

@@ -27,6 +27,28 @@ export interface GameCardProps {
   onStop: () => void
 }
 
+/** "12 h · 3 d ago" — the launcher records both, nothing showed them. */
+function usageSummary(
+  game: { play_time?: number | null; last_played?: string | null },
+  t: (key: string, params?: Record<string, string | number>) => string
+): string | null {
+  const parts: string[] = []
+  const minutes = Math.max(0, Number(game.play_time) || 0)
+
+  if (minutes >= 60) parts.push(t('library.card.playtimeHours', { hours: Math.round(minutes / 60) }))
+  else if (minutes > 0) parts.push(t('library.card.playtimeMinutes', { minutes }))
+
+  const played = game.last_played ? new Date(game.last_played) : null
+  if (played && !Number.isNaN(played.getTime())) {
+    const days = Math.floor((Date.now() - played.getTime()) / 86400000)
+    if (days <= 0) parts.push(t('library.card.lastPlayedToday'))
+    else if (days === 1) parts.push(t('library.card.lastPlayedYesterday'))
+    else parts.push(t('library.card.lastPlayedDays', { days }))
+  }
+
+  return parts.length ? parts.join(' · ') : null
+}
+
 export function GameCard({
   game,
   launchState,
@@ -49,6 +71,7 @@ export function GameCard({
   onStop
 }: GameCardProps) {
   const { t } = useI18n()
+  const usage = usageSummary(game, t)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [menuPosition, setMenuPosition] = useState<{ bottom: number; left: number } | null>(null)
 
@@ -321,6 +344,7 @@ export function GameCard({
             v{game.installed_version || '---'}
             {updateAvailable && <span className="new-version"> → v{game.latest_version}</span>}
           </div>
+          {usage && <div className="game-usage">{usage}</div>}
         </div>
       </div>
     </div>
