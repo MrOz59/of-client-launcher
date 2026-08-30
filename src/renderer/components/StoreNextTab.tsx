@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Download, ExternalLink, Loader2, RefreshCw, Search } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
@@ -19,6 +19,7 @@ type StoreItem = {
   title: string
   imageUrl?: string
   publishedAt?: string
+  updatedAt?: string
 }
 
 type LibraryEntry = {
@@ -44,6 +45,12 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
   const [error, setError] = useState<string | null>(null)
   const [library, setLibrary] = useState<Record<string, LibraryEntry>>({})
   const [details, setDetails] = useState<Record<string, string>>({})
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingRef = useRef(false)
+
+  useEffect(() => {
+    loadingRef.current = loading
+  }, [loading])
 
   useEffect(() => {
     let disposed = false
@@ -99,6 +106,24 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
   useEffect(() => {
     load(1, query)
   }, [load, query])
+
+  // The site paginates every ~20 games; the grid stitches those pages together
+  // as the user scrolls, one request at a time so the site is never hammered.
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node || !hasMore) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || loadingRef.current) return
+        load(page + 1, query, { append: true })
+      },
+      { rootMargin: '500px' }
+    )
+
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMore, page, query, load])
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault()
@@ -217,7 +242,9 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
               <h3 title={item.title}>{item.title}</h3>
               <div className="store-next-meta">
                 {details[item.url] && <span>{details[item.url]}</span>}
-                {item.publishedAt && <span>{item.publishedAt}</span>}
+                {item.updatedAt
+                  ? <span title={item.updatedAt}>{item.updatedAt}</span>
+                  : item.publishedAt && <span>{formatDate(item.publishedAt)}</span>}
               </div>
               <div className="store-next-card-actions">
                 <button className="settings-btn ghost sm" onClick={() => openDetails(item)}>
@@ -240,6 +267,8 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
         </div>
       )}
 
+      <div ref={sentinelRef} aria-hidden="true" />
+
       {hasMore && !loading && (
         <div className="store-next-more">
           <button className="settings-btn secondary" onClick={() => load(page + 1, query, { append: true })}>
@@ -249,6 +278,12 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
       )}
     </div>
   )
+}
+
+function formatDate(value: string): string {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString()
 }
 
 function dedupe(items: StoreItem[]): StoreItem[] {

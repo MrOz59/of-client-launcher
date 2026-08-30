@@ -25,8 +25,20 @@ const IGNORED_CONTAINERS = [
   'footer',
   '.footer',
   '.related',
-  '.sidebar'
+  '.sidebar',
+  // Live chat widget: it quotes article links that are not catalogue entries.
+  '.lc_area',
+  '#lc_chat',
+  '.lc_chat_list_area',
+  // "Top games" widget: its links carry the date glued to the title.
+  '.game-rating',
+  '.games-cont'
 ].join(', ')
+
+/** Cards of the main listing, newest first. */
+const CARD_SELECTOR = 'div.article, article.article, .short-story, .shortstory'
+
+const DATE_LINK = /\/\d{4}\/\d{2}\/\d{2}\//
 
 export type StoreListingItem = {
   id: string
@@ -34,6 +46,8 @@ export type StoreListingItem = {
   title: string
   imageUrl?: string
   publishedAt?: string
+  /** The site marks re-uploads ("Обновлено …"), which matter more than the original date. */
+  updatedAt?: string
 }
 
 export type StoreListing = {
@@ -84,20 +98,108 @@ function imageFrom($: cheerio.CheerioAPI, el: any, baseUrl: string): string | un
   return undefined
 }
 
-function dateFrom($: cheerio.CheerioAPI, container: any): string | undefined {
-  const time = $(container).find('time[datetime]').first().attr('datetime')
-  if (time) return cleanText(time)
-
-  const text = cleanText($(container).find('.date, .short-date, .news-date').first().text())
-  return text || undefined
-}
-
 /**
- * Catalogue entries on a listing page. Anchors pointing at the same article are
- * merged: DLE renders the cover and the title as separate links.
+ * Catalogue entries on a listing page.
+ *
+ * Cards first: the listing renders each game as a block holding the cover, an
+ * `h2.title` and a date link, which gives clean fields. Pages that do not use
+ * that shape (search results, category pages of other templates) fall back to
+ * scanning links by URL shape and merging the anchors that point at the same
+ * article.
  */
 export function parseListing(html: string, baseUrl: string): StoreListing {
   const $ = cheerio.load(html)
+  const fromCards = parseCards($, baseUrl)
+  const items = fromCards.length > 0 ? fromCards : parseLooseLinks($, baseUrl)
+
+  return {
+    items: items.filter((item) => item.title.length > 1),
+    nextPageUrl: findNextPage($, baseUrl)
+  }
+}
+
+function articleUrlWithin($: cheerio.CheerioAPI, card: any, baseUrl: string): { id: string; url: string } | null {
+  let found: { id: string; url: string } | null = null
+
+  $(card).find('a[href]').each((_index, element) => {
+    if (found) return
+    const url = absoluteUrl($(element).attr('href'), baseUrl)
+    if (!url) return
+    try {
+      const match = new URL(url).pathname.match(ARTICLE_PATH)
+      if (match) found = { id: match[1], url }
+    } catch {
+      // Not a usable URL.
+    }
+  })
+
+  return found
+}
+
+function parseCards($: cheerio.CheerioAPI, baseUrl: string): StoreListingItem[] {
+  const items = new Map<string, StoreListingItem>()
+
+  $(CARD_SELECTOR).each((_index, card) => {
+    if ($(card).closest(IGNORED_CONTAINERS).length > 0) return
+
+    const article = articleUrlWithin($, card, baseUrl)
+    if (!article || items.has(article.id)) return
+
+    // The heading is the reliable source; when a template has none, take the
+    // fullest of what is left instead of dropping the card.
+    const heading = cleanText($(card).find('h1, h2, h3, .title').first().text())
+    const fallbacks = [
+      cleanText($(card).find('a[title]').first().attr('title')),
+      cleanText($(card).find('img[alt]').first().attr('alt')),
+      cleanText($(card).find('a[href]').filter((_i, a) => cleanText($(a).text()).length > 1).first().text())
+    ].sort((a, b) => b.length - a.length)
+    const title = heading || fallbacks[0] || ''
+
+    items.set(article.id, {
+      id: article.id,
+      url: article.url,
+      title,
+      imageUrl: imageFrom($, card, baseUrl),
+      publishedAt: publishedFrom($, card),
+      updatedAt: updatedFrom($, card)
+    })
+  })
+
+  return Array.from(items.values())
+}
+
+/**
+ * The date sits in a link to the day's archive (/YYYY/MM/DD/). The panel around
+ * it also holds view and comment counters, so read the link rather than the
+ * whole panel text.
+ */
+function publishedFrom($: cheerio.CheerioAPI, card: any): string | undefined {
+  const timeAttr = $(card).find('time[datetime]').first().attr('datetime')
+  if (timeAttr) return cleanText(timeAttr)
+
+  let fromLink: string | undefined
+  $(card).find('a[href]').each((_index, element) => {
+    if (fromLink) return
+    const href = String($(element).attr('href') || '')
+    if (DATE_LINK.test(href)) fromLink = cleanText($(element).text())
+  })
+  if (fromLink) return fromLink
+
+  const panel = cleanText($(card).find('.info-date, .date, .short-date, .news-date').first().text())
+  // Strip the counters that follow the date in the same element.
+  const trimmed = panel.match(/^(.*?\d{1,2}:\d{2})/)?.[1] || panel.split(/\s{2,}/)[0]
+  return trimmed || undefined
+}
+
+function updatedFrom($: cheerio.CheerioAPI, card: any): string | undefined {
+  const text = cleanText($(card).find('.edit, .updated').first().text())
+  if (!text) return undefined
+  // "Обновлено 15 августа 2026, 12:35. Игра о…" — keep the date, drop the prose.
+  const match = text.match(/^([^.]*?\d{1,2}:\d{2})/)
+  return (match?.[1] || text).slice(0, 80)
+}
+
+function parseLooseLinks($: cheerio.CheerioAPI, baseUrl: string): StoreListingItem[] {
   const items = new Map<string, StoreListingItem>()
 
   $('a[href]').each((_index, element) => {
@@ -121,10 +223,10 @@ export function parseListing(html: string, baseUrl: string): StoreListing {
     const existing = items.get(id)
 
     // The cover link has no text, the title link has no image: merge both.
-    const title = cleanText(anchor.attr('title') || anchor.text() || anchor.find('img').attr('alt'))
+    const title = cleanText(anchor.attr('title') || anchor.find('img').attr('alt') || anchor.text())
     const container = anchor.closest('article, .short-story, .shortstory, li, .item').get(0) || anchor.get(0)
     const imageUrl = imageFrom($, anchor.get(0), baseUrl) || imageFrom($, container, baseUrl)
-    const publishedAt = container ? dateFrom($, container) : undefined
+    const publishedAt = container ? publishedFrom($, container) : undefined
 
     if (!existing) {
       items.set(id, { id, url, title, imageUrl, publishedAt })
@@ -136,10 +238,7 @@ export function parseListing(html: string, baseUrl: string): StoreListing {
     if (!existing.publishedAt && publishedAt) existing.publishedAt = publishedAt
   })
 
-  return {
-    items: Array.from(items.values()).filter((item) => item.title.length > 1),
-    nextPageUrl: findNextPage($, baseUrl)
-  }
+  return Array.from(items.values())
 }
 
 function findNextPage($: cheerio.CheerioAPI, baseUrl: string): string | undefined {

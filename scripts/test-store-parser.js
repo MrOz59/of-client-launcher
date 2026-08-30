@@ -43,6 +43,26 @@ check(byId['5678']?.publishedAt?.startsWith('2026-02-03'), 'reads <time datetime
 check(byId['4242'] && !byId['4242'].imageUrl, 'keeps entries without a cover', byId['4242'])
 check(listing.nextPageUrl === 'https://online-fix.me/page/2/', 'finds the next page', listing.nextPageUrl)
 
+console.log('\nlisting captured from the real store')
+const realHtml = fs.readFileSync(path.join(__dirname, 'fixtures', 'listing-real.html'), 'utf8')
+const real = parseListing(realHtml, 'https://online-fix.me/')
+
+check(real.items.length === 3, 'reads the three captured cards', real.items.length)
+check(
+  real.items.every((item) => item.title && !/\d{4}/.test(item.title)),
+  'titles come from the heading, with no date glued to them',
+  real.items.map((i) => i.title)
+)
+check(real.items.every((item) => item.imageUrl && !item.imageUrl.startsWith('data:')), 'covers come from the lazy-loaded attribute')
+check(real.items.every((item) => item.publishedAt), 'every card has a date', real.items.map((i) => i.publishedAt))
+check(
+  real.items.every((item) => !/\d{6,}/.test(item.publishedAt || '')),
+  'the view/comment counters are not mistaken for the date',
+  real.items.map((i) => i.publishedAt)
+)
+check(real.items.some((item) => item.updatedAt), 'picks up the "updated" line when present')
+check(real.nextPageUrl === 'https://online-fix.me/page/2/', 'finds the next page', real.nextPageUrl)
+
 console.log('\ngame page')
 const gameHtml = fs.readFileSync(path.join(__dirname, 'fixtures', 'sample-game-page.html'), 'utf8')
 const details = parseGamePage(gameHtml, 'https://online-fix.me/1234-nome-do-jogo.html')

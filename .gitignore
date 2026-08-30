@@ -105,3 +105,8 @@ __pycache__/
 
 # Local Tauri migration sandbox
 tauri-migration/
+
+# Página capturada com a conta logada (dados pessoais)
+CFOF
+CFOF.html
+scripts/fixtures/capture-*.html

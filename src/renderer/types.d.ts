@@ -144,7 +144,7 @@ declare global {
       storeListing: (payload?: { page?: number; query?: string; force?: boolean }) => Promise<{
         success: boolean
         listing?: {
-          items: Array<{ id: string; url: string; title: string; imageUrl?: string; publishedAt?: string }>
+          items: Array<{ id: string; url: string; title: string; imageUrl?: string; publishedAt?: string; updatedAt?: string }>
           nextPageUrl?: string
           page: number
           query?: string
