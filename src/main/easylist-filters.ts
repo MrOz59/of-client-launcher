@@ -1,3 +1,5 @@
+import { isAllowedWebviewHost, LOGIN_HOSTS, LOGIN_SUFFIXES, STORE_DOMAINS } from '../shared/allowedHosts'
+
 /**
  * Lightweight popup/popunder blocker
  * 
@@ -60,6 +62,31 @@ export const popupPatterns = [
 const popupDomainSet = new Set(popupDomains.map((d) => d.toLowerCase()))
 const popupPatternsLower = popupPatterns.map((p) => p.toLowerCase())
 
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which rule a URL trips, or null. Exposed so the block can be logged with the
+ * reason — a silent false positive is very hard to track down.
+ */
+export function matchedPopupRule(url: string): string | null {
+  const urlLower = String(url || '').toLowerCase()
+
+  for (const domain of popupDomainSet) {
+    if (urlLower.includes(domain)) return `domain:${domain}`
+  }
+  for (const pattern of popupPatternsLower) {
+    if (urlLower.includes(pattern)) return `pattern:${pattern}`
+  }
+
+  return null
+}
+
 // Keep these exports for compatibility but they're now empty/minimal
 export const blockedDomains = popupDomains
 export const blockedPatterns = popupPatterns
@@ -70,19 +97,14 @@ export const cssHidingRules: string[] = []
  * Returns true only for known popup/redirect networks
  */
 export function shouldBlockRequest(url: string, _details?: { resourceType?: string; initiator?: string | null }): boolean {
-  const urlLower = url.toLowerCase()
+  // The patterns are substring matches, so a first-party file called popup.js —
+  // jQuery UI dialogs, the site's own profile popup — used to trip them. A
+  // popunder network is third-party by definition, so the hosts the launcher
+  // deliberately browses are never candidates.
+  const host = hostOf(url)
+  if (!host || isAllowedWebviewHost(host)) return false
 
-  // Check popup domains
-  for (const domain of popupDomainSet) {
-    if (urlLower.includes(domain)) return true
-  }
-
-  // Check popup patterns
-  for (const pattern of popupPatternsLower) {
-    if (urlLower.includes(pattern)) return true
-  }
-
-  return false
+  return matchedPopupRule(url) !== null
 }
 
 /**
@@ -111,9 +133,29 @@ export function generateAdBlockScript(): string {
 
     const popupDomains = ${JSON.stringify(popupDomains)};
     const popupPatterns = ${JSON.stringify(popupPatterns)};
+    const storeDomains = ${JSON.stringify(STORE_DOMAINS)};
+    const loginHosts = ${JSON.stringify(LOGIN_HOSTS)};
+    const loginSuffixes = ${JSON.stringify(LOGIN_SUFFIXES)};
+
+    // Relative URLs resolve against the page, so the site's own links land here
+    // as first party.
+    function isAllowedHost(url) {
+      try {
+        const host = new URL(url, window.location.href).hostname.toLowerCase();
+        if (storeDomains.some((d) => host === d || host.endsWith('.' + d))) return true;
+        if (loginHosts.indexOf(host) !== -1) return true;
+        return loginSuffixes.some((suffix) => host.endsWith(suffix));
+      } catch (err) {
+        return false;
+      }
+    }
 
     function isPopupUrl(url) {
       if (!url) return false;
+      // The patterns are substring matches: without this, the site's own
+      // popup.js / jquery-ui popup paths and profile links get treated as
+      // popunders and the profile dialog stops working.
+      if (isAllowedHost(url)) return false;
       const urlLower = url.toLowerCase();
       for (const domain of popupDomains) {
         if (urlLower.includes(domain)) return true;
@@ -129,11 +171,11 @@ export function generateAdBlockScript(): string {
     window.open = function(url, ...args) {
       if (url) {
         const urlLower = url.toLowerCase();
-        // Always allow torrent-related URLs
-        if (urlLower.includes('.torrent') || 
+        // Always allow the store itself and torrent links
+        if (urlLower.includes('.torrent') ||
             urlLower.includes('/torrents/') ||
-            urlLower.includes('online-fix.me')) {
-          console.log('[PopupBlocker] Allowing torrent-related popup:', url);
+            isAllowedHost(url)) {
+          console.log('[PopupBlocker] Allowing first-party/torrent popup:', url);
           return originalOpen.call(window, url, ...args);
         }
         // Block known popup domains

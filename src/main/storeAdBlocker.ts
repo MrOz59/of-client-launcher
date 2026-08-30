@@ -2,7 +2,7 @@ import { app, type Session } from 'electron'
 import path from 'path'
 import { promises as fs } from 'fs'
 import { ElectronBlocker } from '@ghostery/adblocker-electron'
-import { shouldBlockRequest } from './easylist-filters'
+import { matchedPopupRule, shouldBlockRequest } from './easylist-filters'
 
 export type StoreAdBlockMode = 'popups' | 'all'
 
@@ -47,7 +47,10 @@ function enablePopupBlocking(ses: Session) {
     })
     if (shouldBlock) {
       popupBlockedCount++
-      console.log(`[PopupBlocker] Network Block #${popupBlockedCount}:`, details.url.substring(0, 80))
+      console.log(
+        `[PopupBlocker] Network Block #${popupBlockedCount} (${matchedPopupRule(details.url) || 'unknown'}):`,
+        details.url.substring(0, 120)
+      )
       callback({ cancel: true })
       return
     }

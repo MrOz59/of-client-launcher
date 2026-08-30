@@ -14,11 +14,11 @@ export const STORE_HOME_URL = 'https://online-fix.me'
  * Hosts operated by online-fix: the site itself and its subdomains, which is
  * where the torrent files are served from (uploads.online-fix.me:2053).
  */
-const STORE_DOMAINS = ['online-fix.me']
+export const STORE_DOMAINS = ['online-fix.me']
 
 /** Only reachable because the site's sign-in flow goes through them. */
-const LOGIN_HOSTS = ['accounts.google.com', 'accounts.google.com.br', 'discord.com']
-const LOGIN_SUFFIXES = ['.discord.com', '.discordapp.com']
+export const LOGIN_HOSTS = ['accounts.google.com', 'accounts.google.com.br', 'discord.com']
+export const LOGIN_SUFFIXES = ['.discord.com', '.discordapp.com']
 
 function normalizeHost(host: string | null | undefined): string {
   return String(host || '').trim().toLowerCase()
