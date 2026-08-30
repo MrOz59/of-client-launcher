@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
+import { isAllowedTorrentUrl, isAllowedWebviewUrl, STORE_HOME_URL } from '../../shared/allowedHosts'
 
 interface StoreTabProps {
   isLoggedIn: boolean
@@ -24,14 +25,7 @@ type LauncherGameStatus = {
 
 type StoreAdBlockMode = 'popups' | 'all'
 
-const WEBVIEW_ALLOWED_HOSTS = new Set([
-  'online-fix.me',
-  'accounts.google.com',
-  'accounts.google.com.br',
-  'discord.com'
-])
-const WEBVIEW_ALLOWED_SUFFIXES = ['.online-fix.me', '.discord.com', '.discordapp.com']
-const DEFAULT_WEBVIEW_URL = 'https://online-fix.me'
+const DEFAULT_WEBVIEW_URL = STORE_HOME_URL
 const DONATOR_GUIDE_URL = 'https://online-fix.me/guides/17009-kak-poluchit-rol-how-to-obtain-role-mecenat.html'
 const STORE_AD_BLOCK_MODE_STORAGE_KEY = 'of_store_ad_block_mode'
 
@@ -52,40 +46,6 @@ function setCachedStoreAdBlockMode(mode: StoreAdBlockMode) {
     localStorage.setItem(STORE_AD_BLOCK_MODE_STORAGE_KEY, mode)
   } catch {
     // ignore
-  }
-}
-
-function isAllowedWebviewHost(host: string) {
-  const h = String(host || '').toLowerCase()
-  if (!h) return false
-  if (WEBVIEW_ALLOWED_HOSTS.has(h)) return true
-  return WEBVIEW_ALLOWED_SUFFIXES.some(suffix => h.endsWith(suffix))
-}
-
-function isAllowedWebviewUrl(raw?: string | null) {
-  const url = String(raw || '').trim()
-  if (!url) return false
-  if (url.startsWith('about:')) return true
-  try {
-    const parsed = new URL(url)
-    if (!/^https?:$/.test(parsed.protocol)) return false
-    return isAllowedWebviewHost(parsed.hostname)
-  } catch {
-    return false
-  }
-}
-
-function isAllowedTorrentUrl(raw?: string | null) {
-  const url = String(raw || '').trim()
-  if (!url) return false
-  try {
-    const parsed = new URL(url)
-    if (!/^https?:$/.test(parsed.protocol)) return false
-    const host = String(parsed.hostname || '').toLowerCase()
-    if (!(host === 'online-fix.me' || host.endsWith('.online-fix.me'))) return false
-    return parsed.pathname.includes('/torrents/') || parsed.pathname.endsWith('.torrent')
-  } catch {
-    return false
   }
 }
 

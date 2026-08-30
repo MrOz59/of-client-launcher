@@ -4,5 +4,5 @@
     "declaration": false,
     "removeComments": true
   },
-  "include": ["src/main/**/*", "src/types/**/*"]
+  "include": ["src/main/**/*", "src/shared/**/*", "src/types/**/*"]
 }

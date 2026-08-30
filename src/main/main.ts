@@ -54,6 +54,7 @@ if (process.platform === 'linux') {
   }
 }
 
+import { isAllowedTorrentUrl, isAllowedWebviewUrl } from '../shared/allowedHosts'
 import * as drive from './drive'
 import * as cloudSaves from './cloudSaves'
 import { appendCloudSavesHistory, listCloudSavesHistory, type CloudSavesHistoryEntry } from './cloudSavesHistory'
@@ -1103,48 +1104,6 @@ try {
 }
 
 // Sandbox configuration moved to top of file (before Chromium initialization)
-
-const WEBVIEW_ALLOWED_HOSTS = new Set([
-  'online-fix.me',
-  'accounts.google.com',
-  'accounts.google.com.br',
-  'discord.com'
-])
-const WEBVIEW_ALLOWED_SUFFIXES = ['.online-fix.me', '.discord.com', '.discordapp.com']
-
-function isAllowedWebviewHost(host: string) {
-  const h = String(host || '').toLowerCase()
-  if (!h) return false
-  if (WEBVIEW_ALLOWED_HOSTS.has(h)) return true
-  return WEBVIEW_ALLOWED_SUFFIXES.some(suffix => h.endsWith(suffix))
-}
-
-function isAllowedWebviewUrl(raw?: string | null) {
-  const url = String(raw || '').trim()
-  if (!url) return false
-  if (url.startsWith('about:')) return true
-  try {
-    const parsed = new URL(url)
-    if (!/^https?:$/.test(parsed.protocol)) return false
-    return isAllowedWebviewHost(parsed.hostname)
-  } catch {
-    return false
-  }
-}
-
-function isAllowedTorrentUrl(raw?: string | null) {
-  const url = String(raw || '').trim()
-  if (!url) return false
-  try {
-    const parsed = new URL(url)
-    if (!/^https?:$/.test(parsed.protocol)) return false
-    const host = String(parsed.hostname || '').toLowerCase()
-    if (!(host === 'online-fix.me' || host.endsWith('.online-fix.me'))) return false
-    return parsed.pathname.includes('/torrents/') || parsed.pathname.endsWith('.torrent')
-  } catch {
-    return false
-  }
-}
 
 function isTorrentListing(url: string) {
   return isAllowedTorrentUrl(url)

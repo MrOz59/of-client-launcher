@@ -8,31 +8,9 @@ import { startGameDownload, parseVersionFromName } from '../downloadManager'
 import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from '../torrentResolver'
 import { updateGameInfo, getDownloadByUrl } from '../db'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
+import { isAllowedTorrentUrl, isAllowedWebviewUrl } from '../../shared/allowedHosts'
 
 const TORRENT_PARTITION = 'persist:online-fix'
-
-// URL validation helpers (same as main.ts)
-function isAllowedTorrentUrl(url: string): boolean {
-  if (!url) return false
-  const allowedDomains = ['online-fix.me', 'online.one-fix.ru', 'online.one-fix.net']
-  try {
-    const parsed = new URL(url)
-    return allowedDomains.some(d => parsed.hostname.endsWith(d))
-  } catch {
-    return false
-  }
-}
-
-function isAllowedWebviewUrl(url: string): boolean {
-  if (!url) return false
-  const allowedDomains = ['online-fix.me', 'online.one-fix.ru', 'online.one-fix.net']
-  try {
-    const parsed = new URL(url)
-    return allowedDomains.some(d => parsed.hostname.endsWith(d))
-  } catch {
-    return false
-  }
-}
 
 export const registerTorrentHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
   ipcMain.handle('start-torrent-download', async (_event: IpcMainInvokeEvent, torrentUrl: string, referer?: string) => {
