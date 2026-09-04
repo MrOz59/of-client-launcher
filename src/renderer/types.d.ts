@@ -170,6 +170,15 @@ declare global {
         error?: string
         errorCode?: string
       }>
+      storeTranslateInstructions: (url: string, instructions: string[], language?: string, force?: boolean) => Promise<{
+        success: boolean
+        instructions?: string[]
+        language?: string
+        translated?: boolean
+        fromCache?: boolean
+        error?: string
+        errorCode?: string
+      }>
       storeGameMetadata: (url: string, title: string, steamAppId?: string) => Promise<{
         success: boolean
         metadata?: {

@@ -7,6 +7,8 @@
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { captureStoreFixture, clearStoreCache, getStoreGame, getStoreListing } from '../store/catalog'
+import { clearStoreImageCache } from '../store/imageProxy'
+import { clearStoreInstructionTranslationCache, translateStoreInstructions } from '../store/instructionTranslation'
 import { getStoreGameMetadata } from '../store/metadata'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
@@ -23,7 +25,7 @@ export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => 
         return { success: true, listing }
       } catch (err: any) {
         console.error('[Store] Listing failed:', err?.message || err)
-        return { success: false, error: err?.message || String(err), errorCode: 'store-listing-failed' }
+        return { success: false, error: err?.message || String(err), errorCode: err?.code || 'store-listing-failed' }
       }
     }
   )
@@ -34,9 +36,31 @@ export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => 
       return { success: true, game }
     } catch (err: any) {
       console.error('[Store] Game page failed:', err?.message || err)
-      return { success: false, error: err?.message || String(err), errorCode: 'store-game-failed' }
+      return { success: false, error: err?.message || String(err), errorCode: err?.code || 'store-game-failed' }
     }
   })
+
+  ipcMain.handle(
+    'store-translate-instructions',
+    async (_event: IpcMainInvokeEvent, payload: { url: string; instructions: string[]; language?: string; force?: boolean }) => {
+      try {
+        const result = await translateStoreInstructions({
+          url: String(payload?.url || ''),
+          instructions: payload?.instructions,
+          language: payload?.language,
+          force: payload?.force === true
+        })
+        return { success: true, ...result }
+      } catch (err: any) {
+        console.warn('[Store] Instruction translation failed:', err?.message || err)
+        return {
+          success: false,
+          error: err?.message || String(err),
+          errorCode: err?.code || 'store-translation-unavailable'
+        }
+      }
+    }
+  )
 
   // Saves a real page for the parser tests; see scripts/test-store-parser.js.
   ipcMain.handle(
@@ -72,6 +96,8 @@ export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => 
 
   ipcMain.handle('store-clear-cache', async () => {
     clearStoreCache()
+    clearStoreImageCache()
+    clearStoreInstructionTranslationCache()
     return { success: true }
   })
 }

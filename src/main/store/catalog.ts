@@ -1,27 +1,37 @@
 import { app, session } from 'electron'
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { STORE_HOME_URL, isOnlineFixHost } from '../../shared/allowedHosts'
 import { parseGamePage, parseListing, type StoreGameDetails, type StoreListing } from './parser'
 import { toStoreImageUrl } from './imageProxy'
+import { getStoreCooldownMs, noteStoreRateLimit, reserveStoreRequestSlot, StoreRequestError } from './requestPolicy'
 
 /**
  * Data layer for the native store.
  *
  * Requests go through the same session partition as the store webview, so the
  * user's login cookies apply and pages that require an account come back
- * complete. Responses are cached briefly: a grid must never turn one scroll
- * into a burst of requests against the site.
+ * complete. Responses use a persistent, identity-scoped cache and a shared
+ * request gate: opening a grid must never turn one interaction into a burst of
+ * requests against the site.
  */
 
 const STORE_PARTITION = 'persist:online-fix'
-const CACHE_TTL_MS = 5 * 60 * 1000
+const LISTING_CACHE_TTL_MS = 30 * 60 * 1000
+const GAME_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const LISTING_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const GAME_STALE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const FORCE_REVALIDATE_COOLDOWN_MS = 30 * 1000
+const MIN_REQUEST_INTERVAL_MS = 900
 const REQUEST_TIMEOUT_MS = 20000
-const MAX_CACHE_ENTRIES = 60
+const MAX_MEMORY_CACHE_ENTRIES = 80
+const MAX_DISK_CACHE_ENTRIES = 160
 
-type CacheEntry = { html: string; fetchedAt: number }
+type CacheEntry = { url: string; html: string; fetchedAt: number }
 
 const cache = new Map<string, CacheEntry>()
+const inFlight = new Map<string, Promise<string>>()
 
 function storeSession() {
   return session.fromPartition(STORE_PARTITION)
@@ -42,37 +52,175 @@ function decodeBody(buffer: Buffer, contentType: string | null): string {
   }
 }
 
+function isListingUrl(target: string): boolean {
+  const url = new URL(target)
+  return url.pathname === '/' || /^\/page\/\d+\/?$/i.test(url.pathname) || url.searchParams.get('do') === 'search'
+}
+
+function cachePolicy(target: string) {
+  return isListingUrl(target)
+    ? { freshFor: LISTING_CACHE_TTL_MS, staleFor: LISTING_STALE_TTL_MS }
+    : { freshFor: GAME_CACHE_TTL_MS, staleFor: GAME_STALE_TTL_MS }
+}
+
+async function cacheScope(): Promise<string> {
+  try {
+    const cookies = await storeSession().cookies.get({ url: STORE_HOME_URL })
+    const identity = cookies
+      .filter((cookie) => /^(dle_user_id|dle_password)$/i.test(cookie.name))
+      .map((cookie) => `${cookie.name.toLowerCase()}=${cookie.value}`)
+      .sort()
+      .join('&')
+    if (!identity) return 'guest'
+    return crypto.createHash('sha256').update(identity).digest('hex').slice(0, 20)
+  } catch {
+    return 'guest'
+  }
+}
+
+function cacheKey(scope: string, target: string): string {
+  return crypto.createHash('sha256').update(`${scope}\n${target}`).digest('hex')
+}
+
+function cacheDirectory(create = true): string {
+  const dir = path.join(app.getPath('userData'), 'cache', 'store-pages')
+  if (create) fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function readCache(key: string, target: string): CacheEntry | null {
+  const memoryEntry = cache.get(key)
+  if (memoryEntry?.url === target) {
+    cache.delete(key)
+    cache.set(key, memoryEntry)
+    return memoryEntry
+  }
+
+  try {
+    const entry = JSON.parse(fs.readFileSync(path.join(cacheDirectory(), `${key}.json`), 'utf8')) as CacheEntry
+    if (!entry?.html || !entry?.fetchedAt || entry.url !== target) return null
+    rememberCache(key, entry)
+    return entry
+  } catch {
+    return null
+  }
+}
+
+function rememberCache(key: string, entry: CacheEntry) {
+  cache.delete(key)
+  cache.set(key, entry)
+  while (cache.size > MAX_MEMORY_CACHE_ENTRIES) {
+    cache.delete(cache.keys().next().value as string)
+  }
+}
+
+function pruneDiskCache(dir: string) {
+  try {
+    const files = fs.readdirSync(dir)
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => ({ name, modified: fs.statSync(path.join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.modified - a.modified)
+
+    for (const file of files.slice(MAX_DISK_CACHE_ENTRIES)) {
+      fs.unlinkSync(path.join(dir, file.name))
+    }
+  } catch {
+    // Cache pruning is best-effort and must never break the store.
+  }
+}
+
+function writeCache(key: string, entry: CacheEntry) {
+  rememberCache(key, entry)
+  try {
+    const dir = cacheDirectory()
+    const file = path.join(dir, `${key}.json`)
+    const temporary = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(temporary, JSON.stringify(entry), 'utf8')
+    fs.renameSync(temporary, file)
+    pruneDiskCache(dir)
+  } catch (err) {
+    console.warn('[Store] Failed to persist page cache:', err)
+  }
+}
+
+function staleValue(entry: CacheEntry | null, staleFor: number): string | null {
+  return entry && Date.now() - entry.fetchedAt <= staleFor ? entry.html : null
+}
+
 export async function fetchStoreHtml(url: string, options?: { force?: boolean }): Promise<string> {
   const target = new URL(url, STORE_HOME_URL).toString()
   if (!isOnlineFixHost(new URL(target).hostname)) {
     throw new Error(`Refusing to fetch a host outside the store: ${target}`)
   }
 
-  const cached = cache.get(target)
-  if (!options?.force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  const scope = await cacheScope()
+  const key = cacheKey(scope, target)
+  const cached = readCache(key, target)
+  const policy = cachePolicy(target)
+  const age = cached ? Date.now() - cached.fetchedAt : Number.POSITIVE_INFINITY
+
+  if (cached && ((!options?.force && age < policy.freshFor) || (options?.force && age < FORCE_REVALIDATE_COOLDOWN_MS))) {
     return cached.html
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const pending = inFlight.get(key)
+  if (pending) return pending
 
+  const request = (async () => {
+    const stale = staleValue(cached, policy.staleFor)
+    const initialCooldown = getStoreCooldownMs()
+    if (initialCooldown > 0) {
+      if (stale) return stale
+      const seconds = Math.max(1, Math.ceil(initialCooldown / 1000))
+      throw new StoreRequestError('store-rate-limited', `Store rate limit is active; retry in ${seconds}s`)
+    }
+
+    await reserveStoreRequestSlot(MIN_REQUEST_INTERVAL_MS)
+
+    if (getStoreCooldownMs() > 0) {
+      if (stale) return stale
+      throw new StoreRequestError('store-rate-limited', 'Store rate limit is active')
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+    try {
+      // Session.fetch (not net.fetch) so the store's cookies ride along.
+      const response = await storeSession().fetch(target, {
+        signal: controller.signal,
+        headers: { Accept: 'text/html,application/xhtml+xml' }
+      })
+
+      if (response.status === 429) {
+        noteStoreRateLimit(response.headers.get('retry-after'))
+        throw new StoreRequestError('store-rate-limited', '429 Too Many Requests')
+      }
+
+      if (!response.ok) {
+        throw new StoreRequestError('store-http-error', `${response.status} ${response.statusText}`)
+      }
+
+      const html = decodeBody(Buffer.from(await response.arrayBuffer()), response.headers.get('content-type'))
+      writeCache(key, { url: target, html, fetchedAt: Date.now() })
+      return html
+    } catch (err: any) {
+      if (stale) {
+        console.warn('[Store] Serving stale cached page after upstream failure:', err?.message || err)
+        return stale
+      }
+      if (err instanceof StoreRequestError) throw err
+      throw new StoreRequestError('store-unavailable', err?.message || String(err))
+    } finally {
+      clearTimeout(timer)
+    }
+  })()
+
+  inFlight.set(key, request)
   try {
-    // Session.fetch (not net.fetch) so the store's cookies ride along.
-    const response = await storeSession().fetch(target, {
-      signal: controller.signal,
-      headers: { Accept: 'text/html,application/xhtml+xml' }
-    })
-
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
-
-    const html = decodeBody(Buffer.from(await response.arrayBuffer()), response.headers.get('content-type'))
-
-    if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value as string)
-    cache.set(target, { html, fetchedAt: Date.now() })
-
-    return html
+    return await request
   } finally {
-    clearTimeout(timer)
+    if (inFlight.get(key) === request) inFlight.delete(key)
   }
 }
 
@@ -148,4 +296,9 @@ export async function captureStoreFixture(url: string, name?: string): Promise<{
 
 export function clearStoreCache() {
   cache.clear()
+  try {
+    fs.rmSync(cacheDirectory(false), { recursive: true, force: true })
+  } catch (err) {
+    console.warn('[Store] Failed to clear persistent page cache:', err)
+  }
 }
