@@ -113,5 +113,36 @@ check(!steps.some((line) => /КООП|МУЛЬТИПЛЕЕР|сетевых ре
 check(!steps.some((line) => /(.{4,})\1/.test(line)), 'no line repeats itself', steps)
 check(steps.some((line) => /официальных серверах/.test(line)), 'keeps the notes that follow the modes block', steps)
 
+console.log('\nlaunch executable named by the steps')
+const stepsPage = (lines) =>
+  `<!doctype html><html><body><div id="dle-content"><article><h1>Jogo</h1>` +
+  `<div class="full-story-content"><div>Как запускать:</div>` +
+  lines.map((line) => `<div>${line}</div>`).join('') +
+  `</div></article></div></body></html>`
+
+const launchExeOf = (lines) => parseGamePage(stepsPage(lines), 'https://online-fix.me/1-x.html').launchExecutable
+
+check(withSteps.launchExecutable === 'ExemploGame.exe', 'reads the binary the steps name', withSteps.launchExecutable)
+check(
+  launchExeOf(['Не запускайте Cheat.exe перед стартом игры.']) === undefined,
+  'ignores a binary the steps warn against',
+  launchExeOf(['Не запускайте Cheat.exe перед стартом игры.'])
+)
+check(
+  launchExeOf(['Запускаем setup.exe для установки.', 'Запускаем игру через RealGame.exe.']) === 'RealGame.exe',
+  'skips the installer and takes the game binary',
+  launchExeOf(['Запускаем setup.exe для установки.', 'Запускаем игру через RealGame.exe.'])
+)
+check(
+  launchExeOf(['Запускаем игру через "My Game.exe" и играем.']) === 'My Game.exe',
+  'a quoted name may carry spaces',
+  launchExeOf(['Запускаем игру через "My Game.exe" и играем.'])
+)
+check(
+  launchExeOf(['Запускаем Steam, заходим в свой профиль.']) === undefined,
+  'no binary named means no hint',
+  launchExeOf(['Запускаем Steam, заходим в свой профиль.'])
+)
+
 console.log(failures === 0 ? '\nall parser checks passed' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

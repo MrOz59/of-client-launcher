@@ -70,6 +70,12 @@ export type StoreGameDetails = {
   directUrl?: string
   /** How to run the fix, in the site's own words — shown with attribution. */
   instructions?: string[]
+  /**
+   * The binary the page says to run, when it names one — a file name, never a
+   * path. For these fixes it is the patched executable, which is the one worth
+   * launching even when it is not the largest one in the folder.
+   */
+  launchExecutable?: string
   description?: string
 }
 
@@ -281,6 +287,7 @@ export function parseGamePage(html: string, url: string): StoreGameDetails {
   const $ = cheerio.load(html)
   const canonical = absoluteUrl($('link[rel="canonical"]').attr('href') || $('meta[property="og:url"]').attr('content'), url)
   const downloads = findDownloads($, url)
+  const instructions = findInstructions($)
 
   return {
     url: canonical || url,
@@ -291,7 +298,8 @@ export function parseGamePage(html: string, url: string): StoreGameDetails {
     releaseDate: findLabelled($, ['Релиз игры', 'Release date']),
     torrentUrl: downloads.torrentUrl,
     directUrl: downloads.directUrl,
-    instructions: findInstructions($),
+    instructions,
+    launchExecutable: instructions && findLaunchExecutable(instructions),
     description: cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined
   }
 }
@@ -454,6 +462,39 @@ function findInstructions($: cheerio.CheerioAPI): string[] | undefined {
   }
 
   return steps.length > 0 ? steps : undefined
+}
+
+/**
+ * The steps name the binary to run ("Запускаем игру через LyraGame.exe"), which
+ * is worth more than it looks: for these fixes that is the patched executable,
+ * and the folder scan that guesses one by size and name regularly prefers the
+ * game's original binary instead.
+ *
+ * Read from the site's own Russian, never from a translation — a translated
+ * line can mangle the file name, and the name is wanted before any translation
+ * has been attempted.
+ */
+const LAUNCH_VERB = /(?:запуск|запусти|через|run|launch|start)/i
+
+/** "Не запускайте X.exe" names a binary to avoid, not the one to run. */
+const NEGATED = /(?:^|\s)(?:не|do not|don't)\s/i
+
+/** Named in passing by the download steps, never the thing to launch. */
+const NOT_A_GAME_EXE = /^(?:unins|setup|install|vcredist|dxsetup|directx|dotnet|ueprereq|crashreport)/i
+
+/** A quoted name is the only form that can safely carry spaces. */
+const QUOTED_EXE = /["'«„]([^"'«»„“]{1,60}\.exe)["'»“]/i
+const BARE_EXE = /\b([A-Za-z0-9_][A-Za-z0-9_.\-]{0,60}\.exe)\b/i
+
+function findLaunchExecutable(instructions: string[]): string | undefined {
+  for (const line of instructions) {
+    if (!LAUNCH_VERB.test(line) || NEGATED.test(line)) continue
+
+    const name = (QUOTED_EXE.exec(line)?.[1] || BARE_EXE.exec(line)?.[1] || '').trim()
+    if (name && !NOT_A_GAME_EXE.test(name)) return name
+  }
+
+  return undefined
 }
 
 /** Reads "<label>: <value>" lines, which survive layout changes. */
