@@ -17,6 +17,7 @@ import {
   extractGameIdFromUrl
 } from '../db'
 import { fetchGameUpdateInfo } from '../scraper'
+import { getRemoteFix, getRemoteFixIndex } from '../remoteFixes'
 import { ensureGamePrefixFromDefault, findProtonRuntime, installExtraComponents, listProtonRuntimes, winetricksAvailable } from '../protonManager'
 import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
 import {
@@ -1136,6 +1137,40 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       return { success: true, fixes, directory: getGameFixesRoot() }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao listar fixes' }
+    }
+  })
+
+  ipcMain.handle('list-remote-game-fixes', async (_event, gameUrl: string, force?: boolean) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
+
+      const { fixes, fromCache, error } = await getRemoteFixIndex({ force: Boolean(force) })
+      const installed = new Set(listLocalGameFixes(game).map((item) => item.fix.id))
+
+      // The index carries every published fix; only the ones for this game are
+      // worth showing, matched the same way a local fix is.
+      const matching = fixes
+        .filter((entry) => fixMatchesGame({ game: entry.game } as CommunityGameFix, game))
+        .map((entry) => ({ ...entry, alreadySaved: installed.has(entry.id) }))
+
+      return { success: true, fixes: matching, fromCache, warning: error }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao consultar os fixes publicados' }
+    }
+  })
+
+  ipcMain.handle('download-remote-game-fix', async (_event, gameUrl: string, fixId: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
+
+      // What comes off the network goes through the same normaliser as a file
+      // someone imported by hand; nothing is trusted for having been published.
+      const saved = saveLocalGameFix(game, await getRemoteFix(fixId))
+      return { success: true, fix: saved.fix, path: saved.path }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao baixar o fix' }
     }
   })
 

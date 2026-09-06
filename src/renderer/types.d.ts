@@ -278,6 +278,21 @@ declare global {
       setGameProtonOptions: (gameUrl: string, runtime: string, options: any) => Promise<{ success: boolean; error?: string }>
       exportGameFix: (gameUrl: string) => Promise<{ success: boolean; canceled?: boolean; fix?: any; path?: string; error?: string }>
       importGameFix: () => Promise<{ success: boolean; canceled?: boolean; fix?: any; path?: string; error?: string }>
+      listRemoteGameFixes: (gameUrl: string, force?: boolean) => Promise<{
+        success: boolean
+        fixes?: Array<{
+          id: string
+          file: string
+          title: string
+          description?: string
+          game: { id?: string | null; title?: string | null; url?: string | null }
+          alreadySaved?: boolean
+        }>
+        fromCache?: boolean
+        warning?: string
+        error?: string
+      }>
+      downloadRemoteGameFix: (gameUrl: string, fixId: string) => Promise<{ success: boolean; fix?: any; path?: string; error?: string }>
       listGameFixes: (gameUrl: string) => Promise<{ success: boolean; fixes?: Array<{ fix: any; path?: string; updatedAt?: string }>; directory?: string; error?: string }>
       saveGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; path?: string; error?: string }>
       deleteGameFix: (gameUrl: string, fixId: string) => Promise<{ success: boolean; error?: string }>

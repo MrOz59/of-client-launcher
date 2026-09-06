@@ -211,6 +211,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportGameFix: (gameUrl: string) => ipcRenderer.invoke('export-game-fix', gameUrl),
   importGameFix: () => ipcRenderer.invoke('import-game-fix'),
   listGameFixes: (gameUrl: string) => ipcRenderer.invoke('list-game-fixes', gameUrl),
+  listRemoteGameFixes: (gameUrl: string, force?: boolean) => ipcRenderer.invoke('list-remote-game-fixes', gameUrl, force),
+  downloadRemoteGameFix: (gameUrl: string, fixId: string) => ipcRenderer.invoke('download-remote-game-fix', gameUrl, fixId),
   saveGameFix: (gameUrl: string, fix: any) => ipcRenderer.invoke('save-game-fix', gameUrl, fix),
   deleteGameFix: (gameUrl: string, fixId: string) => ipcRenderer.invoke('delete-game-fix', gameUrl, fixId),
   applyGameFix: (gameUrl: string, fix: any) => ipcRenderer.invoke('apply-game-fix', gameUrl, fix),

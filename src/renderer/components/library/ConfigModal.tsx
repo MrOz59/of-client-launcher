@@ -985,7 +985,9 @@ function FixesTab(props: ConfigModalProps) {
   const { t } = useI18n()
   const [fix, setFix] = useState<CommunityGameFix | null>(null)
   const [localFixes, setLocalFixes] = useState<Array<{ fix: CommunityGameFix; path?: string; updatedAt?: string }>>([])
-  const [busy, setBusy] = useState<'export' | 'import' | 'apply' | 'install' | 'save' | 'delete' | 'list' | null>(null)
+  const [busy, setBusy] = useState<'export' | 'import' | 'apply' | 'install' | 'save' | 'delete' | 'list' | 'remote' | 'download' | null>(null)
+  const [remoteFixes, setRemoteFixes] = useState<Array<{ id: string; title: string; description?: string; alreadySaved?: boolean }>>([])
+  const [remoteWarning, setRemoteWarning] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
@@ -1037,6 +1039,52 @@ function FixesTab(props: ConfigModalProps) {
   React.useEffect(() => {
     void loadLocalFixes()
   }, [loadLocalFixes])
+
+  /**
+   * Fixes published with the launcher. The index is small and cached, so this
+   * runs on open; the fix itself is only fetched when someone wants it.
+   */
+  const loadRemoteFixes = React.useCallback(async (force?: boolean) => {
+    setBusy((cur) => cur || 'remote')
+    try {
+      const res = await window.electronAPI.listRemoteGameFixes(game.url, force)
+      if (res.success) {
+        setRemoteFixes(res.fixes || [])
+        setRemoteWarning(res.warning || null)
+      } else {
+        setRemoteWarning(res.error || null)
+      }
+    } catch (err: any) {
+      setRemoteWarning(err?.message || null)
+    } finally {
+      setBusy((cur) => cur === 'remote' ? null : cur)
+    }
+  }, [game.url])
+
+  React.useEffect(() => {
+    void loadRemoteFixes()
+  }, [loadRemoteFixes])
+
+  const downloadRemoteFix = async (id: string) => {
+    setBusy('download')
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.electronAPI.downloadRemoteGameFix(game.url, id)
+      if (!res.success) {
+        setError(res.error || t('library.configModal.fixes.downloadFailed'))
+        return
+      }
+      setFix(res.fix as CommunityGameFix)
+      setMessage(t('library.configModal.fixes.downloaded'))
+      await loadLocalFixes()
+      await loadRemoteFixes()
+    } catch (err: any) {
+      setError(err?.message || t('library.configModal.fixes.downloadFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const exportFix = async () => {
     setBusy('export')
@@ -1208,6 +1256,48 @@ function FixesTab(props: ConfigModalProps) {
             <div className="config-error">
               <AlertCircle size={14} />
               <span>{error}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <div className="config-section-header">
+          <Download size={18} />
+          <h4>{t('library.configModal.fixes.published')}</h4>
+          <button className="config-section-action" onClick={() => loadRemoteFixes(true)} disabled={busy === 'remote'} title={t('common.refresh')}>
+            <RefreshCw size={14} className={busy === 'remote' ? 'of-spin' : ''} />
+          </button>
+        </div>
+        <div className="config-section-content">
+          {remoteFixes.length === 0 ? (
+            <div className="config-ini-empty">
+              <p>{busy === 'remote' ? t('common.loading') : t('library.configModal.fixes.noPublished')}</p>
+            </div>
+          ) : (
+            <div className="diagnostic-check-list">
+              {remoteFixes.map((entry) => (
+                <div className="diagnostic-check diagnostic-check--warn" key={entry.id}>
+                  <div className="diagnostic-check-status"><Download size={14} /></div>
+                  <div className="diagnostic-check-body">
+                    <strong>{entry.title}</strong>
+                    {entry.description ? <span>{entry.description}</span> : null}
+                  </div>
+                  <div className="config-btn-group">
+                    <button className="config-btn secondary" onClick={() => downloadRemoteFix(entry.id)} disabled={!!busy}>
+                      {busy === 'download' ? <RefreshCw size={14} className="of-spin" /> : <Download size={14} />}
+                      {entry.alreadySaved ? t('library.configModal.fixes.update') : t('library.configModal.fixes.get')}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {remoteWarning ? (
+            <div className="config-warning" style={{ marginTop: 12 }}>
+              <AlertCircle size={14} />
+              <span>{t('library.configModal.fixes.offline')}</span>
             </div>
           ) : null}
         </div>

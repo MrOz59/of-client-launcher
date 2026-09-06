@@ -35,6 +35,8 @@
     "test:scraper": "node scripts/test-scraper-dist.js",
     "test:store-parser": "tsc -p tsconfig.build.json && node scripts/test-store-parser.js",
     "test:exe-detection": "tsc -p tsconfig.build.json && node scripts/test-exe-detection.js",
+    "fixes:index": "node scripts/build-fixes-index.js",
+    "fixes:check": "node scripts/build-fixes-index.js --check",
     "version:show": "node -p \"require('./package.json').version\"",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",

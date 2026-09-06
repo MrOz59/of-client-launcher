@@ -1,0 +1,41 @@
+{
+  "kind": "voidlauncher.gameFix",
+  "schemaVersion": 1,
+  "id": "subnautica-nitrox",
+  "title": "Subnautica + Nitrox (multiplayer)",
+  "description": "Faz o Nitrox carregar de verdade. O mod nao injeta por proxy DLL: quem carrega o NitroxPatcher e o proprio launcher do mod, um app .NET 9. Sem o runtime no prefixo ele nao inicia e o jogo sobe limpo. Este fix instala o .NET Desktop Runtime 9 no prefixo e aponta o lancamento para o launcher do Nitrox.",
+  "author": "",
+  "createdAt": "2026-09-06T00:00:00.000Z",
+  "game": {
+    "id": "18121",
+    "title": "Subnautica",
+    "url": "https://online-fix.me/games/survival/18121-subnautica-po-seti.html",
+    "installedVersion": null
+  },
+  "proton": {
+    "runtimeName": "Proton-GE Latest",
+    "options": {},
+    "steamAppId": "264710"
+  },
+  "components": {
+    "winetricks": [
+      "dotnetdesktop9"
+    ],
+    "protontricks": []
+  },
+  "launchExecutable": "Nitrox.Launcher.exe",
+  "notes": [
+    "Instale os componentes ANTES de usar: aplicar o fix so troca o executavel e as opcoes. O botao de instalar componentes aparece logo depois de aplicar, na mesma tela.",
+    "dotnetdesktop9 = .NET Desktop Runtime 9. O apphost do Nitrox.Launcher.exe pede explicitamente o Desktop Runtime; ele e superset do Microsoft.NETCore.App que o runtimeconfig declara, entao atende aos dois casos.",
+    "O Unity so empacota as facades que o proprio jogo referencia. O Nitrox referencia System.Net.Primitives e o Subnautica nao, e o lib/net472 do Nitrox oficial tambem nao a traz. No Windows ela vem do .NET Framework do sistema; num prefixo Proton nao existe, entao o fix copia a do wine-mono do runtime.",
+    "O executavel passa a ser Nitrox/Nitrox.Launcher.exe. Lancar o Subnautica.exe direto sempre abre o jogo sem o mod.",
+    "O README do Nitrox pede para nao instalar o mod dentro da pasta do jogo, mas este repack ja vem assim. Se sobrar comportamento estranho, essa e a primeira coisa a investigar.",
+    "Injecao em processo Mono sob Wine nao e garantida: este fix destrava o launcher do mod subir, que e onde o problema estava."
+  ],
+  "runtimeAssemblies": [
+    {
+      "name": "System.Net.Primitives.dll",
+      "into": "Nitrox/lib/net472"
+    }
+  ]
+}

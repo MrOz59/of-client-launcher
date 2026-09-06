@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "fixes": [
+    {
+      "id": "subnautica-nitrox",
+      "file": "subnautica-nitrox.json",
+      "title": "Subnautica + Nitrox (multiplayer)",
+      "description": "Faz o Nitrox carregar de verdade. O mod nao injeta por proxy DLL: quem carrega o NitroxPatcher e o proprio launcher do mod, um app .NET 9. Sem o runtime no prefixo ele nao inicia e o jogo sobe limpo. Este fix instala o .NET Desktop Runtime 9 no prefixo e aponta o lancamento para o launcher do Nitrox.",
+      "game": {
+        "id": "18121",
+        "title": "Subnautica",
+        "url": "https://online-fix.me/games/survival/18121-subnautica-po-seti.html"
+      }
+    }
+  ]
+}
