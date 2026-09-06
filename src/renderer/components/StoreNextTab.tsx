@@ -7,9 +7,7 @@ import {
   Download,
   ExternalLink,
   Heart,
-  Languages,
   Loader2,
-  PlayCircle,
   RefreshCw,
   RotateCcw,
   Search,
@@ -20,7 +18,7 @@ import {
 import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
 import { ipcErrorText } from '../../shared/ipcErrors'
-import { useModalA11y } from '../hooks/useModalA11y'
+import StoreGameDialog from './StoreGameDialog'
 
 /**
  * Native store (work in progress).
@@ -31,7 +29,7 @@ import { useModalA11y } from '../hooks/useModalA11y'
  * comments, login — is handed over to it.
  */
 
-type StoreItem = {
+export type StoreItem = {
   id: string
   url: string
   title: string
@@ -40,7 +38,7 @@ type StoreItem = {
   updatedAt?: string
 }
 
-type LibraryEntry = {
+export type LibraryEntry = {
   installed: boolean
   hasUpdate: boolean
 }
@@ -65,6 +63,7 @@ type StoreFilter = 'all' | 'installed' | 'updates' | 'favorites'
 type StoreSort = 'recent' | 'name'
 
 const FAVORITES_STORAGE_KEY = 'voidlauncher.storeFavorites'
+const FAVORITE_ITEMS_STORAGE_KEY = 'voidlauncher.storeFavoriteItems'
 
 export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps) {
   const { t } = useI18n()
@@ -86,9 +85,25 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
   const [filter, setFilter] = useState<StoreFilter>('all')
   const [sort, setSort] = useState<StoreSort>('recent')
   const [favorites, setFavorites] = useState<Set<string>>(() => readFavorites())
+  const [favoriteItems, setFavoriteItems] = useState<Record<string, StoreItem>>(() => readFavoriteItems())
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const requestIdRef = useRef(0)
   const activeQueryRef = useRef('')
+  const loadedQueryRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    // Save enough metadata to render favorites independently of whichever
+    // catalog page or search happens to be loaded next.
+    setFavoriteItems((current) => {
+      const next = Object.fromEntries(Object.entries(current).filter(([url]) => favorites.has(url)))
+      for (const item of [...libraryItems, ...items]) {
+        if (favorites.has(item.url)) next[item.url] = item
+      }
+      if (JSON.stringify(current) === JSON.stringify(next)) return current
+      try { localStorage.setItem(FAVORITE_ITEMS_STORAGE_KEY, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [favorites, items, libraryItems])
 
   const loadLibrary = useCallback(async () => {
     setLibraryLoading(true)
@@ -174,6 +189,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
       }
 
       const listing = res.listing
+      loadedQueryRef.current = searchQuery
       setItems((current) => (options?.append ? dedupe([...current, ...listing.items]) : listing.items))
       setHasMore(Boolean(listing.nextPageUrl))
       setSourceUrl(listing.sourceUrl)
@@ -191,7 +207,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
 
   useEffect(() => {
     if (filter === 'all') {
-      load(1, query)
+      if (loadedQueryRef.current !== query) load(1, query)
       return
     }
 
@@ -254,7 +270,8 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
       const listingItem = listingByUrl.get(storeUrlKey(item.url))
       return listingItem ? { ...item, ...listingItem, id: item.id } : item
     })
-    const source = filter === 'installed' || filter === 'updates' ? installedItems : items
+    const savedItems = [...favorites].map((url) => favoriteItems[url] || favoritePlaceholder(url))
+    const source = filter === 'installed' || filter === 'updates' ? installedItems : filter === 'favorites' ? savedItems : items
     const normalizedQuery = query.toLocaleLowerCase()
 
     const filtered = source.filter((item) => {
@@ -269,13 +286,13 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
       return [...filtered].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }))
     }
     return filtered
-  }, [favorites, filter, items, library, libraryItems, query, sort])
+  }, [favoriteItems, favorites, filter, items, library, libraryItems, query, sort])
 
   const filterCounts = useMemo(() => ({
     all: items.length,
     installed: libraryItems.length,
     updates: libraryItems.filter((item) => library[storeUrlKey(item.url)]?.hasUpdate).length,
-    favorites: items.filter((item) => favorites.has(item.url)).length
+    favorites: favorites.size
   }), [favorites, items, library, libraryItems])
 
   const showEmpty = filter === 'all' && !loading && !error && items.length === 0
@@ -491,6 +508,7 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
 
       {selected && (
         <StoreGameDialog
+          key={selected.url}
           item={selected}
           libraryEntry={libraryEntryFor(selected)}
           onClose={() => setSelected(null)}
@@ -540,6 +558,25 @@ function writeFavorites(favorites: Set<string>) {
   }
 }
 
+function readFavoriteItems(): Record<string, StoreItem> {
+  try {
+    const value = JSON.parse(localStorage.getItem(FAVORITE_ITEMS_STORAGE_KEY) || '{}')
+    return Object.fromEntries(Object.entries(value).filter(([url, item]: [string, any]) =>
+      item && item.url === url && typeof item.title === 'string' && typeof item.id === 'string')) as Record<string, StoreItem>
+  } catch {
+    return {}
+  }
+}
+
+function favoritePlaceholder(url: string): StoreItem {
+  let title = url
+  try {
+    title = decodeURIComponent(new URL(url).pathname.split('/').pop() || '')
+      .replace(/^\d+-/, '').replace(/(?:-po-seti)?\.html$/, '').replace(/-/g, ' ')
+  } catch {}
+  return { id: `favorite-${url}`, url, title: title || url }
+}
+
 function storeUrlKey(value: string): string {
   const raw = value.trim()
   try {
@@ -579,297 +616,4 @@ function formatDate(value: string): string {
 function dedupe(items: StoreItem[]): StoreItem[] {
   const seen = new Set<string>()
   return items.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)))
-}
-
-type StoreGameDetails = {
-  url: string
-  title: string
-  version?: string
-  imageUrl?: string
-  videoUrl?: string
-  releaseDate?: string
-  torrentUrl?: string
-  directUrl?: string
-  instructions?: string[]
-  description?: string
-}
-
-type StoreGameMetadata = {
-  source: 'steam' | 'none'
-  steamAppId?: string
-  name?: string
-  description?: string
-  headerImage?: string
-  backgroundImage?: string
-  screenshots?: string[]
-  genres?: string[]
-  categories?: string[]
-  developers?: string[]
-  publishers?: string[]
-  releaseDate?: string
-}
-
-/**
- * The game page, composed rather than mirrored.
- *
- * The site supplies what only it has — the version, the torrent and the
- * instructions for the fix. Everything that makes a page worth looking at —
- * artwork, description, screenshots, genres — comes from Steam, matched by
- * title. When there is no match the page still works, just plainer.
- */
-function StoreGameDialog({
-  item,
-  libraryEntry,
-  onClose,
-  onOpenInClassicStore
-}: {
-  item: StoreItem
-  libraryEntry?: LibraryEntry
-  onClose: () => void
-  onOpenInClassicStore: (url: string) => void
-}) {
-  const { t, language } = useI18n()
-  const toast = useToast()
-  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
-
-  const [details, setDetails] = useState<StoreGameDetails | null>(null)
-  const [metadata, setMetadata] = useState<StoreGameMetadata | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState(false)
-  const [showInstructions, setShowInstructions] = useState(false)
-  const [reloadKey, setReloadKey] = useState(0)
-  const [translatedInstructions, setTranslatedInstructions] = useState<string[] | null>(null)
-  const [translationStatus, setTranslationStatus] = useState<'idle' | 'loading' | 'translated' | 'error'>('idle')
-  const [translationRetryKey, setTranslationRetryKey] = useState(0)
-
-  useEffect(() => {
-    let disposed = false
-
-    setLoading(true)
-    setError(null)
-
-    window.electronAPI.storeGame(item.url, reloadKey > 0).then((res) => {
-      if (disposed) return
-      if (!res?.success || !res.game) setError(ipcErrorText(t, res, t('storeNext.error.details')))
-      else setDetails(res.game)
-    }).catch((err: any) => {
-      if (!disposed) setError(err?.message || t('storeNext.error.details'))
-    }).finally(() => {
-      if (!disposed) setLoading(false)
-    })
-
-    // Independent of the page read: a slow Steam lookup must not hold the page.
-    window.electronAPI.storeGameMetadata(item.url, item.title).then((res) => {
-      if (!disposed && res?.success && res.metadata) setMetadata(res.metadata)
-    }).catch(() => {})
-
-    return () => { disposed = true }
-  }, [item.url, item.title, reloadKey, t])
-
-  useEffect(() => {
-    const instructions = details?.instructions
-    if (!instructions?.length) {
-      setTranslatedInstructions(null)
-      setTranslationStatus('idle')
-      return
-    }
-
-    let disposed = false
-    setTranslatedInstructions(null)
-    setTranslationStatus('loading')
-
-    window.electronAPI.storeTranslateInstructions(item.url, instructions, language, translationRetryKey > 0).then((res) => {
-      if (disposed) return
-      if (res?.success && res.translated && Array.isArray(res.instructions) && res.instructions.length > 0) {
-        setTranslatedInstructions(res.instructions)
-        setTranslationStatus('translated')
-      } else if (res?.success) {
-        setTranslationStatus('idle')
-      } else {
-        setTranslationStatus('error')
-      }
-    }).catch(() => {
-      if (!disposed) setTranslationStatus('error')
-    })
-
-    return () => { disposed = true }
-  }, [details?.instructions, item.url, language, translationRetryKey])
-
-  const startDownload = async () => {
-    if (!details?.torrentUrl) return
-    setDownloading(true)
-    try {
-      const res = await window.electronAPI.startTorrentDownload(details.torrentUrl, item.url)
-      if (res?.success) {
-        toast.success(t('storeNext.detail.downloadStarted', { title: item.title }))
-        onClose()
-      } else {
-        toast.error(t('storeNext.detail.downloadFailed'), ipcErrorText(t, res as any) || undefined)
-      }
-    } catch (err: any) {
-      toast.error(t('storeNext.detail.downloadFailed'), err?.message || undefined)
-    } finally {
-      setDownloading(false)
-    }
-  }
-
-  const hero = metadata?.headerImage || item.imageUrl || details?.imageUrl
-  const description = metadata?.description || details?.description
-  const instructions = translatedInstructions || details?.instructions || []
-  const release = metadata?.releaseDate || details?.releaseDate || (item.publishedAt ? formatDate(item.publishedAt) : undefined)
-  const facts: Array<[string, string]> = [
-    [t('storeNext.detail.version'), loading ? '…' : details?.version || t('storeNext.card.noVersion')],
-    ...(release ? [[t('storeNext.detail.release'), release] as [string, string]] : []),
-    ...(item.updatedAt ? [[t('storeNext.detail.updated'), item.updatedAt] as [string, string]] : []),
-    ...(metadata?.developers?.length ? [[t('storeNext.detail.developer'), metadata.developers.join(', ')] as [string, string]] : []),
-    ...(libraryEntry?.installed
-      ? [[t('storeNext.detail.library'), libraryEntry.hasUpdate ? t('storeNext.card.update') : t('storeNext.card.installed')] as [string, string]]
-      : [])
-  ]
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal store-next-detail"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="store-next-detail-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="store-next-hero" style={hero ? { backgroundImage: `url("${hero}")` } : undefined}>
-          <div className="store-next-hero-shade">
-            {libraryEntry?.hasUpdate && <span className="store-next-detail-status"><RefreshCw size={11} />{t('storeNext.detail.updateAvailable')}</span>}
-            <h3 id="store-next-detail-title">{metadata?.name || item.title}</h3>
-            {metadata?.genres && metadata.genres.length > 0 && (
-              <div className="store-next-chips">
-                {metadata.genres.map((genre) => <span key={genre}>{genre}</span>)}
-              </div>
-            )}
-          </div>
-          <button className="settings-btn-icon store-next-close" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="store-next-detail-body">
-          {loading && !details && (
-            <div className="store-next-detail-loading" role="status">
-              <Loader2 size={16} className="of-spin" aria-hidden="true" />
-              {t('storeNext.detail.loading')}
-            </div>
-          )}
-
-          {description && <p className="store-next-detail-description">{description}</p>}
-
-          <dl className="store-next-detail-facts">
-            {facts.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          {metadata?.screenshots && metadata.screenshots.length > 0 && (
-            <section className="store-next-gallery" aria-labelledby="store-next-gallery-title">
-              <h4 id="store-next-gallery-title">{t('storeNext.detail.gallery')}</h4>
-              <div className="store-next-shots">
-              {metadata.screenshots.slice(0, 6).map((shot) => (
-                  <img key={shot} src={shot} alt={t('storeNext.detail.screenshot', { title: item.title })} loading="lazy" decoding="async" />
-              ))}
-              </div>
-            </section>
-          )}
-
-          {details?.instructions && details.instructions.length > 0 && (
-            <div className="store-next-instructions">
-              <button
-                className="settings-btn ghost sm"
-                onClick={() => setShowInstructions((current) => !current)}
-                aria-expanded={showInstructions}
-              >
-                {translationStatus === 'loading'
-                  ? <Loader2 size={13} className="of-spin" aria-hidden="true" />
-                  : <Languages size={13} aria-hidden="true" />}
-                {t('storeNext.detail.howTo')}
-              </button>
-              {showInstructions && (
-                <>
-                  {translationStatus === 'loading' && (
-                    <div className="store-next-translation-status" role="status">
-                      <Loader2 size={13} className="of-spin" aria-hidden="true" />
-                      {t('storeNext.detail.translatingInstructions')}
-                    </div>
-                  )}
-                  <ol>
-                    {instructions.map((step, index) => <li key={index}>{step}</li>)}
-                  </ol>
-                  <p className="store-next-source">
-                    {translationStatus === 'translated'
-                      ? t('storeNext.detail.instructionsTranslatedSource')
-                      : t('storeNext.detail.instructionsSource')}
-                  </p>
-                  {translationStatus === 'error' && (
-                    <div className="store-next-translation-error" role="status">
-                      <span>{t('storeNext.detail.instructionsTranslationFailed')}</span>
-                      <button className="settings-btn ghost sm" onClick={() => setTranslationRetryKey((current) => current + 1)}>
-                        <RotateCcw size={12} aria-hidden="true" />
-                        {t('storeNext.detail.retryTranslation')}
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {error && (
-            <div className="store-next-notice error" role="alert">
-              <AlertCircle size={15} aria-hidden="true" />
-              <span>{error}</span>
-              <button className="settings-btn secondary sm" onClick={() => setReloadKey((current) => current + 1)}>
-                <RotateCcw size={13} aria-hidden="true" />
-                {t('storeNext.retry')}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="modal-footer store-next-detail-actions">
-          <button
-            className="settings-btn primary"
-            onClick={startDownload}
-            disabled={loading || downloading || !details?.torrentUrl}
-            title={!loading && !details?.torrentUrl ? t('storeNext.detail.noTorrent') : undefined}
-          >
-            {downloading ? <Loader2 size={15} className="of-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
-            {downloading
-              ? t('storeNext.detail.downloading')
-              : libraryEntry?.hasUpdate ? t('storeNext.detail.update') : t('storeNext.detail.download')}
-          </button>
-
-          {details?.directUrl && (
-            <button className="settings-btn secondary" onClick={() => window.electronAPI.openExternal(details.directUrl!)}>
-              <ExternalLink size={15} aria-hidden="true" />
-              {t('storeNext.detail.directDownload')}
-            </button>
-          )}
-
-          {details?.videoUrl && (
-            <button className="settings-btn ghost" onClick={() => window.electronAPI.openExternal(details.videoUrl!)}>
-              <PlayCircle size={15} aria-hidden="true" />
-              {t('storeNext.detail.trailer')}
-            </button>
-          )}
-
-          <button className="settings-btn secondary" onClick={() => { onClose(); onOpenInClassicStore(item.url) }}>
-            <ExternalLink size={15} aria-hidden="true" />
-            {t('storeNext.openClassic')}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }

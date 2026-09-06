@@ -1,0 +1,357 @@
+import React, { useEffect, useRef, useState } from 'react'
+import { AlertCircle, BookOpen, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Images, Languages, Loader2, PlayCircle, RotateCcw, X } from 'lucide-react'
+import { useI18n } from '../i18n'
+import { useToast } from './ToastHost'
+import { ipcErrorText } from '../../shared/ipcErrors'
+import { useModalA11y } from '../hooks/useModalA11y'
+import type { StoreItem, LibraryEntry } from './StoreNextTab'
+
+type StoreGameDetails = {
+  url: string
+  title: string
+  version?: string
+  imageUrl?: string
+  videoUrl?: string
+  releaseDate?: string
+  torrentUrl?: string
+  directUrl?: string
+  instructions?: string[]
+  description?: string
+}
+
+type StoreGameMetadata = {
+  source: 'steam' | 'none'
+  steamAppId?: string
+  name?: string
+  description?: string
+  headerImage?: string
+  backgroundImage?: string
+  screenshots?: string[]
+  genres?: string[]
+  categories?: string[]
+  developers?: string[]
+  publishers?: string[]
+  releaseDate?: string
+}
+
+/**
+ * The game page, composed rather than mirrored.
+ *
+ * The site supplies what only it has — the version, the torrent and the
+ * instructions for the fix. Everything that makes a page worth looking at —
+ * artwork, description, screenshots, genres — comes from Steam, matched by
+ * title. When there is no match the page still works, just plainer.
+ */
+export default function StoreGameDialog({
+  item,
+  libraryEntry,
+  onClose,
+  onOpenInClassicStore
+}: {
+  item: StoreItem
+  libraryEntry?: LibraryEntry
+  onClose: () => void
+  onOpenInClassicStore: (url: string) => void
+}) {
+  const { t, language } = useI18n()
+  const toast = useToast()
+  const dialogRef = useModalA11y<HTMLDivElement>(onClose)
+
+  const [details, setDetails] = useState<StoreGameDetails | null>(null)
+  const [metadata, setMetadata] = useState<StoreGameMetadata | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [activeTab, setActiveTab] = useState('overview')
+  const [showOriginal, setShowOriginal] = useState(false)
+  const [selectedShot, setSelectedShot] = useState(0)
+  const [brokenShots, setBrokenShots] = useState<Set<string>>(() => new Set())
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [translatedInstructions, setTranslatedInstructions] = useState<string[] | null>(null)
+  const [translationStatus, setTranslationStatus] = useState<'idle' | 'loading' | 'translated' | 'error'>('idle')
+  const [translationRetryKey, setTranslationRetryKey] = useState(0)
+
+  useEffect(() => {
+    let disposed = false
+
+    setLoading(true)
+    setError(null)
+
+    window.electronAPI.storeGame(item.url, reloadKey > 0).then((res) => {
+      if (disposed) return
+      if (!res?.success || !res.game) setError(ipcErrorText(t, res, t('storeNext.error.details')))
+      else setDetails(res.game)
+    }).catch((err: any) => {
+      if (!disposed) setError(err?.message || t('storeNext.error.details'))
+    }).finally(() => {
+      if (!disposed) setLoading(false)
+    })
+
+    // Independent of the page read: a slow Steam lookup must not hold the page.
+    window.electronAPI.storeGameMetadata(item.url, item.title).then((res) => {
+      if (!disposed && res?.success && res.metadata) setMetadata(res.metadata)
+    }).catch(() => {})
+
+    return () => { disposed = true }
+  }, [item.url, item.title, reloadKey, t])
+
+  useEffect(() => {
+    const instructions = details?.instructions
+    if (!instructions?.length) {
+      setTranslatedInstructions(null)
+      setTranslationStatus('idle')
+      return
+    }
+
+    let disposed = false
+    setTranslatedInstructions(null)
+    setTranslationStatus('loading')
+
+    window.electronAPI.storeTranslateInstructions(item.url, instructions, language, translationRetryKey > 0).then((res) => {
+      if (disposed) return
+      if (res?.success && res.translated && Array.isArray(res.instructions) && res.instructions.length === instructions.length) {
+        setTranslatedInstructions(res.instructions)
+        setTranslationStatus('translated')
+      } else if (res?.success) {
+        setTranslationStatus('idle')
+      } else {
+        setTranslationStatus('error')
+      }
+    }).catch(() => {
+      if (!disposed) setTranslationStatus('error')
+    })
+
+    return () => { disposed = true }
+  }, [details?.instructions, item.url, language, translationRetryKey])
+
+  const startDownload = async () => {
+    if (!details?.torrentUrl) return
+    setDownloading(true)
+    try {
+      const res = await window.electronAPI.startTorrentDownload(details.torrentUrl, item.url)
+      if (res?.success) {
+        toast.success(t('storeNext.detail.downloadStarted', { title: item.title }))
+        onClose()
+      } else {
+        toast.error(t('storeNext.detail.downloadFailed'), ipcErrorText(t, res as any) || undefined)
+      }
+    } catch (err: any) {
+      toast.error(t('storeNext.detail.downloadFailed'), err?.message || undefined)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const hero = metadata?.backgroundImage || metadata?.headerImage || item.imageUrl || details?.imageUrl
+  const description = metadata?.description || details?.description
+  const instructions = (!showOriginal && translatedInstructions) || details?.instructions || []
+  const screenshots = (metadata?.screenshots || []).filter((shot) => !brokenShots.has(shot)).slice(0, 6)
+  const shotIndex = Math.min(selectedShot, Math.max(0, screenshots.length - 1))
+  const tabs = [
+    { id: 'overview', label: t('storeNext.detail.overview'), icon: BookOpen },
+    { id: 'instructions', label: t('storeNext.detail.howTo'), icon: Languages },
+    { id: 'gallery', label: t('storeNext.detail.gallery'), icon: Images }
+  ]
+  const selectTab = (tab: string) => {
+    setActiveTab(tab)
+    bodyRef.current?.scrollTo({ top: 0 })
+  }
+  const release = metadata?.releaseDate || details?.releaseDate || (item.publishedAt ? new Date(item.publishedAt).toLocaleDateString(language) : undefined)
+  const facts: Array<[string, string]> = [
+    [t('storeNext.detail.version'), loading ? '…' : details?.version || t('storeNext.card.noVersion')],
+    ...(release ? [[t('storeNext.detail.release'), release] as [string, string]] : []),
+    ...(item.updatedAt ? [[t('storeNext.detail.updated'), item.updatedAt] as [string, string]] : []),
+    ...(metadata?.developers?.length ? [[t('storeNext.detail.developer'), metadata.developers.join(', ')] as [string, string]] : []),
+    ...(libraryEntry?.installed
+      ? [[t('storeNext.detail.library'), libraryEntry.hasUpdate ? t('storeNext.card.update') : t('storeNext.card.installed')] as [string, string]]
+      : [])
+  ]
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal store-next-detail"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="store-next-detail-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="store-next-hero" style={hero ? { backgroundImage: `url("${hero}")` } : undefined}>
+          <div className="store-next-hero-shade">
+            {libraryEntry?.installed && <span className="store-next-detail-status"><Check size={11} />{t(libraryEntry.hasUpdate ? 'storeNext.detail.updateAvailable' : 'storeNext.card.installed')}</span>}
+            <h3 id="store-next-detail-title">{metadata?.name || item.title}</h3>
+            {metadata?.genres && metadata.genres.length > 0 && (
+              <div className="store-next-chips">
+                {metadata.genres.map((genre) => <span key={genre}>{genre}</span>)}
+              </div>
+            )}
+          </div>
+          <button className="settings-btn-icon store-next-close" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="store-next-detail-tabs" role="tablist" aria-label={t('storeNext.detail.navigation')}>
+          {tabs.map(({ id, label, icon: Icon }, index) => (
+            <button
+              key={id}
+              id={`store-detail-tab-${id}`}
+              role="tab"
+              aria-selected={activeTab === id}
+              aria-controls={`store-detail-panel-${id}`}
+              tabIndex={activeTab === id ? 0 : -1}
+              onClick={() => selectTab(id)}
+              onKeyDown={(event) => {
+                const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+                  : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+                  : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1
+                if (next < 0) return
+                event.preventDefault()
+                selectTab(tabs[next].id)
+                document.getElementById(`store-detail-tab-${tabs[next].id}`)?.focus()
+              }}
+            >
+              <Icon size={15} aria-hidden="true" />{label}
+              {id === 'instructions' && translationStatus === 'loading' && <Loader2 size={12} className="of-spin" aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+
+        <div className="store-next-detail-body" ref={bodyRef}>
+          {loading && !details && (
+            <div className="store-next-detail-loading" role="status">
+              <Loader2 size={16} className="of-spin" aria-hidden="true" />
+              {t('storeNext.detail.loading')}
+            </div>
+          )}
+
+          <section id="store-detail-panel-overview" role="tabpanel" aria-labelledby="store-detail-tab-overview" hidden={activeTab !== 'overview'} tabIndex={0}>
+          <h4 className="store-next-section-title">{t('storeNext.detail.about')}</h4>
+          {description
+            ? <p className="store-next-detail-description">{description}</p>
+            : <p className="store-next-detail-description">{t('storeNext.detail.noDescription')}</p>}
+
+          <dl className="store-next-detail-facts">
+            {facts.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <button className="store-next-howto-link" onClick={() => { selectTab('instructions'); document.getElementById('store-detail-tab-instructions')?.focus() }}>
+            <Languages size={20} aria-hidden="true" />
+            <span><strong>{t('storeNext.detail.howTo')}</strong><small>{t('storeNext.detail.howToHint')}</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          </section>
+
+          <section id="store-detail-panel-gallery" role="tabpanel" aria-labelledby="store-detail-tab-gallery" hidden={activeTab !== 'gallery'} tabIndex={0}>
+            {screenshots.length > 0 ? (
+              <div className="store-next-gallery">
+                <div className="store-next-gallery-preview">
+                  <img src={screenshots[shotIndex]} alt={t('storeNext.detail.screenshot', { title: item.title })} onError={() => setBrokenShots((current) => new Set([...current, screenshots[shotIndex]]))} />
+                  {screenshots.length > 1 && <>
+                    <button className="store-next-gallery-prev" onClick={() => setSelectedShot((shotIndex + screenshots.length - 1) % screenshots.length)} aria-label={t('storeNext.detail.previousScreenshot')}><ChevronLeft size={22} /></button>
+                    <button className="store-next-gallery-next" onClick={() => setSelectedShot((shotIndex + 1) % screenshots.length)} aria-label={t('storeNext.detail.nextScreenshot')}><ChevronRight size={22} /></button>
+                  </>}
+                  <span className="store-next-gallery-count" aria-live="polite">{shotIndex + 1} / {screenshots.length}</span>
+                </div>
+                <div className="store-next-shots" role="group" aria-label={t('storeNext.detail.gallery')}>
+                  {screenshots.map((shot, index) => (
+                    <button key={shot} aria-pressed={shotIndex === index} aria-label={t('storeNext.detail.selectScreenshot', { index: index + 1 })} onClick={() => setSelectedShot(index)}>
+                      <img src={shot} alt="" loading="lazy" decoding="async" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : <p className="store-next-detail-description">{t('storeNext.detail.noScreenshots')}</p>}
+          </section>
+
+          <section id="store-detail-panel-instructions" role="tabpanel" aria-labelledby="store-detail-tab-instructions" hidden={activeTab !== 'instructions'} tabIndex={0}>
+          {details?.instructions && details.instructions.length > 0 ? (
+            <div className="store-next-instructions">
+              <div className="store-next-instructions-heading">
+                <div><h4 className="store-next-section-title">{t('storeNext.detail.stepsTitle')}</h4><p>{t('storeNext.detail.stepsHint')}</p></div>
+                {translatedInstructions && <button className="settings-btn secondary sm" onClick={() => setShowOriginal((current) => !current)} aria-pressed={showOriginal}>
+                  <Languages size={13} aria-hidden="true" />{t(showOriginal ? 'storeNext.detail.showTranslation' : 'storeNext.detail.showOriginal')}
+                </button>}
+              </div>
+                  {translationStatus === 'loading' && (
+                    <div className="store-next-translation-status" role="status">
+                      <Loader2 size={13} className="of-spin" aria-hidden="true" />
+                      {t('storeNext.detail.translatingInstructions')}
+                    </div>
+                  )}
+                  <ol lang={translatedInstructions && !showOriginal ? language : 'ru'}>
+                    {instructions.map((step, index) => <li key={index}>{step}</li>)}
+                  </ol>
+                  <p className="store-next-source">
+                    {translationStatus === 'translated' && !showOriginal
+                      ? t('storeNext.detail.instructionsTranslatedSource')
+                      : t('storeNext.detail.instructionsSource')}
+                  </p>
+                  {translationStatus === 'error' && (
+                    <div className="store-next-translation-error" role="status">
+                      <span>{t('storeNext.detail.instructionsTranslationFailed')}</span>
+                      <button className="settings-btn ghost sm" onClick={() => setTranslationRetryKey((current) => current + 1)}>
+                        <RotateCcw size={12} aria-hidden="true" />
+                        {t('storeNext.detail.retryTranslation')}
+                      </button>
+                    </div>
+                  )}
+            </div>
+          ) : !loading && <p className="store-next-detail-description">{t('storeNext.detail.noInstructions')}</p>}
+          </section>
+
+          {error && (
+            <div className="store-next-notice error" role="alert">
+              <AlertCircle size={15} aria-hidden="true" />
+              <span>{error}</span>
+              <button className="settings-btn secondary sm" onClick={() => setReloadKey((current) => current + 1)}>
+                <RotateCcw size={13} aria-hidden="true" />
+                {t('storeNext.retry')}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer store-next-detail-actions">
+          {!loading && !details?.torrentUrl && <p className="store-next-download-hint">{t('storeNext.detail.noTorrentHint')}</p>}
+          <button
+            className="settings-btn primary"
+            onClick={startDownload}
+            disabled={loading || downloading || !details?.torrentUrl}
+            title={!loading && !details?.torrentUrl ? t('storeNext.detail.noTorrent') : undefined}
+          >
+            {downloading ? <Loader2 size={15} className="of-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
+            {downloading
+              ? t('storeNext.detail.downloading')
+              : libraryEntry?.hasUpdate ? t('storeNext.detail.update') : t('storeNext.detail.download')}
+          </button>
+
+          {details?.directUrl && (
+            <button className="settings-btn secondary" onClick={() => window.electronAPI.openExternal(details.directUrl!)}>
+              <ExternalLink size={15} aria-hidden="true" />
+              {t('storeNext.detail.directDownload')}
+            </button>
+          )}
+
+          {details?.videoUrl && (
+            <button className="settings-btn ghost" onClick={() => window.electronAPI.openExternal(details.videoUrl!)}>
+              <PlayCircle size={15} aria-hidden="true" />
+              {t('storeNext.detail.trailer')}
+            </button>
+          )}
+
+          <button className="settings-btn secondary" onClick={() => { onClose(); onOpenInClassicStore(item.url) }}>
+            <ExternalLink size={15} aria-hidden="true" />
+            {t('storeNext.openClassic')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
