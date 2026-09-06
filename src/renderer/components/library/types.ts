@@ -76,6 +76,10 @@ export interface CommunityGameFix {
     winetricks?: string[]
     protontricks?: string[]
   }
+  /** Bare file name of the binary to launch, for a game whose mod has its own launcher. */
+  launchExecutable?: string | null
+  /** Assemblies to take from the Proton runtime and place inside the game folder. */
+  runtimeAssemblies?: Array<{ name: string; into: string }>
   notes?: string[]
 }
 

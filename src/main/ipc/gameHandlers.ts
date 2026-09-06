@@ -22,6 +22,8 @@ import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/on
 import {
   bareExecutableName,
   findEosOverlayInstallPath,
+  findRuntimeFacadeAssembly,
+  sanitizeRuntimeAssemblies,
   findExecutableInDir,
   getDisplayCompatibilityInfo,
   isEosOverlayPathValid,
@@ -86,6 +88,7 @@ type CommunityGameFix = {
    * able to say which of the executables in the folder is the right one.
    */
   launchExecutable?: string | null
+  runtimeAssemblies?: Array<{ name: string; into: string }>
   notes?: string[]
 }
 
@@ -175,6 +178,7 @@ function normalizeGameFix(raw: any): CommunityGameFix {
     // A name, never a path: it only ever selects among the executables already
     // found inside the game's own folder.
     launchExecutable: bareExecutableName(raw.launchExecutable),
+    runtimeAssemblies: sanitizeRuntimeAssemblies(raw.runtimeAssemblies),
     notes: Array.isArray(raw.notes) ? raw.notes.map((n: unknown) => safeText(n, 300)).filter(Boolean).slice(0, 12) : []
   }
 }
@@ -211,6 +215,7 @@ function buildGameFix(game: any): CommunityGameFix {
       protontricks: []
     },
     launchExecutable: bareExecutableName(game?.launch_executable),
+    runtimeAssemblies: [],
     notes: [
       'Este fix compartilha apenas configuracoes. Prefixo Wine, paths locais e saves nao sao incluidos.'
     ]
@@ -230,6 +235,60 @@ function resolveRuntimePathFromFix(fix: CommunityGameFix): { runtimePath?: strin
   )
   if (match) return { runtimePath: match.path }
   return { warning: `Runtime Proton nao encontrado: ${wanted}` }
+}
+
+/**
+ * Copies the assemblies a fix asked for out of the Proton runtime and into the
+ * game folder. Both ends are constrained: the source has to be a facade the
+ * runtime actually ships, and the destination has to resolve inside the game's
+ * install directory. An existing file is never overwritten — a fix repairs what
+ * is missing, it does not replace what the game or the mod already put there.
+ */
+function deliverRuntimeAssemblies(
+  game: any,
+  fix: CommunityGameFix,
+  runtimePath?: string | null
+): { copied: string[]; warnings: string[] } {
+  const wanted = fix.runtimeAssemblies || []
+  const copied: string[] = []
+  const warnings: string[] = []
+  if (!wanted.length) return { copied, warnings }
+
+  const installDir = String(game?.install_path || '').trim()
+  if (!installDir || !fs.existsSync(installDir)) {
+    warnings.push('Pasta do jogo não encontrada; nenhum assembly foi copiado.')
+    return { copied, warnings }
+  }
+
+  const runtime = String(runtimePath || game?.proton_runtime || '').trim() || findProtonRuntime()
+  const installRoot = path.resolve(installDir)
+
+  for (const entry of wanted) {
+    const source = findRuntimeFacadeAssembly(runtime, entry.name)
+    if (!source) {
+      warnings.push(`O runtime Proton não fornece ${entry.name}.`)
+      continue
+    }
+
+    const destDir = path.resolve(installRoot, entry.into)
+    if (destDir !== installRoot && !destDir.startsWith(installRoot + path.sep)) {
+      warnings.push(`Destino fora da pasta do jogo, ignorado: ${entry.into}`)
+      continue
+    }
+
+    const dest = path.join(destDir, entry.name)
+    if (fs.existsSync(dest)) continue
+
+    try {
+      fs.mkdirSync(destDir, { recursive: true })
+      fs.copyFileSync(source, dest)
+      copied.push(path.relative(installRoot, dest))
+    } catch (err: any) {
+      warnings.push(`Falha ao copiar ${entry.name}: ${err?.message || err}`)
+    }
+  }
+
+  return { copied, warnings }
 }
 
 function getGameFixesRoot() {
@@ -1145,11 +1204,15 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
 
       if (Object.keys(patch).length) updateGameInfo(gameUrl, patch)
 
+      const assemblies = deliverRuntimeAssemblies(game, fix, runtime.runtimePath)
+      warnings.push(...assemblies.warnings)
+
       return {
         success: true,
         fix,
         patch,
         warnings,
+        copiedAssemblies: assemblies.copied,
         pendingComponents: fix.components || { winetricks: [], protontricks: [] }
       }
     } catch (err: any) {

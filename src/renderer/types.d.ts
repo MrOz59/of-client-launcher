@@ -281,7 +281,7 @@ declare global {
       listGameFixes: (gameUrl: string) => Promise<{ success: boolean; fixes?: Array<{ fix: any; path?: string; updatedAt?: string }>; directory?: string; error?: string }>
       saveGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; path?: string; error?: string }>
       deleteGameFix: (gameUrl: string, fixId: string) => Promise<{ success: boolean; error?: string }>
-      applyGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; pendingComponents?: { winetricks?: string[]; protontricks?: string[] }; error?: string }>
+      applyGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; copiedAssemblies?: string[]; pendingComponents?: { winetricks?: string[]; protontricks?: string[] }; error?: string }>
       installGameFixComponents: (gameUrl: string, fix: any) => Promise<{ success: boolean; prefix?: string; installed?: string[]; warnings?: string[]; error?: string }>
       getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => Promise<{ success: boolean; text?: string; live?: boolean; logPath?: string | null; pid?: number; updatedAt?: number; hasProcessOutput?: boolean; hasProtonLog?: boolean; error?: string }>
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>

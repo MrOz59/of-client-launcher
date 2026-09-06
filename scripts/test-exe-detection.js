@@ -7,7 +7,12 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { findExecutableInDir, bareExecutableName } = require('../dist/main/utils/fileUtils.js')
+const {
+  findExecutableInDir,
+  bareExecutableName,
+  findRuntimeFacadeAssembly,
+  sanitizeRuntimeAssemblies
+} = require('../dist/main/utils/fileUtils.js')
 
 let failures = 0
 function check(condition, label, detail) {
@@ -102,6 +107,47 @@ check(
   'a hint naming nothing in the folder changes nothing',
   findExecutableInDir(root, { prefer: '../../../bin/sh.exe' })
 )
+
+// A fix names an assembly for the launcher to take out of the Proton runtime.
+// The name is all it may supply, so the lookup has to refuse anything that is
+// not a plain file the runtime actually ships.
+console.log('\nfacade assemblies from a proton runtime')
+const runtime = path.join(root, 'runtime')
+const facades = path.join(runtime, 'files', 'share', 'wine', 'mono', 'wine-mono-10.4.1', 'lib', 'mono', '4.5', 'Facades')
+fs.mkdirSync(facades, { recursive: true })
+fs.writeFileSync(path.join(facades, 'System.Net.Primitives.dll'), 'facade')
+
+check(
+  findRuntimeFacadeAssembly(runtime, 'System.Net.Primitives.dll') === path.join(facades, 'System.Net.Primitives.dll'),
+  'finds a facade the runtime ships',
+  findRuntimeFacadeAssembly(runtime, 'System.Net.Primitives.dll')
+)
+check(findRuntimeFacadeAssembly(runtime, 'NotShipped.dll') === null, 'an assembly the runtime does not ship is not invented')
+check(findRuntimeFacadeAssembly(runtime, '../../../../../../etc/passwd') === null, 'traversal is refused', findRuntimeFacadeAssembly(runtime, '../../../../../../etc/passwd'))
+check(findRuntimeFacadeAssembly(runtime, 'Facades/System.Net.Primitives.dll') === null, 'a name carrying a path is refused')
+check(findRuntimeFacadeAssembly(runtime, 'passwd') === null, 'only .dll is accepted')
+check(findRuntimeFacadeAssembly('', 'System.Net.Primitives.dll') === null, 'no runtime means no assembly')
+
+// A fix is a file people pass around, so what it may ask for is narrow: a name
+// the runtime ships, and a folder inside the game. Anything reaching further is
+// dropped, not repaired.
+console.log('\nwhat a fix may ask to have placed')
+const one = (entry) => sanitizeRuntimeAssemblies([entry])
+
+check(
+  JSON.stringify(one({ name: 'System.Net.Primitives.dll', into: 'Nitrox/lib/net472' })) ===
+    JSON.stringify([{ name: 'System.Net.Primitives.dll', into: 'Nitrox/lib/net472' }]),
+  'a plain name and a folder inside the game are kept',
+  one({ name: 'System.Net.Primitives.dll', into: 'Nitrox/lib/net472' })
+)
+check(one({ name: 'x.dll', into: '../../../etc' }).length === 0, 'a destination climbing out is dropped', one({ name: 'x.dll', into: '../../../etc' }))
+check(one({ name: 'x.dll', into: 'lib/../../etc' }).length === 0, 'a climb hidden mid-path is dropped', one({ name: 'x.dll', into: 'lib/../../etc' }))
+check(one({ name: 'x.dll', into: '/etc' })[0]?.into === 'etc', 'a leading slash cannot make it absolute', one({ name: 'x.dll', into: '/etc' }))
+check(one({ name: '../evil.dll', into: 'lib' }).length === 0, 'a name carrying a path is dropped', one({ name: '../evil.dll', into: 'lib' }))
+check(one({ name: 'evil.exe', into: 'lib' }).length === 0, 'only .dll is accepted', one({ name: 'evil.exe', into: 'lib' }))
+check(one({ name: 'x.dll', into: '' }).length === 0, 'a fix must say where it goes')
+check(sanitizeRuntimeAssemblies('not an array').length === 0, 'a non-list asks for nothing')
+check(sanitizeRuntimeAssemblies(new Array(50).fill({ name: 'a.dll', into: 'lib' })).length === 20, 'the list is capped')
 
 fs.rmSync(root, { recursive: true, force: true })
 

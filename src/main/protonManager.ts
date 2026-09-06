@@ -2444,3 +2444,4 @@ export function openWineFileManager(prefixPath: string): { success: boolean; err
   proc.unref()
   return { success: true }
 }
+

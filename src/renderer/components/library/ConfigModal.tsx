@@ -989,7 +989,7 @@ function FixesTab(props: ConfigModalProps) {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
-  const [pendingComponents, setPendingComponents] = useState<{ winetricks?: string[]; protontricks?: string[] } | null>(null)
+  const [step, setStep] = useState<string | null>(null)
 
   const currentRuntime = protonRuntimes.find(rt => rt.path === protonVersion)
   const currentRuntimeName = currentRuntime?.name || (protonVersion ? protonVersion.split(/[\\/]/).filter(Boolean).pop() : t('library.configModal.proton.autoExperimental'))
@@ -1063,7 +1063,6 @@ function FixesTab(props: ConfigModalProps) {
     setError(null)
     setMessage(null)
     setWarnings([])
-    setPendingComponents(null)
     try {
       const res = await window.electronAPI.importGameFix()
       if (res.canceled) return
@@ -1121,59 +1120,54 @@ function FixesTab(props: ConfigModalProps) {
     }
   }
 
+  /**
+   * One fix, one action. Settings, files and components used to be split across
+   * two buttons whose difference was not visible anywhere, so applying a fix
+   * that needed components quietly did half the job.
+   */
   const applyFix = async () => {
     if (!fix) return
     setBusy('apply')
     setError(null)
     setMessage(null)
     setWarnings([])
-    setPendingComponents(null)
-    try {
-      const res = await window.electronAPI.applyGameFix(game.url, fix)
-      if (!res.success) {
-        setError(ipcErrorText(t, res, t('library.configModal.fixes.applyFailed')))
-        return
-      }
-      onGameFixApplied(res.patch || {})
-      setWarnings(res.warnings || [])
-      setPendingComponents(res.pendingComponents || null)
-      setMessage(t('library.configModal.fixes.applied'))
-    } catch (err: any) {
-      setError(err?.message || t('library.configModal.fixes.applyFailed'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const applyAndInstallFix = async () => {
-    if (!fix) return
-    setBusy('install')
-    setError(null)
-    setMessage(null)
-    setWarnings([])
-    setPendingComponents(null)
+    setStep(t('library.configModal.fixes.applying'))
     try {
       const applyRes = await window.electronAPI.applyGameFix(game.url, fix)
       if (!applyRes.success) {
-        setError(applyRes.error || t('library.configModal.fixes.applyFailed'))
+        setError(ipcErrorText(t, applyRes, t('library.configModal.fixes.applyFailed')))
         return
       }
       onGameFixApplied(applyRes.patch || {})
 
+      const collected = [...(applyRes.warnings || [])]
+      const placed = applyRes.copiedAssemblies || []
+
+      if (fixComponents.length === 0) {
+        setWarnings(collected)
+        setMessage(placed.length
+          ? t('library.configModal.fixes.appliedWithFiles', { files: placed.join(', ') })
+          : t('library.configModal.fixes.applied'))
+        return
+      }
+
+      setStep(t('library.configModal.fixes.installingComponents'))
       const installRes = await window.electronAPI.installGameFixComponents(game.url, fix)
+      collected.push(...(installRes.warnings || []))
+      setWarnings(collected)
+
       if (!installRes.success) {
-        setWarnings([...(applyRes.warnings || []), ...(installRes.warnings || [])])
         setError(installRes.error || t('library.configModal.fixes.installFailed'))
         return
       }
 
-      setWarnings([...(applyRes.warnings || []), ...(installRes.warnings || [])])
       setMessage(installRes.installed?.length
         ? t('library.configModal.fixes.appliedInstalled', { components: installRes.installed.join(' ') })
-        : t('library.configModal.fixes.appliedNoComponents'))
+        : t('library.configModal.fixes.applied'))
     } catch (err: any) {
-      setError(err?.message || t('library.configModal.fixes.installFailed'))
+      setError(err?.message || t('library.configModal.fixes.applyFailed'))
     } finally {
+      setStep(null)
       setBusy(null)
     }
   }
@@ -1250,7 +1244,7 @@ function FixesTab(props: ConfigModalProps) {
                       </span>
                     </div>
                     <div className="config-btn-group">
-                      <button className="config-btn secondary" onClick={() => { setFix(itemFix); setMessage(null); setError(null); setWarnings([]); setPendingComponents(null) }} disabled={!!busy}>
+                      <button className="config-btn secondary" onClick={() => { setFix(itemFix); setMessage(null); setError(null); setWarnings([]) }} disabled={!!busy}>
                         {t('common.select')}
                       </button>
                       <button className="config-btn ghost" onClick={() => deleteLocalFix(itemFix)} disabled={!!busy}>
@@ -1320,17 +1314,19 @@ function FixesTab(props: ConfigModalProps) {
                 </div>
               ) : null}
 
+              {fix.runtimeAssemblies?.length ? (
+                <div className="config-tips" style={{ marginTop: 12 }}>
+                  <p><strong>{t('library.configModal.fixes.files')}</strong></p>
+                  {fix.runtimeAssemblies.map((entry: any) => (
+                    <p key={`${entry.into}/${entry.name}`}>{entry.into}/{entry.name}</p>
+                  ))}
+                </div>
+              ) : null}
+
               {warnings.length ? (
                 <div className="config-warning" style={{ marginTop: 12 }}>
                   <AlertCircle size={14} />
                   <span>{warnings.join(' ')}</span>
-                </div>
-              ) : null}
-
-              {pendingComponents && ((pendingComponents.winetricks?.length || 0) > 0 || (pendingComponents.protontricks?.length || 0) > 0) ? (
-                <div className="config-warning" style={{ marginTop: 12 }}>
-                  <AlertCircle size={14} />
-                  <span>{t('library.configModal.fixes.componentsManual')}</span>
                 </div>
               ) : null}
 
@@ -1339,17 +1335,13 @@ function FixesTab(props: ConfigModalProps) {
                   {busy === 'save' ? <RefreshCw size={14} className="of-spin" /> : <Plus size={14} />}
                   {t('library.configModal.fixes.saveToLibrary')}
                 </button>
-                {fixComponents.length > 0 ? (
-                  <button className="config-btn secondary" onClick={applyAndInstallFix} disabled={!!busy || !fix}>
-                    {busy === 'install' ? <RefreshCw size={14} className="of-spin" /> : <Wrench size={14} />}
-                    {t('library.configModal.fixes.applyInstall')}
-                  </button>
-                ) : null}
                 <button className="config-btn primary" onClick={applyFix} disabled={!!busy || !fix}>
                   {busy === 'apply' ? <RefreshCw size={14} className="of-spin" /> : <Check size={14} />}
                   {t('library.configModal.fixes.apply')}
                 </button>
               </div>
+
+              {step ? <p className="config-hint" style={{ marginTop: 10 }}>{step}</p> : null}
             </div>
           </div>
         </>

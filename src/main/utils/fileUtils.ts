@@ -364,3 +364,86 @@ export async function getDirectorySizeBytes(
   await walk(rootDir)
   return total
 }
+
+/**
+ * Finds a .NET facade assembly inside a Proton runtime's bundled wine-mono.
+ *
+ * Unity ships only the facade assemblies the game itself references, so a mod
+ * that references one the game does not — Nitrox and System.Net.Primitives is
+ * the case this was written for — finds nothing to load. On Windows the
+ * framework installed system-wide covers the gap; a Proton prefix has no such
+ * thing, but the runtime carries a full set of facades of its own.
+ *
+ * The name is matched against files that are actually there. Nothing here
+ * accepts a path, so a fix can name an assembly but never reach for one.
+ */
+export function findRuntimeFacadeAssembly(runtimePath: string | null | undefined, assemblyName: string): string | null {
+  if (!/^[A-Za-z0-9_.+-]+\.dll$/i.test(assemblyName)) return null
+
+  const root = String(runtimePath || '').trim()
+  if (!root) return null
+
+  const monoRoot = path.join(root, 'files', 'share', 'wine', 'mono')
+  let monoDirs: string[] = []
+  try {
+    monoDirs = fs.readdirSync(monoRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(monoRoot, entry.name))
+  } catch {
+    return null
+  }
+
+  for (const monoDir of monoDirs) {
+    const profiles = path.join(monoDir, 'lib', 'mono')
+    let versions: string[] = []
+    try {
+      versions = fs.readdirSync(profiles, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+    } catch {
+      continue
+    }
+
+    for (const version of versions) {
+      const candidate = path.join(profiles, version, 'Facades', assemblyName)
+      try {
+        if (fs.statSync(candidate).isFile()) return candidate
+      } catch {
+        // keep looking
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Validates the assemblies a fix asks the launcher to place in a game folder.
+ *
+ * A fix is a file people pass around, so it carries no payload and no URL: it
+ * may only name an assembly the Proton runtime already ships, and a folder
+ * inside the game's own directory to put it in. Anything that could reach
+ * further than that — a name with a path in it, a destination climbing out with
+ * `..` — is dropped rather than repaired.
+ */
+export function sanitizeRuntimeAssemblies(value: unknown): Array<{ name: string; into: string }> {
+  if (!Array.isArray(value)) return []
+
+  const out: Array<{ name: string; into: string }> = []
+  for (const raw of value.slice(0, 20)) {
+    if (!raw || typeof raw !== 'object') continue
+
+    const name = String((raw as any).name || '').trim().slice(0, 120)
+    const into = String((raw as any).into || '').trim().slice(0, 200)
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+
+    if (!/^[A-Za-z0-9_.+-]+\.dll$/i.test(name)) continue
+    if (!into || into.split('/').some((segment) => segment === '..' || segment === '.' || segment === '')) continue
+
+    out.push({ name, into })
+  }
+  return out
+}
