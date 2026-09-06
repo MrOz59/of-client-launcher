@@ -27,8 +27,6 @@ type ToastPreset = {
   marginRight: number
   marginVertical: number
   spacing: number
-  alwaysOnTopLevel: 'screen-saver' | 'floating'
-  forwardMouse: boolean
 }
 
 const GAME_PRESET: ToastPreset = {
@@ -38,9 +36,7 @@ const GAME_PRESET: ToastPreset = {
   height: 90,
   marginRight: 20,
   marginVertical: 20,
-  spacing: 10,
-  alwaysOnTopLevel: 'screen-saver',
-  forwardMouse: false
+  spacing: 10
 }
 
 const DESKTOP_PRESET: ToastPreset = {
@@ -50,9 +46,7 @@ const DESKTOP_PRESET: ToastPreset = {
   height: 96,
   marginRight: 20,
   marginVertical: 24,
-  spacing: 12,
-  alwaysOnTopLevel: 'floating',
-  forwardMouse: true
+  spacing: 12
 }
 
 type ActiveToast = {
@@ -172,10 +166,11 @@ class ToastWindowManager {
       movable: false,
       minimizable: false,
       maximizable: false,
+      fullscreenable: false,
       closable: true,
       hasShadow: false,
       show: false,             // Never map the window focused
-      type: 'notification',    // Stacks above fullscreen games without activating
+      type: 'notification',
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -183,14 +178,19 @@ class ToastWindowManager {
       }
     })
 
-    win.setAlwaysOnTop(true, this.preset.alwaysOnTopLevel)
-    win.setIgnoreMouseEvents(true, this.preset.forwardMouse ? { forward: true } : undefined)
+    // Desktop notifications can also arrive while a game launched elsewhere is
+    // active. Both layouts need the same stacking and input behavior.
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.setIgnoreMouseEvents(true)
     win.setSkipTaskbar(true)
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
 
     win.once('ready-to-show', () => {
       if (win.isDestroyed()) return
       // showInactive() keeps the focus where it is; show() would steal it.
       win.showInactive()
+      // Raise only the z-order; focus must stay with the foreground application.
+      win.moveTop()
     })
 
     this.load(win, notification, stackOffset)

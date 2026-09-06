@@ -36,7 +36,6 @@
 
     .toast-item.animate-in {
       opacity: 1;
-      pointer-events: auto;
     }
 
     .toast-item.out {
@@ -58,7 +57,6 @@
       padding: 12px 12px 14px;
       gap: 12px;
       position: relative;
-      cursor: pointer;
       overflow: hidden;
       -webkit-app-region: no-drag;
       box-shadow:
@@ -152,27 +150,6 @@
       text-overflow: ellipsis;
     }
 
-    .toast-close {
-      flex-shrink: 0;
-      width: 22px;
-      height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: rgba(255, 255, 255, 0.42);
-      font-size: 14px;
-      line-height: 1;
-      border-radius: 8px;
-      transition: color 0.15s, background 0.15s;
-      margin-left: 2px;
-      align-self: flex-start;
-    }
-
-    .toast-close:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.10);
-    }
-
     .progress {
       position: absolute;
       bottom: 0;
@@ -188,12 +165,6 @@
       to   { width: 0%;   }
     }
 
-    .toast:hover {
-      border-color: rgba(255, 255, 255, 0.18);
-      background:
-        radial-gradient(260px 130px at 8% 0%, rgba(var(--accent-rgb, 59, 130, 246), 0.16), transparent 62%),
-        linear-gradient(135deg, rgba(31, 31, 38, 0.98), rgba(13, 13, 16, 0.99));
-    }
   </style>
 </head>
 <body>
@@ -242,11 +213,8 @@
             <div class="toast-title">${escapeHtml(params.title || 'Notificação')}</div>
             ${params.message ? `<div class="toast-message">${escapeHtml(params.message)}</div>` : ''}
           </div>
-          <div class="toast-close" title="Fechar">✕</div>
           <div class="progress" style="animation: shrink ${duration}ms linear forwards"></div>
         </div>`
-      el.querySelector('.toast-close').addEventListener('click', e => { e.stopPropagation(); dismissById(id) })
-      el.querySelector('.toast').addEventListener('click', () => dismissById(id))
       return el
     }
 

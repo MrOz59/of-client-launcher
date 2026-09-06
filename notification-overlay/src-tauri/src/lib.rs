@@ -337,7 +337,11 @@ fn play_sound_path(path: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn play_sound_path(path: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+
     Command::new("powershell")
+        // WindowStyle alone still allows a console to flash and activate.
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .args([
             "-NoProfile",
             "-WindowStyle",
@@ -470,8 +474,14 @@ fn calculate_toast_position(toast_width: i32, toast_height: i32) -> (i32, i32) {
 
     // Nunca deixa a janela sair do monitor, mesmo que ela seja maior do que o esperado.
     (
-        x.clamp(screen_x, (screen_x + screen_width - toast_width).max(screen_x)),
-        y.clamp(screen_y, (screen_y + screen_height - toast_height).max(screen_y)),
+        x.clamp(
+            screen_x,
+            (screen_x + screen_width - toast_width).max(screen_x),
+        ),
+        y.clamp(
+            screen_y,
+            (screen_y + screen_height - toast_height).max(screen_y),
+        ),
     )
 }
 
@@ -557,6 +567,12 @@ fn apply_no_focus_hints(win: &WebviewWindow) {
     gtk_win.set_skip_pager_hint(true);
     gtk_win.set_keep_above(true);
 
+    // Store the empty input region on the GTK widget, not just its GDK window:
+    // GTK reapplies the widget's region when mapping/resizing. This also avoids
+    // Tao's cursor-ignore implementation, which unwraps an unrealized window
+    // and leaves a 1x1 input region that can still intercept the game mouse.
+    gtk_win.input_shape_combine_region(Some(&gtk::cairo::Region::create()));
+
     // Precisa da janela X criada (sem mapear) pra poder escrever a propriedade.
     gtk_win.realize();
     set_critical_notification_type(&gtk_win);
@@ -576,6 +592,7 @@ fn apply_no_focus_hints(win: &WebviewWindow) {
 
 #[cfg(target_os = "linux")]
 fn set_critical_notification_type(gtk_win: &gtk::ApplicationWindow) {
+    use gtk::glib::translate::ToGlibPtr;
     use gtk::prelude::{Cast, WidgetExt};
     use x11::xlib;
 
@@ -590,11 +607,19 @@ fn set_critical_notification_type(gtk_win: &gtk::ApplicationWindow) {
     };
 
     let xid = x11_win.xid();
+    // EWMH explicitly reserves zero for windows that must not activate on map.
+    x11_win.set_user_time(0);
+
+    let Ok(x11_display) = gtk_win.display().downcast::<gdkx11::X11Display>() else {
+        return;
+    };
 
     unsafe {
-        let display = xlib::XOpenDisplay(std::ptr::null());
+        // Use GDK's connection so creation, hints and mapping are ordered on
+        // the same X server. A second connection can race the initial realize.
+        let display = gdkx11::ffi::gdk_x11_display_get_xdisplay(x11_display.to_glib_none().0);
         if display.is_null() {
-            eprintln!("[void-toast] não foi possível abrir o display X11");
+            eprintln!("[void-toast] display X11 indisponível");
             return;
         }
 
@@ -618,12 +643,18 @@ fn set_critical_notification_type(gtk_win: &gtk::ApplicationWindow) {
         );
 
         xlib::XFlush(display);
-        xlib::XCloseDisplay(display);
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn apply_no_focus_hints(_win: &WebviewWindow) {}
+fn apply_no_focus_hints(win: &WebviewWindow) {
+    if let Err(err) = win.set_ignore_cursor_events(true) {
+        eprintln!(
+            "[void-toast] erro ao desabilitar entrada do mouse: {:?}",
+            err
+        );
+    }
+}
 
 // ── Cria janela toast ─────────────────────────────────────────────────────────
 
@@ -654,6 +685,16 @@ fn create_toast_window(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     .build()?;
 
     apply_no_focus_hints(&win);
+
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+
+        // GTK may rewrite the window type as it maps the toplevel. Reapply the
+        // ordered types while mapping, before the compositor paints the toast.
+        win.gtk_window()?
+            .connect_map(set_critical_notification_type);
+    }
 
     Ok(win)
 }
@@ -735,9 +776,8 @@ pub fn run() {
         .setup(move |app| {
             let toast_win = create_toast_window(app)?;
 
-            // Não usar set_ignore_cursor_events aqui.
-            // No Linux/Tao 0.35.2, isso pode causar panic quando a janela ainda
-            // não está completamente realizada.
+            // Linux uses a persistent, empty GTK input region instead of Tao's
+            // cursor-ignore request, so clicks pass through from the first map.
             position_toast_window(&toast_win);
             apply_no_focus_hints(&toast_win);
 

@@ -353,6 +353,24 @@ The launcher can:
 
 The notification binary is built from `notification-overlay/` and packaged as `void-toast`.
 
+Desktop toasts are passive: keyboard focus stays with the game, mouse input passes
+through the entire toast, and notifications dismiss automatically. On KDE/Wayland
+the standalone binary uses XWayland and KDE's
+[critical-notification window type](https://develop.kde.org/docs/plasma/kwin/api/)
+to appear above the focused fullscreen window without activating itself. It also
+sets the X11 user time to zero before mapping and preserves an empty mouse input
+region across mapping and resizing.
+
+After rebuilding the Linux toast, its native window behavior can be checked in
+an isolated virtual KDE session (requires `kwin_wayland`, `Xwayland`,
+`dbus-run-session`, Python GI with GTK3, and `python-xlib`):
+
+```bash
+npm run build:notification-overlay:linux
+python scripts/test-toast-focus.py
+python scripts/test-toast-focus.py --game-backend wayland
+```
+
 ## VPN/LAN Controller
 
 The launcher talks to a controller API for VPN rooms. The default controller URL in code is:

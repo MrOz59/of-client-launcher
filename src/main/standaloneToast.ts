@@ -175,6 +175,7 @@ export function showStandaloneToast(notification: NotificationMessage): boolean 
   try {
     child = spawn(binary, ['--stdin'], {
       stdio: ['pipe', 'ignore', 'pipe'],
+      windowsHide: true,
       env: toastEnv,
     })
   } catch (err) {
