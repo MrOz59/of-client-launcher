@@ -209,7 +209,24 @@ export function findWin64ShippingExecutableInDir(dir: string): string | null {
   }
 }
 
-export function findExecutableInDir(dir: string): string | null {
+/**
+ * A name the game page told us to run. It comes from a remote page, so it is
+ * reduced to a bare file name here: it is only ever compared against files the
+ * scan already found on disk, and can never become a path of its own.
+ */
+export function bareExecutableName(value: unknown): string | null {
+  const name = path.basename(String(value || '').trim().replace(/\\/g, '/'))
+  return /^[^/\\]+\.exe$/i.test(name) && name !== '..' ? name : null
+}
+
+/**
+ * `prefer` is the binary the store page named. The folder scan guesses from
+ * size and naming, which regularly lands on the game's original executable
+ * rather than the patched one the page points at, so a name match outranks
+ * every heuristic below — but only when that file actually exists here, and
+ * the path still comes from the scan.
+ */
+export function findExecutableInDir(dir: string, options?: { prefer?: string | null }): string | null {
   try {
     const exeFiles: Array<{ name: string; path: string; depth: number; size: number }> = []
 
@@ -242,10 +259,14 @@ export function findExecutableInDir(dir: string): string | null {
 
     if (exeFiles.length === 0) return null
 
+    const preferred = bareExecutableName(options?.prefer)?.toLowerCase() || null
+
     const scoreExe = (exe: { name: string; path: string; depth: number; size: number }): number => {
       const nameLower = exe.name.toLowerCase()
       const pathLower = exe.path.toLowerCase()
       let score = 0
+
+      if (preferred && nameLower === preferred) score += 1000
 
       // Negative scores for non-game executables
       if (nameLower.includes('uninstall')) score -= 100

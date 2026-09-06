@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS games (
   is_favorite INTEGER DEFAULT 0,
   play_time INTEGER DEFAULT 0,
 	  executable_path TEXT,
+	  launch_executable TEXT,
 	  proton_prefix TEXT,
 	  proton_runtime TEXT,
 	  proton_options TEXT,
@@ -220,6 +221,16 @@ const MIGRATIONS: Migration[] = [
           row.id
         )
       }
+    }
+  },
+  {
+    id: 4,
+    name: 'add-launch-executable-hint',
+    up: (db) => {
+      // The file name the game page tells you to run. Kept beside the resolved
+      // executable_path rather than replacing it: the path is what launches,
+      // this is what picks it again after a repair or a reinstall.
+      ensureColumn(db, 'games', 'launch_executable', 'TEXT')
     }
   }
 ]
@@ -364,6 +375,7 @@ export function updateGameInfo(url: string, data: {
   torrent_magnet?: string
   file_size?: string
   executable_path?: string
+  launch_executable?: string | null
   proton_runtime?: string | null
 	  proton_options?: string | null
 	  proton_prefix?: string | null

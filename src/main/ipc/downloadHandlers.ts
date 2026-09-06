@@ -12,7 +12,8 @@ import {
   getDownloadByUrl,
   deleteDownload,
   addOrUpdateGame,
-  markGameInstalled
+  markGameInstalled,
+  updateGameInfo
 } from '../db'
 import {
   pauseDownloadByTorrentId,
@@ -30,7 +31,8 @@ import {
   hasExistingGameInstall
 } from '../downloadManager'
 import { extractZipWithPassword } from '../zip'
-import { findArchive, findExecutableInDir } from '../utils'
+import { getStoreGame } from '../store/catalog'
+import { bareExecutableName, findArchive, findExecutableInDir } from '../utils'
 import { sanitizeVersionText, isKnownUnknownVersion } from '../utils/versionUtils'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
@@ -342,7 +344,15 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
 
       // Add to library after extraction
       if (gameUrl) {
-        const exePath = findExecutableInDir(destDir)
+        // The page's own steps name the binary to run, and for these fixes that
+        // is the patched one — which the folder scan, going by size and naming,
+        // regularly passes over. Best-effort: a cold page cache or a rate limit
+        // must never hold up an install that has already finished.
+        const launchHint = await getStoreGame(gameUrl)
+          .then((game) => bareExecutableName(game.launchExecutable))
+          .catch(() => null)
+
+        const exePath = findExecutableInDir(destDir, { prefer: launchHint })
         const version = await resolveGameVersion({
           filename: archivePath,
           title: record?.title,
@@ -350,6 +360,9 @@ export const registerDownloadHandlers: IpcHandlerRegistrar = (ctx: IpcContext) =
         })
         addOrUpdateGame(gameUrl, record?.title)
         markGameInstalled(gameUrl, destDir, version, exePath || undefined)
+        // Kept for the repair and launch paths, which run long after this and
+        // often with no network to ask the page again.
+        if (launchHint) updateGameInfo(gameUrl, { launch_executable: launchHint })
         try {
           const markerPath = path.join(destDir, '.of_game.json')
           const next = {

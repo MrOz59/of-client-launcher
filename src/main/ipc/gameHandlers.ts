@@ -518,7 +518,7 @@ async function collectGameDiagnostics(gameUrl: string, ctx: IpcContext) {
   const steamRunning = isProcessRunning(['steam', 'steamwebhelper'])
   const needsExecutableRepair = !exePath.exists || exePath.type !== 'file'
   const candidateExe = needsExecutableRepair && installPath.exists && installPath.type === 'directory'
-    ? findExecutableInDir(installPath.path)
+    ? findExecutableInDir(installPath.path, { prefer: game.launch_executable })
     : null
 
   const repairActions: any[] = []

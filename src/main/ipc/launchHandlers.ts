@@ -833,7 +833,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       // Try to auto-find executable if not configured or missing
       if (!exePath || !fs.existsSync(path.isAbsolute(exePath) ? exePath : path.join(installDir, exePath))) {
         console.log('[Launch] 🔍 Auto-searching for executable...')
-        const autoExe = shouldUsePreferredEpicExe ? preferredEpicExe : (installDir ? findExecutableInDir(installDir) : null)
+        const autoExe = shouldUsePreferredEpicExe ? preferredEpicExe : (installDir ? findExecutableInDir(installDir, { prefer: game?.launch_executable }) : null)
         if (autoExe) {
           exePath = autoExe
           updateGameInfo(gameUrl, { executable_path: exePath })
@@ -872,7 +872,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         updateGameInfo(gameUrl, { executable_path: exePath })
       }
 
-      const bestExe = installDir ? findExecutableInDir(installDir) : null
+      const bestExe = installDir ? findExecutableInDir(installDir, { prefer: game?.launch_executable }) : null
       if (bestExe && fs.existsSync(bestExe) && shouldPreferAutoExecutable(exePath, bestExe)) {
         console.warn('[Launch] ⚠️ Stored executable looks like a stub; switching to better candidate:', {
           from: exePath,
