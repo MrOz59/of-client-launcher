@@ -285,9 +285,16 @@ export default function StoreGameDialog({
                       {t('storeNext.detail.translatingInstructions')}
                     </div>
                   )}
-                  <ol lang={translatedInstructions && !showOriginal ? language : 'ru'}>
-                    {instructions.map((step, index) => <li key={index}>{step}</li>)}
-                  </ol>
+                  <div className="store-next-steps" lang={translatedInstructions && !showOriginal ? language : 'ru'}>
+                    {groupSteps(instructions).map((group, index) => (
+                      <section key={index}>
+                        {group.heading && <h5>{group.heading}</h5>}
+                        {group.items.length > 0 && (
+                          <ol>{group.items.map((step, position) => <li key={position}>{step}</li>)}</ol>
+                        )}
+                      </section>
+                    ))}
+                  </div>
                   <p className="store-next-source">
                     {translationStatus === 'translated' && !showOriginal
                       ? t('storeNext.detail.instructionsTranslatedSource')
@@ -354,4 +361,25 @@ export default function StoreGameDialog({
       </div>
     </div>
   )
+}
+
+/**
+ * The page writes its steps as a flat run of lines that mixes sub-headings
+ * ("В игре:", "Подключение:") with the steps under them, and numbers the steps
+ * itself. The list supplies the numbering here, so the site's own "1." is
+ * dropped and headings are lifted out instead of being numbered as steps.
+ */
+function groupSteps(lines: string[]): Array<{ heading?: string; items: string[] }> {
+  const groups: Array<{ heading?: string; items: string[] }> = []
+
+  for (const line of lines) {
+    if (line.endsWith(':') && line.length <= 40) {
+      groups.push({ heading: line.replace(/\s*:$/, ''), items: [] })
+      continue
+    }
+    if (groups.length === 0) groups.push({ items: [] })
+    groups[groups.length - 1].items.push(line.replace(/^\d+\s*[.)]\s*/, ''))
+  }
+
+  return groups
 }

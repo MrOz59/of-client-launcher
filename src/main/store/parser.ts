@@ -345,20 +345,50 @@ function findVideo($: cheerio.CheerioAPI): string | undefined {
  */
 const METADATA_LABELS = /^(Релиз игры|Игра через|Режимы|Версия игры|Файлы для игры|Информация о игре|Страница игры|Release date|Game version)\s*:/i
 
+/**
+ * The block opens with the download section — the archive password, the Steam
+ * link, the buttons and the "unpack it anywhere" step — and only then reaches
+ * what the page itself calls "Как запускать". Reading from the top spent the
+ * whole budget on that preamble and cut the real steps off halfway.
+ */
+const LAUNCH_HEADING = /^(?:как\s+(?:запускать|запустить|играть)|how\s+to\s+(?:run|play|launch))\s*:?/i
+
+/** The download buttons and the boilerplate wrapped around them. */
+const DOWNLOAD_NOISE = /^(?:скачать|download|пароль\s+един|не\s+знаешь\s+как\s+распаковать|смотри\s+faq|если\s+у\s+вас\s+уже\s+скачана)/i
+
+/**
+ * A sub-heading inside the steps ("В игре:", "Подключение:") is far shorter
+ * than a prose line but carries the shape of the section, so the length floor
+ * applies only to lines that are not headings.
+ */
+function isStepLine(line: string): boolean {
+  if (METADATA_LABELS.test(line) || DOWNLOAD_NOISE.test(line)) return false
+  return line.length >= 12 || (line.length >= 4 && line.endsWith(':'))
+}
+
 function findInstructions($: cheerio.CheerioAPI): string[] | undefined {
   const block = $('.full-story-content').first()
   if (block.length === 0) return undefined
 
+  // Block boundaries end a line as surely as <br> does; splitting on <br>
+  // alone glued the labelled metadata onto the prose that followed it.
   const lines = block
     .html()
-    ?.split(/<br\s*\/?>/i)
-    .map((chunk) => cleanText(cheerio.load(`<div>${chunk}</div>`)('div').text()))
-    .filter((line) => line.length >= 12 && !METADATA_LABELS.test(line)) ?? []
+    ?.split(/<br\s*\/?>|<\/(?:p|div|li|h[1-6])>/i)
+    // Only the wrapper: a chunk carrying its own <div> would otherwise be
+    // selected twice and its text repeated.
+    .map((chunk) => cleanText(cheerio.load(`<div>${chunk}</div>`)('div').first().text()))
+    .filter((line) => line.length > 0) ?? []
+
+  const anchor = lines.findIndex((line) => LAUNCH_HEADING.test(line))
+  const body = anchor < 0
+    ? lines
+    : [lines[anchor].replace(LAUNCH_HEADING, '').trim(), ...lines.slice(anchor + 1)]
 
   const steps: string[] = []
   let budget = 1200
 
-  for (const line of lines) {
+  for (const line of body.filter(isStepLine)) {
     if (steps.length >= 12 || budget <= 0) break
     steps.push(line.slice(0, 240))
     budget -= line.length

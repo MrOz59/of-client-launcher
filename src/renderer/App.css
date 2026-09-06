@@ -5924,6 +5924,9 @@ textarea:focus-visible,
 .store-next-instructions { display: flex; flex-direction: column; gap: 16px; }
 .store-next-instructions-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .store-next-instructions-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.store-next-steps { display: flex; flex-direction: column; gap: 18px; }
+.store-next-steps section { display: flex; flex-direction: column; gap: 9px; }
+.store-next-steps h5 { margin: 0; color: var(--text); font-size: 12px; font-weight: 650; }
 .store-next-instructions ol { display: flex; flex-direction: column; gap: 0; margin: 0; padding-left: 40px; border: 1px solid var(--border); border-radius: 12px; background: #17171c; }
 .store-next-instructions li { padding: 14px 16px 14px 8px; color: #d4d4dc; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .store-next-instructions li + li { border-top: 1px solid var(--border); }

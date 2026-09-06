@@ -89,5 +89,26 @@ check(
 )
 check((realGame.videoUrl || '').includes('KG55MXH8cME'), 'finds the trailer', realGame.videoUrl)
 
+console.log('\ngame page instructions')
+const withSteps = parseGamePage(
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'game-instructions.html'), 'utf8'),
+  'https://online-fix.me/games/officialservers/1234-nome-do-jogo.html'
+)
+const steps = withSteps.instructions || []
+
+check(steps[0] === '1. Запускаем Steam, заходим в свой профиль.', 'starts at the launch section, not at the top of the block', steps[0])
+check(
+  !steps.some((line) => /Пароль един|Смотри FAQ|Скачать|Страница игры/i.test(line)),
+  'drops the archive password, the Steam line and the download buttons',
+  steps
+)
+check(!steps.some((line) => /Версия игры/i.test(line)), 'drops the labelled metadata', steps)
+check(steps.includes('Подключение:') && steps.includes('Создание сервера:'), 'keeps the short sub-headings', steps)
+check(
+  /Говорим другу/.test(steps[steps.length - 1] || ''),
+  'reaches the last step instead of running out of budget',
+  steps[steps.length - 1]
+)
+
 console.log(failures === 0 ? '\nall parser checks passed' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)
