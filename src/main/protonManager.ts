@@ -1707,16 +1707,26 @@ async function runWinetricks(
     }
   }
 
+  // The same call has been seen to fail once and then succeed unchanged: wine
+  // could not open the working directory winetricks handed it, on a prefix that
+  // had just been started. One retry is cheap, since whatever winetricks
+  // downloaded on the first attempt is in its cache by the second.
+  const runWithRetry = async (comps: string[], timeoutMs: number): Promise<boolean> => {
+    if (await runComponents(comps, timeoutMs)) return true
+    onProgress?.(`Nova tentativa: ${comps.join(', ')}...`)
+    return runComponents(comps, timeoutMs)
+  }
+
   // Run fast components together (2 minute timeout)
   if (fastComponents.length > 0) {
-    const fastOk = await runComponents(fastComponents, 2 * 60 * 1000)
+    const fastOk = await runWithRetry(fastComponents, 2 * 60 * 1000)
     if (!fastOk) okAll = false
   }
 
   // Run slow components individually with longer timeout (3 minutes each)
   for (const component of slowComponents) {
     try {
-      const ok = await runComponents([component], 3 * 60 * 1000)
+      const ok = await runWithRetry([component], 3 * 60 * 1000)
       if (!ok) okAll = false
     } catch (err) {
       console.warn(`[Proton] Failed to install ${component}:`, err)
@@ -2286,9 +2296,9 @@ export async function installExtraComponents(
   }
 
   console.log('[Proton] Installing extra components:', components)
-  await runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir)
-
-  return true
+  // Whether winetricks actually succeeded is the answer the caller reports to
+  // the user. Returning a bare true here made a failed install look installed.
+  return runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir)
 }
 
 export async function runProtontricksComponents(
