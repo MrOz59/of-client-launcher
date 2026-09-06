@@ -105,10 +105,13 @@ check(
 check(!steps.some((line) => /Версия игры/i.test(line)), 'drops the labelled metadata', steps)
 check(steps.includes('Подключение:') && steps.includes('Создание сервера:'), 'keeps the short sub-headings', steps)
 check(
-  /Говорим другу/.test(steps[steps.length - 1] || ''),
+  steps.some((line) => /Говорим другу/.test(line)),
   'reaches the last step instead of running out of budget',
-  steps[steps.length - 1]
+  steps
 )
+check(!steps.some((line) => /КООП|МУЛЬТИПЛЕЕР|сетевых режимах/i.test(line)), 'leaves out the network-modes block', steps)
+check(!steps.some((line) => /(.{4,})\1/.test(line)), 'no line repeats itself', steps)
+check(steps.some((line) => /официальных серверах/.test(line)), 'keeps the notes that follow the modes block', steps)
 
 console.log(failures === 0 ? '\nall parser checks passed' : `\n${failures} check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

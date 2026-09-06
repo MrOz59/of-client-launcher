@@ -363,22 +363,81 @@ const DOWNLOAD_NOISE = /^(?:скачать|download|пароль\s+един|не
  */
 function isStepLine(line: string): boolean {
   if (METADATA_LABELS.test(line) || DOWNLOAD_NOISE.test(line)) return false
+  if (MODES_SECTION.test(line) || MODE_COUNTER.test(line)) return false
   return line.length >= 12 || (line.length >= 4 && line.endsWith(':'))
 }
+
+/** Tags that end a line the way a <br> does. */
+const BLOCK_TAGS = new Set([
+  'p', 'div', 'li', 'ul', 'ol', 'table', 'tr', 'td', 'th',
+  'section', 'article', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+])
+
+/**
+ * Lines come from a walk of the parsed document rather than a split of the
+ * HTML string. Splitting had to guess where a line ended from the tags it
+ * happened to know about, and a chunk that carried its own element had its
+ * text read twice; a walk visits every text node exactly once and ends a line
+ * where a block element or a <br> actually ends one.
+ */
+function blockLines(root: any): string[] {
+  const lines: string[] = []
+  let current = ''
+
+  const flush = () => {
+    const line = cleanText(current)
+    if (line) lines.push(line)
+    current = ''
+  }
+
+  const walk = (node: any) => {
+    for (const child of node?.children || []) {
+      if (child.type === 'text') {
+        current += child.data
+        continue
+      }
+      if (child.type !== 'tag') continue
+
+      const tag = String(child.name).toLowerCase()
+      if (tag === 'br') flush()
+      else if (BLOCK_TAGS.has(tag)) {
+        flush()
+        walk(child)
+        flush()
+      } else {
+        walk(child)
+      }
+    }
+  }
+
+  walk(root)
+  flush()
+  return lines
+}
+
+/**
+ * Some values are repeated in adjacent inline elements — a label beside its
+ * tooltip and its mobile copy — which reads back as "КООП: 2КООП: 2КООП: 2".
+ * A line that is nothing but one string repeated is reduced to that string.
+ */
+function collapseRepeat(line: string): string {
+  for (let size = 4; size <= line.length / 2; size++) {
+    if (line.length % size !== 0) continue
+    const unit = line.slice(0, size)
+    if (unit.repeat(line.length / size) === line) return unit
+  }
+  return line
+}
+
+/** The network-modes block states player counts; it is not a step. */
+const MODES_SECTION = /^(?:информация\s+о\s+сетевых\s+режимах|network\s+modes)/i
+const MODE_COUNTER = /^[^:]{2,28}:\s*\d{1,3}$/
 
 function findInstructions($: cheerio.CheerioAPI): string[] | undefined {
   const block = $('.full-story-content').first()
   if (block.length === 0) return undefined
 
-  // Block boundaries end a line as surely as <br> does; splitting on <br>
-  // alone glued the labelled metadata onto the prose that followed it.
-  const lines = block
-    .html()
-    ?.split(/<br\s*\/?>|<\/(?:p|div|li|h[1-6])>/i)
-    // Only the wrapper: a chunk carrying its own <div> would otherwise be
-    // selected twice and its text repeated.
-    .map((chunk) => cleanText(cheerio.load(`<div>${chunk}</div>`)('div').first().text()))
-    .filter((line) => line.length > 0) ?? []
+  const lines = blockLines(block[0]).map(collapseRepeat)
 
   const anchor = lines.findIndex((line) => LAUNCH_HEADING.test(line))
   const body = anchor < 0
