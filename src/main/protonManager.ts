@@ -1229,15 +1229,7 @@ function makeQuietWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 }
 
-function makeHiddenWineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const next = makeQuietWineEnv(env)
-  delete next.DISPLAY
-  delete next.WAYLAND_DISPLAY
-  delete next.XAUTHORITY
-  delete next.DESKTOP_STARTUP_ID
-  delete next.XDG_ACTIVATION_TOKEN
-  return next
-}
+let warnedAboutMissingXvfb = false
 
 function makeHiddenProcess(
   cmd: string,
@@ -1255,7 +1247,18 @@ function makeHiddenProcess(
       }
     }
   }
-  return { cmd, args, env: makeHiddenWineEnv(env) }
+
+  // Without xvfb-run there is no display to hide the work on, and taking the
+  // real one away does not hide it — it stops it. A graphical installer given
+  // no display at all exits rather than running headless: the .NET runtime
+  // bundle quits with status 2, winetricks aborts, and the component the user
+  // asked for never gets installed. A window that flashes past is the lesser
+  // cost, so the display is kept and only the noise is turned down.
+  if (!warnedAboutMissingXvfb) {
+    warnedAboutMissingXvfb = true
+    console.log('[Proton] xvfb-run not found; wine helpers will run on the current display')
+  }
+  return { cmd, args, env: makeQuietWineEnv(env) }
 }
 
 async function runLoggedProcess(
