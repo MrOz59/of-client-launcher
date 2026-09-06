@@ -20,6 +20,7 @@ import { fetchGameUpdateInfo } from '../scraper'
 import { ensureGamePrefixFromDefault, findProtonRuntime, installExtraComponents, listProtonRuntimes, winetricksAvailable } from '../protonManager'
 import { extractOnlineFixOverlayIds, findAndReadOnlineFixIni } from '../utils/onlinefixIni'
 import {
+  bareExecutableName,
   findEosOverlayInstallPath,
   findExecutableInDir,
   getDisplayCompatibilityInfo,
@@ -79,6 +80,12 @@ type CommunityGameFix = {
     winetricks?: string[]
     protontricks?: string[]
   }
+  /**
+   * The binary to launch, as a bare file name. A game whose mod ships its own
+   * launcher is not configured by Proton settings alone — the fix has to be
+   * able to say which of the executables in the folder is the right one.
+   */
+  launchExecutable?: string | null
   notes?: string[]
 }
 
@@ -165,6 +172,9 @@ function normalizeGameFix(raw: any): CommunityGameFix {
       winetricks: safeComponentList(components.winetricks),
       protontricks: safeComponentList(components.protontricks)
     },
+    // A name, never a path: it only ever selects among the executables already
+    // found inside the game's own folder.
+    launchExecutable: bareExecutableName(raw.launchExecutable),
     notes: Array.isArray(raw.notes) ? raw.notes.map((n: unknown) => safeText(n, 300)).filter(Boolean).slice(0, 12) : []
   }
 }
@@ -200,6 +210,7 @@ function buildGameFix(game: any): CommunityGameFix {
       winetricks: [],
       protontricks: []
     },
+    launchExecutable: bareExecutableName(game?.launch_executable),
     notes: [
       'Este fix compartilha apenas configuracoes. Prefixo Wine, paths locais e saves nao sao incluidos.'
     ]
@@ -1114,6 +1125,23 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
 
       if (fix.proton?.options) patch.proton_options = JSON.stringify(safeProtonOptions(fix.proton.options))
       if (fix.proton?.steamAppId !== undefined) patch.steam_app_id = fix.proton.steamAppId || null
+
+      if (fix.launchExecutable) {
+        patch.launch_executable = fix.launchExecutable
+        // Resolved against the folder right away, so the fix takes effect
+        // without waiting for a repair pass. The name only selects among what
+        // is there; the path still comes from the scan.
+        const installDir = String(game.install_path || '').trim()
+        const resolved = installDir && fs.existsSync(installDir)
+          ? findExecutableInDir(installDir, { prefer: fix.launchExecutable })
+          : null
+
+        if (resolved && path.basename(resolved).toLowerCase() === fix.launchExecutable.toLowerCase()) {
+          patch.executable_path = resolved
+        } else {
+          warnings.push(`Executável indicado pelo fix não foi encontrado na pasta do jogo: ${fix.launchExecutable}`)
+        }
+      }
 
       if (Object.keys(patch).length) updateGameInfo(gameUrl, patch)
 

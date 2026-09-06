@@ -67,6 +67,11 @@ check(
 console.log('\nthe hint is a name, never a path')
 check(bareExecutableName('LyraGame.exe') === 'LyraGame.exe', 'a plain name is kept')
 check(
+  bareExecutableName('Nitrox.Launcher.exe') === 'Nitrox.Launcher.exe',
+  'a name with dots of its own survives',
+  bareExecutableName('Nitrox.Launcher.exe')
+)
+check(
   bareExecutableName('Binaries/Win64/Game.exe') === 'Game.exe',
   'a directory in the hint is dropped, not followed',
   bareExecutableName('Binaries/Win64/Game.exe')
