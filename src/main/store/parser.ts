@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio'
 import { isOnlineFixHost } from '../../shared/allowedHosts'
+import { sanitizeVersionText } from '../utils/versionUtils'
 
 /**
  * Parser for the store's HTML.
@@ -77,6 +78,13 @@ export type StoreGameDetails = {
    */
   launchExecutable?: string
   description?: string
+  /**
+   * The site's own words when it retires a guide ("Руководство закрыто,
+   * бесплатная игра по сети более невозможна"). The article stays up and
+   * usually keeps its download buttons, so this is the only thing on the page
+   * that says the fix behind them cannot work any more.
+   */
+  unavailableNotice?: string
 }
 
 function absoluteUrl(href: string | undefined, baseUrl: string): string | null {
@@ -295,12 +303,14 @@ export function parseGamePage(html: string, url: string): StoreGameDetails {
     version: findVersion($),
     imageUrl: absoluteUrl($('meta[property="og:image"]').attr('content'), url) || undefined,
     videoUrl: findVideo($),
-    releaseDate: findLabelled($, ['Релиз игры', 'Release date']),
+    // English pages label the same line "Game release".
+    releaseDate: findLabelled($, ['Релиз игры', 'Дата выхода', 'Release date', 'Game release']),
     torrentUrl: downloads.torrentUrl,
     directUrl: downloads.directUrl,
     instructions,
     launchExecutable: instructions && findLaunchExecutable(instructions),
-    description: cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined
+    description: cleanText($('meta[property="og:description"]').attr('content')).slice(0, 600) || undefined,
+    unavailableNotice: findUnavailableNotice($)
   }
 }
 
@@ -347,6 +357,48 @@ function findVideo($: cheerio.CheerioAPI): string | undefined {
 }
 
 /**
+ * A retired guide is not taken down. The site keeps the article, drops a red
+ * centred line into the body — "Руководство закрыто, бесплатная игра по сети
+ * более невозможна, покупайте игру" — and repeats it as the reason for the
+ * edit, while the version, the instructions and often the download buttons all
+ * stay exactly where they were.
+ *
+ * Only the wording the site uses for that announcement counts. A looser match
+ * ("не работает") would also catch troubleshooting lines inside the steps, and
+ * warning that a working fix is dead is worse than staying quiet.
+ */
+const CLOSED_NOTICE = new RegExp([
+  '(?:руководство|гайд|тема|разда\\w+)\\s+закрыт',
+  'по\\s+сети\\s+(?:более|больше)\\s+невозможн',
+  'покупайте\\s+игру',
+  '(?:guide|topic)\\s+(?:is\\s+|has\\s+been\\s+)?closed',
+  'no\\s+longer\\s+(?:possible|available|supported)',
+  'buy\\s+the\\s+game'
+].join('|'), 'i')
+
+/** Long enough for the whole sentence, short enough to still be a notice. */
+const MAX_NOTICE_LENGTH = 240
+
+function findUnavailableNotice($: cheerio.CheerioAPI): string | undefined {
+  // The reason for the last edit: the site states it there as well, and that
+  // line survives even when the body is rewritten around it.
+  const edited = cleanText($('.lightedited, .edited-block').first().text())
+  const reason = /(?:Причина|Reason)\s*:\s*(.+)$/i.exec(edited)?.[1]
+  if (reason && CLOSED_NOTICE.test(reason)) return reason.slice(0, MAX_NOTICE_LENGTH)
+
+  // The notice itself, above the instructions. Scoped to the article: the
+  // comments below it argue about whether the game still works on every page.
+  const body = $('[itemprop="articleBody"], .full-story-content').first()
+  if (body.length === 0) return undefined
+
+  for (const line of blockLines(body[0]).map(collapseRepeat)) {
+    if (line.length <= MAX_NOTICE_LENGTH && CLOSED_NOTICE.test(line)) return line
+  }
+
+  return undefined
+}
+
+/**
  * The steps live as <br>-separated lines in a single block, mixed with the
  * labelled metadata. Keep the prose lines, drop the labels, and cap the result:
  * this is the site's text, quoted in the app, not something to store.
@@ -371,6 +423,9 @@ const DOWNLOAD_NOISE = /^(?:скачать|download|пароль\s+един|не
  */
 function isStepLine(line: string): boolean {
   if (METADATA_LABELS.test(line) || DOWNLOAD_NOISE.test(line)) return false
+  // A page with no "Как запускать" heading reads from the top, where the
+  // closed-guide notice sits; it is an announcement, not a step.
+  if (CLOSED_NOTICE.test(line)) return false
   if (MODES_SECTION.test(line) || MODE_COUNTER.test(line)) return false
   return line.length >= 12 || (line.length >= 4 && line.endsWith(':'))
 }
@@ -497,34 +552,57 @@ function findLaunchExecutable(instructions: string[]): string | undefined {
   return undefined
 }
 
-/** Reads "<label>: <value>" lines, which survive layout changes. */
+/**
+ * Reads "<label>: <value>" lines, which survive layout changes. These values are
+ * dates, so the match ends where the digits and their separators do: on an
+ * English page the next label follows in Latin letters, and a wider class read
+ * "08.09.2026Play" back as the release date.
+ */
 function findLabelled($: cheerio.CheerioAPI, labels: string[]): string | undefined {
-  const text = cleanText($('.full-story-content, article, #dle-content').first().text())
+  const scope = $('.full-story-content, article, #dle-content').first()
+  if (scope.length === 0) return undefined
+
+  const candidates = [...blockLines(scope[0]).map(collapseRepeat), cleanText(scope.text())]
 
   for (const label of labels) {
-    const match = new RegExp(`${label}\\s*:?\\s*([0-9][0-9A-Za-z._/\\-]*)`, 'i').exec(text)
-    if (match?.[1]) return match[1]
+    const pattern = new RegExp(`${label}\\s*:?\\s*([0-9][0-9./\\-]*)`, 'i')
+    for (const candidate of candidates) {
+      const match = pattern.exec(candidate)
+      if (match?.[1]) return match[1]
+    }
   }
 
   return undefined
 }
 
 /**
- * The page states the version as a labelled line ("Версия игры: 1.0.266"), which
- * is far more stable than the element it happens to sit in.
+ * The page states the version as a labelled line, which is far more stable than
+ * the element it happens to sit in. What follows the label is not always a
+ * number: "Версия игры: Build 02092026" is as common as "Версия игры: 1.0.266",
+ * and reading only a digit-first token found nothing on those pages.
+ *
+ * So the whole rest of the line is handed to the launcher's own version
+ * normaliser — the one the library and the download flow already use, which
+ * knows those shapes and drops the caption of whatever button the template ran
+ * into the value ("1.0.0Скачать"). Reading the same string as the rest of the
+ * launcher also keeps the store's version comparable with the installed one.
  */
-export function findVersion($: cheerio.CheerioAPI): string | undefined {
-  // Stop at the first character that cannot be part of a version: the page
-  // often runs the next word straight into it ("1.0.0Скачать").
-  const labels = [/Версия\s+игры\s*:?\s*v?([0-9][0-9A-Za-z._\-]*)/i, /Game\s+version\s*:?\s*v?([0-9][0-9A-Za-z._\-]*)/i]
+const VERSION_LABEL = /(?:Версия\s+игры|Game\s+version|Версия|Version)\s*:?\s*(.{0,80})/i
 
-  const scopeText = cleanText($('.full-story-content, article, #dle-content').first().text())
-  for (const label of labels) {
-    const match = scopeText.match(label)
-    if (match?.[1]) return match[1].trim()
+export function findVersion($: cheerio.CheerioAPI): string | undefined {
+  const scope = $('.full-story-content, article, #dle-content').first()
+  if (scope.length === 0) return undefined
+
+  // Lines first: on the page the label and its value share one line, while the
+  // flat text of the whole block glues the next element's text to the value.
+  const candidates = [...blockLines(scope[0]).map(collapseRepeat), cleanText(scope.text())]
+
+  for (const candidate of candidates) {
+    const value = VERSION_LABEL.exec(candidate)?.[1]
+    const version = sanitizeVersionText(value)
+    // A label with no version after it reads back as the prose that followed.
+    if (version && version.length >= 3 && /\d/.test(version)) return version
   }
 
-  // Last resort: a version-looking token next to a "version" word.
-  const near = scopeText.match(/(верси|version)[^\d]{0,20}(\d+\.[\w.\-]+)/i)
-  return near?.[2]
+  return undefined
 }

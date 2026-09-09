@@ -89,6 +89,80 @@ check(
 )
 check((realGame.videoUrl || '').includes('KG55MXH8cME'), 'finds the trailer', realGame.videoUrl)
 
+console.log('\nversion written as a build number')
+const buildVersion = parseGamePage(
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'game-build-version.html'), 'utf8'),
+  'https://online-fix.me/games/officialservers/18224-wheelmates-po-seti.html'
+)
+
+check(buildVersion.version === 'Build 02092026', 'reads a version that is not a number', buildVersion.version)
+check(buildVersion.releaseDate === '01.09.2026', 'the release date is not read as the version', buildVersion.releaseDate)
+check(buildVersion.launchExecutable === 'LyraGame.exe', 'still reads the binary the steps name', buildVersion.launchExecutable)
+
+const versionPage = (line) =>
+  `<!doctype html><html><body><div id="dle-content"><article><h1>Jogo</h1>` +
+  `<div class="full-story-content"><div itemprop="articleBody">${line}` +
+  `<a href="https://uploads.online-fix.me:2053/torrents/X/">Скачать Torrent</a></div></div>` +
+  `</article></div></body></html>`
+
+const versionOf = (line) => parseGamePage(versionPage(line), 'https://online-fix.me/1-x.html').version
+
+check(versionOf('<b>Game version: 1.0.0.69333</b>') === '1.0.0.69333', 'reads the English label', versionOf('<b>Game version: 1.0.0.69333</b>'))
+check(versionOf('<b>Версия игры:</b>1.0.266') === '1.0.266', 'reads a value glued to the label', versionOf('<b>Версия игры:</b>1.0.266'))
+check(versionOf('<b>Версия игры: v1.2.3-beta</b>') === 'v1.2.3-beta', 'keeps a prefixed, suffixed version', versionOf('<b>Версия игры: v1.2.3-beta</b>'))
+check(versionOf('<b>Игра через:</b> Steam') === undefined, 'no labelled version means none', versionOf('<b>Игра через:</b> Steam'))
+check(versionOf('<b>Версия игры:</b> уточняется') === undefined, 'prose after the label is not a version', versionOf('<b>Версия игры:</b> уточняется'))
+
+console.log('\nretired game page')
+const closed = parseGamePage(
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'game-closed.html'), 'utf8'),
+  'https://online-fix.me/games/officialservers/18232-halloween-the-game-online.html'
+)
+
+check(
+  /Руководство закрыто/.test(closed.unavailableNotice || ''),
+  'reads the notice that the guide was closed',
+  closed.unavailableNotice
+)
+check(
+  (closed.torrentUrl || '').includes('/torrents/'),
+  'the download buttons are still on the page, which is why the notice matters',
+  closed.torrentUrl
+)
+check(
+  !(closed.instructions || []).some((line) => /закрыт|покупайте/i.test(line)),
+  'the notice is not read back as a step',
+  closed.instructions
+)
+check(realGame.unavailableNotice === undefined, 'a live page carries no notice', realGame.unavailableNotice)
+check(closed.version === '1.0.0.69333', 'reads the version through the English label', closed.version)
+check(closed.releaseDate === '08.09.2026', 'reads the date behind the "Game release" label', closed.releaseDate)
+
+const editedPage = (reason, body) =>
+  `<!doctype html><html><body><div id="dle-content"><article><h1>Jogo</h1>` +
+  `<div class="lightedited"><div class="edited-block">Обновлено: Вчера, 13:22. Причина: ${reason}</div></div>` +
+  `<div class="full-story-content"><div itemprop="articleBody">${body}</div></div>` +
+  `</article></div></body></html>`
+
+const noticeOf = (reason, body) =>
+  parseGamePage(editedPage(reason, body), 'https://online-fix.me/1-x.html').unavailableNotice
+
+check(
+  noticeOf('Обновлено до версии 1.2', 'Запускаем игру через Game.exe.') === undefined,
+  'an ordinary edit reason is not a closure',
+  noticeOf('Обновлено до версии 1.2', 'Запускаем игру через Game.exe.')
+)
+check(
+  noticeOf('Обновлено до версии 1.2', 'Тема закрыта, играйте в другие игры.') === 'Тема закрыта, играйте в другие игры.',
+  'the body notice is found even when the edit reason says nothing',
+  noticeOf('Обновлено до версии 1.2', 'Тема закрыта, играйте в другие игры.')
+)
+check(
+  noticeOf('The guide is closed, buy the game.', 'Launch the game using Game.exe.') === 'The guide is closed, buy the game.',
+  'reads the English wording from the edit reason',
+  noticeOf('The guide is closed, buy the game.', 'Launch the game using Game.exe.')
+)
+
 console.log('\ngame page instructions')
 const withSteps = parseGamePage(
   fs.readFileSync(path.join(__dirname, 'fixtures', 'game-instructions.html'), 'utf8'),
