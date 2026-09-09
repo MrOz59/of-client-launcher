@@ -196,6 +196,18 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # The other two jobs cache this; without it the 113 MB Electron zip is
+      # pulled from GitHub on every run, and a reset connection sinks the job.
+      # restore-keys so a lockfile change does not force the download again.
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: arch-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            arch-electron-
       - name: Setup Python 3.12 via pyenv
         run: |
           export PYENV_ROOT="/root/.pyenv"
@@ -223,7 +235,15 @@ jobs:
           npm run build:notification-overlay:linux
           node scripts/patch-electron-builder.js
           npm run build
-          npx electron-builder --linux pacman --publish never
+          # Packaging downloads from the release CDN, which resets connections
+          # often enough to matter; the build above is already done by then, so
+          # a retry costs seconds rather than the whole job.
+          for attempt in 1 2 3; do
+            npx electron-builder --linux pacman --publish never && exit 0
+            echo "::warning::electron-builder failed (attempt ${attempt}/3)"
+            sleep $((attempt * 20))
+          done
+          exit 1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
