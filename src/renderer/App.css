@@ -5692,10 +5692,14 @@ textarea:focus-visible,
 .store-next-notice.error { border-color: rgba(239, 68, 68, 0.38); background: linear-gradient(135deg, rgba(55, 22, 25, 0.45), rgba(20, 16, 18, 0.98)); }
 .store-next-notice > svg { flex: 0 0 auto; color: var(--muted); }
 .store-next-notice.error > svg { color: #f87171; }
+.store-next-notice.warning { border-color: rgba(245, 158, 11, 0.4); background: linear-gradient(135deg, rgba(58, 42, 16, 0.5), rgba(21, 18, 14, 0.98)); }
+.store-next-notice.warning > svg { color: #fbbf24; }
 .store-next-notice > div:not(.store-next-notice-actions) { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .store-next-notice strong { font-size: 13px; }
 .store-next-notice span { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .store-next-notice-actions { display: flex; flex: 0 0 auto; flex-direction: row; gap: 7px; }
+/* The site's own wording, quoted under our summary of it. */
+.store-next-notice-quote { font-style: italic; opacity: 0.85; }
 
 .store-next-empty {
   display: flex;
@@ -5915,7 +5919,12 @@ textarea:focus-visible,
 .store-next-shots button:hover, .store-next-shots button[aria-pressed="true"] { opacity: 1; border-color: #a78bfa; }
 .store-next-shots img { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 5px; object-fit: cover; }
 .store-next-gallery-preview { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; max-height: 42vh; margin-bottom: 10px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #08080b; }
-.store-next-gallery-preview > img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.store-next-gallery-preview > img,
+.store-next-gallery-preview > video { width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; }
+/* The trailer's thumbnail carries a play badge over it. */
+.store-next-shots button.store-next-shot-video { position: relative; }
+.store-next-shots button.store-next-shot-video > svg { position: absolute; inset: 0; margin: auto; color: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.85)); pointer-events: none; }
+.store-next-shot-blank { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 5px; background: #111; }
 .store-next-gallery-preview > button { display: grid; place-items: center; position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 44px; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; color: #fff; background: rgba(0,0,0,.7); cursor: pointer; }
 .store-next-gallery-prev { left: 10px; }
 .store-next-gallery-next { right: 10px; }

@@ -70,6 +70,7 @@
     "cheerio": "^1.0.0-rc.12",
     "electron-is-dev": "^2.0.0",
     "googleapis": "^118.0.0",
+    "hls.js": "^1.7.2",
     "lucide-react": "^0.560.0",
     "node-7z": "^2.0.5",
     "node-unrar-js": "^2.0.2",

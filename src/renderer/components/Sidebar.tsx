@@ -1,6 +1,7 @@
 import React from 'react'
 import { Store, Library, Download, Settings, User, ChevronLeft, ChevronRight, Wrench, Sparkles } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { CLASSIC_STORE_ENABLED } from '../features'
 
 type Tab = 'store' | 'store-next' | 'library' | 'downloads' | 'tools' | 'settings'
 
@@ -64,17 +65,19 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
       </div>
 
       <nav className="sidebar-nav">
-        <div
-          className={`nav-item ${activeTab === 'store' ? 'active' : ''}`}
-          onClick={() => onTabChange('store')}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('store') } }}
-          role="button"
-          tabIndex={0}
-          title={t('app.tabs.store')}
-        >
-          <Store />
-          <span>{t('app.tabs.store')}</span>
-        </div>
+        {CLASSIC_STORE_ENABLED && (
+          <div
+            className={`nav-item ${activeTab === 'store' ? 'active' : ''}`}
+            onClick={() => onTabChange('store')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabChange('store') } }}
+            role="button"
+            tabIndex={0}
+            title={t('app.tabs.store')}
+          >
+            <Store />
+            <span>{t('app.tabs.store')}</span>
+          </div>
+        )}
 
         <div
           className={`nav-item ${activeTab === 'store-next' ? 'active' : ''}`}
@@ -84,7 +87,7 @@ export default function Sidebar({ activeTab, onTabChange, isLoggedIn, onLoginCli
           tabIndex={0}
           title={t('app.tabs.storeNext')}
         >
-          <Sparkles />
+          <Store />
           <span>{t('app.tabs.storeNext')}</span>
         </div>
 

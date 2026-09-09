@@ -8,11 +8,16 @@ import SettingsTab from './components/SettingsTab'
 import ToolsTab from './components/ToolsTab'
 import LoginOverlay from './components/LoginOverlay'
 import { useI18n } from './i18n'
+import { CLASSIC_STORE_ENABLED } from './features'
 import { useToast } from './components/ToastHost'
 import { Download, ExternalLink, X } from 'lucide-react'
 import './App.css'
 
 type Tab = 'store' | 'store-next' | 'library' | 'downloads' | 'tools' | 'settings'
+
+/** With the classic store hidden, the native one is where the launcher opens. */
+const DEFAULT_TAB: Tab = CLASSIC_STORE_ENABLED ? 'store' : 'store-next'
+
 type LauncherUpdateStatus = {
   currentVersion: string
   latestVersion?: string
@@ -26,7 +31,7 @@ type LauncherUpdateStatus = {
 export default function App() {
   const { t } = useI18n()
   const toast = useToast()
-  const [activeTab, setActiveTab] = useState<Tab>('store')
+  const [activeTab, setActiveTab] = useState<Tab>(DEFAULT_TAB)
   const [settingsDirty, setSettingsDirty] = useState(false)
   // Listeners registered once would otherwise capture a stale dirty flag.
   const canLeaveSettingsRef = useRef<(tab: Tab) => boolean>(() => true)
@@ -76,8 +81,10 @@ export default function App() {
     // Listen for navigation events from tray menu
     const offNavigateTab = window.electronAPI.onNavigateToTab?.((tab: string) => {
       if (tab === 'store' || tab === 'library' || tab === 'downloads' || tab === 'tools' || tab === 'settings') {
-        if (!canLeaveSettingsRef.current(tab as Tab)) return
-        setActiveTab(tab as Tab)
+        // A request for the hidden classic store lands on the store that is shown.
+        const target = (tab === 'store' && !CLASSIC_STORE_ENABLED ? DEFAULT_TAB : tab) as Tab
+        if (!canLeaveSettingsRef.current(target)) return
+        setActiveTab(target)
       }
     })
 
@@ -269,7 +276,7 @@ export default function App() {
         onLoggedIn={() => {
           setLoginOverlayOpen(false)
           setIsLoggedIn(true)
-          setActiveTab('store')
+          setActiveTab(DEFAULT_TAB)
           setStoreWebviewResetKey((k) => k + 1)
         }}
       />
@@ -280,7 +287,16 @@ export default function App() {
         onLoginClick={handleLoginClick}
         onLogoutClick={handleLogoutClick}
         hasDownloadActivity={hasDownloadActivity}
-        onProfileNavigate={(url) => { setStoreTargetUrl(url); handleTabChange('store') }}
+        onProfileNavigate={(url) => {
+          // The profile page lives on the site, and without the classic tab
+          // there is no webview left in the launcher to open it in.
+          if (!CLASSIC_STORE_ENABLED) {
+            window.electronAPI.openExternal(url)
+            return
+          }
+          setStoreTargetUrl(url)
+          handleTabChange('store')
+        }}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebar}
       />

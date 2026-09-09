@@ -166,6 +166,7 @@ declare global {
           directUrl?: string
           instructions?: string[]
           description?: string
+          unavailableNotice?: string
         }
         error?: string
         errorCode?: string
@@ -194,6 +195,7 @@ declare global {
           developers?: string[]
           publishers?: string[]
           releaseDate?: string
+          trailer?: { name?: string; thumbnail?: string; hls?: string; webm?: string; mp4?: string }
         }
         error?: string
         errorCode?: string

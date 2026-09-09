@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertCircle, BookOpen, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Images, Languages, Loader2, PlayCircle, RotateCcw, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, BookOpen, Check, ChevronLeft, ChevronRight, Download, Images, Languages, Loader2, PlayCircle, RotateCcw, X } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
 import { ipcErrorText } from '../../shared/ipcErrors'
@@ -17,6 +17,7 @@ type StoreGameDetails = {
   directUrl?: string
   instructions?: string[]
   description?: string
+  unavailableNotice?: string
 }
 
 type StoreGameMetadata = {
@@ -32,7 +33,16 @@ type StoreGameMetadata = {
   developers?: string[]
   publishers?: string[]
   releaseDate?: string
+  trailer?: { name?: string; thumbnail?: string; hls?: string; webm?: string; mp4?: string }
 }
+
+/**
+ * What the gallery shows. The trailer comes first: it is the one thing on this
+ * screen the player has not seen yet.
+ */
+type GalleryItem =
+  | { kind: 'trailer'; label: string; poster?: string; hls?: string; webm?: string; mp4?: string }
+  | { kind: 'screenshot'; url: string }
 
 /**
  * The game page, composed rather than mirrored.
@@ -45,13 +55,11 @@ type StoreGameMetadata = {
 export default function StoreGameDialog({
   item,
   libraryEntry,
-  onClose,
-  onOpenInClassicStore
+  onClose
 }: {
   item: StoreItem
   libraryEntry?: LibraryEntry
   onClose: () => void
-  onOpenInClassicStore: (url: string) => void
 }) {
   const { t, language } = useI18n()
   const toast = useToast()
@@ -143,15 +151,33 @@ export default function StoreGameDialog({
     }
   }
 
+  // The site retires a guide by adding a line to the page, not by taking the
+  // article or its download buttons down: say so before anyone downloads it.
+  const unavailableNotice = details?.unavailableNotice
   const hero = metadata?.backgroundImage || metadata?.headerImage || item.imageUrl || details?.imageUrl
   const description = metadata?.description || details?.description
   const instructions = (!showOriginal && translatedInstructions) || details?.instructions || []
   const screenshots = (metadata?.screenshots || []).filter((shot) => !brokenShots.has(shot)).slice(0, 6)
-  const shotIndex = Math.min(selectedShot, Math.max(0, screenshots.length - 1))
+  const trailer = metadata?.trailer
+  const gallery: GalleryItem[] = [
+    ...(trailer?.hls || trailer?.webm || trailer?.mp4
+      ? [{
+          kind: 'trailer' as const,
+          label: trailer.name || t('storeNext.detail.trailer'),
+          poster: trailer.thumbnail,
+          hls: trailer.hls,
+          webm: trailer.webm,
+          mp4: trailer.mp4
+        }]
+      : []),
+    ...screenshots.map((url) => ({ kind: 'screenshot' as const, url }))
+  ]
+  const shotIndex = Math.min(selectedShot, Math.max(0, gallery.length - 1))
+  const current = gallery[shotIndex]
   const tabs = [
     { id: 'overview', label: t('storeNext.detail.overview'), icon: BookOpen },
     { id: 'instructions', label: t('storeNext.detail.howTo'), icon: Languages },
-    { id: 'gallery', label: t('storeNext.detail.gallery'), icon: Images }
+    { id: 'gallery', label: t('storeNext.detail.media'), icon: Images }
   ]
   const selectTab = (tab: string) => {
     setActiveTab(tab)
@@ -227,6 +253,17 @@ export default function StoreGameDialog({
             </div>
           )}
 
+          {unavailableNotice && (
+            <div className="store-next-notice warning" role="alert">
+              <AlertTriangle size={15} aria-hidden="true" />
+              <div>
+                <strong>{t('storeNext.detail.unavailable')}</strong>
+                <span>{t('storeNext.detail.unavailableHint')}</span>
+                <span className="store-next-notice-quote" lang={/[\u0400-\u04ff]/.test(unavailableNotice) ? 'ru' : undefined}>“{unavailableNotice}”</span>
+              </div>
+            </div>
+          )}
+
           <section id="store-detail-panel-overview" role="tabpanel" aria-labelledby="store-detail-tab-overview" hidden={activeTab !== 'overview'} tabIndex={0}>
           <h4 className="store-next-section-title">{t('storeNext.detail.about')}</h4>
           {description
@@ -249,20 +286,41 @@ export default function StoreGameDialog({
           </section>
 
           <section id="store-detail-panel-gallery" role="tabpanel" aria-labelledby="store-detail-tab-gallery" hidden={activeTab !== 'gallery'} tabIndex={0}>
-            {screenshots.length > 0 ? (
+            {current ? (
               <div className="store-next-gallery">
                 <div className="store-next-gallery-preview">
-                  <img src={screenshots[shotIndex]} alt={t('storeNext.detail.screenshot', { title: item.title })} onError={() => setBrokenShots((current) => new Set([...current, screenshots[shotIndex]]))} />
-                  {screenshots.length > 1 && <>
-                    <button className="store-next-gallery-prev" onClick={() => setSelectedShot((shotIndex + screenshots.length - 1) % screenshots.length)} aria-label={t('storeNext.detail.previousScreenshot')}><ChevronLeft size={22} /></button>
-                    <button className="store-next-gallery-next" onClick={() => setSelectedShot((shotIndex + 1) % screenshots.length)} aria-label={t('storeNext.detail.nextScreenshot')}><ChevronRight size={22} /></button>
+                  {current.kind === 'trailer' ? (
+                    <TrailerPlayer trailer={current} />
+                  ) : (
+                    <img
+                      src={current.url}
+                      alt={t('storeNext.detail.screenshot', { title: item.title })}
+                      onError={() => setBrokenShots((broken) => new Set([...broken, (current as { url: string }).url]))}
+                    />
+                  )}
+                  {gallery.length > 1 && <>
+                    <button className="store-next-gallery-prev" onClick={() => setSelectedShot((shotIndex + gallery.length - 1) % gallery.length)} aria-label={t('storeNext.detail.previousScreenshot')}><ChevronLeft size={22} /></button>
+                    <button className="store-next-gallery-next" onClick={() => setSelectedShot((shotIndex + 1) % gallery.length)} aria-label={t('storeNext.detail.nextScreenshot')}><ChevronRight size={22} /></button>
                   </>}
-                  <span className="store-next-gallery-count" aria-live="polite">{shotIndex + 1} / {screenshots.length}</span>
+                  <span className="store-next-gallery-count" aria-live="polite">{shotIndex + 1} / {gallery.length}</span>
                 </div>
                 <div className="store-next-shots" role="group" aria-label={t('storeNext.detail.gallery')}>
-                  {screenshots.map((shot, index) => (
-                    <button key={shot} aria-pressed={shotIndex === index} aria-label={t('storeNext.detail.selectScreenshot', { index: index + 1 })} onClick={() => setSelectedShot(index)}>
-                      <img src={shot} alt="" loading="lazy" decoding="async" />
+                  {gallery.map((entry, index) => (
+                    <button
+                      key={entry.kind === 'trailer' ? 'trailer' : entry.url}
+                      className={entry.kind === 'trailer' ? 'store-next-shot-video' : undefined}
+                      aria-pressed={shotIndex === index}
+                      aria-label={entry.kind === 'trailer' ? entry.label : t('storeNext.detail.selectScreenshot', { index: index + 1 })}
+                      onClick={() => setSelectedShot(index)}
+                    >
+                      {entry.kind === 'trailer'
+                        ? <>
+                            {entry.poster
+                              ? <img src={entry.poster} alt="" loading="lazy" decoding="async" />
+                              : <span className="store-next-shot-blank" />}
+                            <PlayCircle size={20} aria-hidden="true" />
+                          </>
+                        : <img src={entry.url} alt="" loading="lazy" decoding="async" />}
                     </button>
                   ))}
                 </div>
@@ -326,9 +384,13 @@ export default function StoreGameDialog({
         </div>
 
         <div className="modal-footer store-next-detail-actions">
-          {!loading && !details?.torrentUrl && <p className="store-next-download-hint">{t('storeNext.detail.noTorrentHint')}</p>}
+          {!loading && (unavailableNotice || !details?.torrentUrl) && (
+            <p className="store-next-download-hint">
+              {t(unavailableNotice ? 'storeNext.detail.unavailableDownloadHint' : 'storeNext.detail.noTorrentHint')}
+            </p>
+          )}
           <button
-            className="settings-btn primary"
+            className={`settings-btn ${unavailableNotice ? 'secondary' : 'primary'}`}
             onClick={startDownload}
             disabled={loading || downloading || !details?.torrentUrl}
             title={!loading && !details?.torrentUrl ? t('storeNext.detail.noTorrent') : undefined}
@@ -338,29 +400,66 @@ export default function StoreGameDialog({
               ? t('storeNext.detail.downloading')
               : libraryEntry?.hasUpdate ? t('storeNext.detail.update') : t('storeNext.detail.download')}
           </button>
-
-          {details?.directUrl && (
-            <button className="settings-btn secondary" onClick={() => window.electronAPI.openExternal(details.directUrl!)}>
-              <ExternalLink size={15} aria-hidden="true" />
-              {t('storeNext.detail.directDownload')}
-            </button>
-          )}
-
-          {details?.videoUrl && (
-            <button className="settings-btn ghost" onClick={() => window.electronAPI.openExternal(details.videoUrl!)}>
-              <PlayCircle size={15} aria-hidden="true" />
-              {t('storeNext.detail.trailer')}
-            </button>
-          )}
-
-          <button className="settings-btn secondary" onClick={() => { onClose(); onOpenInClassicStore(item.url) }}>
-            <ExternalLink size={15} aria-hidden="true" />
-            {t('storeNext.openClassic')}
-          </button>
         </div>
       </div>
     </div>
   )
+}
+
+/**
+ * Steam serves its trailers as an adaptive HLS stream, and Chromium plays HLS
+ * only through Media Source Extensions. hls.js does that, and is loaded on
+ * demand — the first time someone opens a trailer — so it stays out of the
+ * bundle for everyone who never does. Entries old enough to still carry a plain
+ * file play it directly, with no player to load at all.
+ */
+function TrailerPlayer({ trailer }: { trailer: Extract<GalleryItem, { kind: 'trailer' }> }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const { hls, mp4, webm, poster, label } = trailer
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    const file = mp4 || webm
+    if (!hls) {
+      if (file) video.src = file
+      return
+    }
+
+    // Where HLS plays on its own there is nothing to load.
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = hls
+      return
+    }
+
+    let player: { destroy: () => void } | null = null
+    let disposed = false
+
+    import('hls.js')
+      .then(({ default: Hls }) => {
+        if (disposed) return
+        if (!Hls.isSupported()) {
+          if (file) video.src = file
+          return
+        }
+        // The preview is a fraction of the window: 1080p would be wasted bytes.
+        const instance = new Hls({ capLevelToPlayerSize: true })
+        player = instance
+        instance.loadSource(hls)
+        instance.attachMedia(video)
+      })
+      .catch(() => {
+        if (!disposed && file) video.src = file
+      })
+
+    return () => {
+      disposed = true
+      try { player?.destroy() } catch { /* the element is going away anyway */ }
+    }
+  }, [hls, mp4, webm])
+
+  return <video ref={videoRef} controls preload="metadata" poster={poster} aria-label={label} />
 }
 
 /**

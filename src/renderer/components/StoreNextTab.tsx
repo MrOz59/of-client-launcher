@@ -19,6 +19,7 @@ import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
 import { ipcErrorText } from '../../shared/ipcErrors'
 import StoreGameDialog from './StoreGameDialog'
+import { CLASSIC_STORE_ENABLED } from '../features'
 
 /**
  * Native store (work in progress).
@@ -401,10 +402,12 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
               <RotateCcw size={14} aria-hidden="true" />
               {t('storeNext.retry')}
             </button>
-            <button className="settings-btn secondary sm" onClick={() => onOpenInClassicStore(sourceUrl || '')}>
-              <ExternalLink size={14} aria-hidden="true" />
-              {t('storeNext.openClassic')}
-            </button>
+            {CLASSIC_STORE_ENABLED && (
+              <button className="settings-btn secondary sm" onClick={() => onOpenInClassicStore(sourceUrl || '')}>
+                <ExternalLink size={14} aria-hidden="true" />
+                {t('storeNext.openClassic')}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -416,10 +419,12 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
             <strong>{t('storeNext.empty.title')}</strong>
             <span>{t('storeNext.empty.description')}</span>
           </div>
-          <button className="settings-btn secondary sm" onClick={() => onOpenInClassicStore(sourceUrl || '')}>
-            <ExternalLink size={14} aria-hidden="true" />
-            {t('storeNext.openClassic')}
-          </button>
+          {CLASSIC_STORE_ENABLED && (
+            <button className="settings-btn secondary sm" onClick={() => onOpenInClassicStore(sourceUrl || '')}>
+              <ExternalLink size={14} aria-hidden="true" />
+              {t('storeNext.openClassic')}
+            </button>
+          )}
         </div>
       )}
 
@@ -485,14 +490,16 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
                 <button className="settings-btn secondary sm store-next-details-button" onClick={() => openDetails(item)}>
                   {t('storeNext.card.details')}
                 </button>
-                <button
-                  className="store-next-card-external"
-                  onClick={() => onOpenInClassicStore(item.url)}
-                  aria-label={t('storeNext.card.classic', { title: item.title })}
-                  title={t('storeNext.openClassic')}
-                >
-                  <ExternalLink size={13} aria-hidden="true" />
-                </button>
+                {CLASSIC_STORE_ENABLED && (
+                  <button
+                    className="store-next-card-external"
+                    onClick={() => onOpenInClassicStore(item.url)}
+                    aria-label={t('storeNext.card.classic', { title: item.title })}
+                    title={t('storeNext.openClassic')}
+                  >
+                    <ExternalLink size={13} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
           </article>
@@ -512,7 +519,6 @@ export default function StoreNextTab({ onOpenInClassicStore }: StoreNextTabProps
           item={selected}
           libraryEntry={libraryEntryFor(selected)}
           onClose={() => setSelected(null)}
-          onOpenInClassicStore={onOpenInClassicStore}
         />
       )}
 
