@@ -3,14 +3,14 @@
   "schemaVersion": 1,
   "id": "subnautica-nitrox",
   "title": "Subnautica + Nitrox (multiplayer)",
-  "description": "Faz o Nitrox carregar de verdade. O mod nao injeta por proxy DLL: quem carrega o NitroxPatcher e o proprio launcher do mod, um app .NET 9. Sem o runtime no prefixo ele nao inicia e o jogo sobe limpo. Este fix instala o .NET Desktop Runtime 9 no prefixo e aponta o lancamento para o launcher do Nitrox.",
-  "author": "",
+  "description": "Get Nitrox to load properly. The mod doesn't load via DLL proxy; instead, it uses NitroxPatcher and the mod's own launcher—a .NET 9 application. Without the runtime present in the prefix, it won't start, and the game launches in its vanilla state. This fix installs the .NET Desktop Runtime 9 into the prefix and configures the launch sequence to use the Nitrox launcher.",
+  "author": "MrOz59",
   "createdAt": "2026-09-06T00:00:00.000Z",
   "game": {
     "id": "18121",
     "title": "Subnautica",
     "url": "https://online-fix.me/games/survival/18121-subnautica-po-seti.html",
-    "installedVersion": null
+    "installedVersion": "Build 03102025"
   },
   "proton": {
     "runtimeName": "Proton-GE Latest",
@@ -25,12 +25,12 @@
   },
   "launchExecutable": "Nitrox.Launcher.exe",
   "notes": [
-    "Instale os componentes ANTES de usar: aplicar o fix so troca o executavel e as opcoes. O botao de instalar componentes aparece logo depois de aplicar, na mesma tela.",
-    "dotnetdesktop9 = .NET Desktop Runtime 9. O apphost do Nitrox.Launcher.exe pede explicitamente o Desktop Runtime; ele e superset do Microsoft.NETCore.App que o runtimeconfig declara, entao atende aos dois casos.",
-    "O Unity so empacota as facades que o proprio jogo referencia. O Nitrox referencia System.Net.Primitives e o Subnautica nao, e o lib/net472 do Nitrox oficial tambem nao a traz. No Windows ela vem do .NET Framework do sistema; num prefixo Proton nao existe, entao o fix copia a do wine-mono do runtime.",
-    "O executavel passa a ser Nitrox/Nitrox.Launcher.exe. Lancar o Subnautica.exe direto sempre abre o jogo sem o mod.",
-    "O README do Nitrox pede para nao instalar o mod dentro da pasta do jogo, mas este repack ja vem assim. Se sobrar comportamento estranho, essa e a primeira coisa a investigar.",
-    "Injecao em processo Mono sob Wine nao e garantida: este fix destrava o launcher do mod subir, que e onde o problema estava."
+    "Install the components BEFORE use: applying the fix only replaces the executable and the options. The 'install components' button appears right after applying the fix, on the same screen.",
+    "dotnetdesktop9 = .NET Desktop Runtime 9. The Nitrox.Launcher.exe apphost explicitly requires the Desktop Runtime; since it is a superset of the Microsoft.NETCore.App declared in the runtimeconfig, it satisfies both requirements.",
+    "Unity only packages the facades referenced by the game itself. Nitrox references System.Net.Primitives while Subnautica does not, and the official Nitrox lib/net472 folder doesn't include it either. On Windows, it comes from the system's .NET Framework; since it doesn't exist in a Proton prefix, the fix copies it from the runtime's wine-mono.",
+    "The executable is now Nitrox/Nitrox.Launcher.exe. Launching Subnautica.exe directly will always open the game without the mod.",
+    "The Nitrox README advises against installing the mod inside the game folder, but this repack comes set up that way. If any strange behavior occurs, that is the first thing to investigate.",
+    "Process injection into Mono applications under Wine isn't guaranteed: this fix allows the mod launcher to start up, which is where the problem lay."
   ],
   "runtimeAssemblies": [
     {
