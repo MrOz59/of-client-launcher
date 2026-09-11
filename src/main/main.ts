@@ -54,7 +54,7 @@ if (process.platform === 'linux') {
   }
 }
 
-import { isAllowedTorrentUrl, isAllowedWebviewUrl } from '../shared/allowedHosts'
+import { isAllowedTorrentUrl, isAllowedWebviewUrl, isLoginPopupUrl } from '../shared/allowedHosts'
 import * as drive from './drive'
 import * as cloudSaves from './cloudSaves'
 import { appendCloudSavesHistory, listCloudSavesHistory, type CloudSavesHistoryEntry } from './cloudSavesHistory'
@@ -1318,9 +1318,34 @@ app.whenReady().then(async () => {
         return { action: 'deny' }
       }
 
-      // Allow other popups (login windows, etc) - be fair to the site
-      console.log('[PopupBlocker] Allowing popup:', url.substring(0, 80))
-      return { action: 'deny' } // Still deny to prevent external browser, but log it
+      // The site's Google/Discord sign-in is a window.open popup that reports
+      // back through window.opener, so it has to be a real child window.
+      if (isLoginPopupUrl(url)) {
+        console.log('[PopupBlocker] Opening login popup:', url.substring(0, 80))
+        return {
+          action: 'allow',
+          createWindow: (options) => {
+            const popup = new BrowserWindow({
+              ...options,
+              width: Math.max(options.width ?? 0, 500),
+              height: Math.max(options.height ?? 0, 700),
+              parent: mainWindow ?? undefined,
+              autoHideMenuBar: true
+            })
+            // Google refuses to sign in from a browser that announces itself as Electron.
+            popup.webContents.setUserAgent(
+              popup.webContents.getUserAgent()
+                .replace(/ Electron\/\S+/, '')
+                .replace(/ \S+\/\S+(?= Chrome\/)/, '')
+            )
+            return popup.webContents
+          }
+        }
+      }
+
+      // Any other popup would land in an external browser; drop it.
+      console.log('[PopupBlocker] Denied popup:', url.substring(0, 80))
+      return { action: 'deny' }
     })
 
     contents.on('new-window' as any, (event: Electron.Event, url: string) => {

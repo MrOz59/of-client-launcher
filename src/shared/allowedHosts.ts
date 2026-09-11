@@ -35,12 +35,31 @@ export function isOnlineFixHost(host: string | null | undefined): boolean {
   return STORE_DOMAINS.some((domain) => matchesDomain(h, domain))
 }
 
+function isLoginHost(h: string): boolean {
+  return LOGIN_HOSTS.includes(h) || LOGIN_SUFFIXES.some((suffix) => h.endsWith(suffix))
+}
+
 export function isAllowedWebviewHost(host: string | null | undefined): boolean {
   const h = normalizeHost(host)
   if (!h) return false
-  if (isOnlineFixHost(h)) return true
-  if (LOGIN_HOSTS.includes(h)) return true
-  return LOGIN_SUFFIXES.some((suffix) => h.endsWith(suffix))
+  return isOnlineFixHost(h) || isLoginHost(h)
+}
+
+/**
+ * The site signs in through a popup — its `reggerPopup` handler calls
+ * window.open('/auth.php?p=google&m=popup') — which then redirects to the
+ * provider. These are the only popups the launcher opens as real windows.
+ */
+export function isLoginPopupUrl(raw?: string | null): boolean {
+  try {
+    const parsed = new URL(String(raw || '').trim())
+    if (parsed.protocol !== 'https:') return false
+    const host = normalizeHost(parsed.hostname)
+    if (isOnlineFixHost(host)) return parsed.pathname === '/auth.php'
+    return isLoginHost(host)
+  } catch {
+    return false
+  }
 }
 
 export function isAllowedWebviewUrl(raw?: string | null): boolean {

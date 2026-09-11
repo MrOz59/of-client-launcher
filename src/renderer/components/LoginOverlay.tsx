@@ -515,22 +515,8 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
     wv.addEventListener('did-navigate', onLoaded as any)
     wv.addEventListener('did-stop-loading', onLoaded)
 
-    const onNewWindow = (e: any) => {
-      const url = String(e?.url || '')
-      console.log('[LoginOverlay] New window request:', url)
-      if (!isAllowedLoginUrl(url)) {
-        console.log('[LoginOverlay] Blocked new window (not allowed)')
-        e.preventDefault?.()
-        return
-      }
-      e.preventDefault?.()
-      try {
-        console.log('[LoginOverlay] Redirecting webview to:', url)
-        wv.loadURL(url)
-      } catch (err) {
-        console.warn('[LoginOverlay] Failed to load URL:', err)
-      }
-    }
+    // The site's sign-in popups (window.open) are opened by the main process's
+    // window open handler; <webview> has had no 'new-window' event since Electron 22.
     const onWillNavigate = (e: any) => {
       const url = String(e?.url || '')
       console.log('[LoginOverlay] Will navigate to:', url)
@@ -539,7 +525,6 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
         e.preventDefault?.()
       }
     }
-    wv.addEventListener('new-window', onNewWindow as any)
     wv.addEventListener('will-navigate', onWillNavigate as any)
 
     // Poll while open in case the site is SPA-ish
@@ -553,7 +538,6 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
       try { wv.removeEventListener('did-finish-load', onLoaded) } catch {}
       try { wv.removeEventListener('did-navigate', onLoaded as any) } catch {}
       try { wv.removeEventListener('did-stop-loading', onLoaded) } catch {}
-      try { wv.removeEventListener('new-window', onNewWindow as any) } catch {}
       try { wv.removeEventListener('will-navigate', onWillNavigate as any) } catch {}
     }
   }, [open, checkLoggedIn, runPasswordAttempt, t])
@@ -667,33 +651,20 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
 
         <div className="login-overlay__body">
           {showWebview ? (
-            <>
-              <div className="login-overlay__webview-header">
-                <button
-                  className="login-overlay__back-btn"
-                  onClick={() => {
-                    setShowWebview(false)
-                    lastIntentRef.current = null
-                  }}
-                >
-                  ← {t('login.back')}
-                </button>
-                <span className="login-overlay__webview-title">
-                  {lastIntentRef.current === 'google' ? t('login.withGoogle') : t('login.withDiscord')}
-                </span>
-              </div>
-              <webview
-                ref={(el: any) => {
-                  webviewRef.current = el
+            <div className="login-overlay__webview-header">
+              <button
+                className="login-overlay__back-btn"
+                onClick={() => {
+                  setShowWebview(false)
+                  lastIntentRef.current = null
                 }}
-                src={LOGIN_PAGE}
-                partition={STORE_PARTITION}
-                // @ts-expect-error - webview expects string attributes
-                allowpopups="true"
-                webpreferences="contextIsolation=no, nodeIntegration=no, javascript=yes"
-                className="login-overlay__webview login-overlay__webview--visible"
-              />
-            </>
+              >
+                ← {t('login.back')}
+              </button>
+              <span className="login-overlay__webview-title">
+                {lastIntentRef.current === 'google' ? t('login.withGoogle') : t('login.withDiscord')}
+              </span>
+            </div>
           ) : (
             <div className="login-overlay__form">
               <div className="login-overlay__form-title">{t('login.withPassword')}</div>
@@ -766,20 +737,21 @@ export default function LoginOverlay({ open, onClose, onLoggedIn }: Props) {
               <div className="login-overlay__note">{t('login.note')}</div>
             </div>
           )}
-          {/* Hidden webview for password login */}
-          {!showWebview && (
-            <webview
-              ref={(el: any) => {
-                webviewRef.current = el
-              }}
-              src={LOGIN_PAGE}
-              partition={STORE_PARTITION}
-              // @ts-expect-error - webview expects string attributes
-              allowpopups="true"
-              webpreferences="contextIsolation=no, nodeIntegration=no, javascript=yes"
-              className="login-overlay__webview"
-            />
-          )}
+          {/* One webview for every method, hidden for password login. Swapping in a
+              second element when Google/Discord is picked threw away the provider
+              URL triggerLogin had just loaded and showed the site's login page. */}
+          <webview
+            ref={(el: any) => {
+              webviewRef.current = el
+            }}
+            src={LOGIN_PAGE}
+            partition={STORE_PARTITION}
+            // @ts-expect-error - webview expects string attributes
+            allowpopups="true"
+            webpreferences="contextIsolation=no, nodeIntegration=no, javascript=yes"
+            className={`login-overlay__webview${showWebview ? ' login-overlay__webview--visible' : ''}`}
+          />
+
         </div>
 
         <div className="login-overlay__footer">
