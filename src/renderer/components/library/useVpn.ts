@@ -232,11 +232,13 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
     setVpnActionBusy(true)
     try {
       // First disconnect VPN
-      await window.electronAPI.vpnDisconnect?.()
+      const disconnected = await window.electronAPI.vpnDisconnect?.()
+      if (!disconnected?.success) throw new Error(disconnected?.error || t('library.vpn.disconnectFailed'))
       
       // Then leave the room on server using peerId
       if (vpnPeerId) {
-        await window.electronAPI.vpnRoomLeave?.(vpnPeerId)
+        const left = await window.electronAPI.vpnRoomLeave?.(vpnPeerId)
+        if (!left?.success) throw new Error(left?.error || t('library.vpn.leaveFailed'))
       }
       
       // Reset room state
@@ -314,22 +316,35 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         if (cancelled) return
         if (!st?.success) { setVpnError(st?.error || t('library.vpn.statusFailed')); return }
 
-        setVpnError(null)
-        const nextStatus = { controller: st.controller || null, installed: !!st.installed, installError: st.installError || null }
+        setVpnError(st.session?.error || st.error || null)
+        const nextStatus = { controller: st.controller || null, installed: !!st.installed, installError: st.installError || null, transport: st.transport }
         const statusJson = JSON.stringify(nextStatus)
         if (statusJson !== lastStatusJson) { lastStatusJson = statusJson; setVpnStatus(nextStatus) }
 
-        const code = String(lanNetworkId || '').trim()
+        const session = st.session
+        if (session) {
+          setVpnConnected(session.connected)
+          setVpnLocalIp(session.vpnIp)
+          setVpnHostIp(session.hostIp)
+          setVpnPeerId(session.peerId)
+          setLanRoomLastCode(session.code)
+          setLanRoomCode(session.code)
+          setCurrentRoomName(session.roomName)
+          setCurrentRoomIsHost(session.vpnIp === session.hostIp)
+        } else {
+          setVpnConnected(false)
+        }
+        const code = session?.code || String(lanNetworkId || '').trim()
         if (code) {
-          const peersRes = vpnConnected && vpnPeerId
-            ? await window.electronAPI.vpnHeartbeat?.(vpnPeerId)
+          const peersRes = session
+            ? { success: true, peers: session.peers, error: session.error }
             : await window.electronAPI.vpnRoomPeers?.(code)
           if (cancelled) return
           if (peersRes?.success) {
             const nextPeers = Array.isArray(peersRes.peers) ? peersRes.peers : []
             const peersJson = JSON.stringify(nextPeers)
             if (peersJson !== lastPeersJson) { lastPeersJson = peersJson; setVpnPeers(nextPeers) }
-          } else if (vpnConnected && vpnPeerId) {
+          } else if (session) {
             setVpnError(peersRes?.error || t('library.vpn.heartbeatMissing'))
           }
         }
@@ -340,14 +355,15 @@ export function useVpn(configOpen: boolean, configTab: string, lanMode: LanMode,
         if (!cancelled) {
           setVpnLoading(false)
           if (!vpnHasLoadedRef.current) { vpnHasLoadedRef.current = true; setVpnHasLoaded(true) }
+          // Schedule after completion: a slow controller must not stack requests.
+          timer = setTimeout(refresh, 5000)
         }
       }
     }
 
     void refresh()
-    timer = setInterval(refresh, 4000)
-    return () => { cancelled = true; if (timer) clearInterval(timer) }
-  }, [configOpen, configTab, lanMode, lanNetworkId, vpnConnected, vpnPeerId, t])
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [configOpen, configTab, lanMode, lanNetworkId, t])
 
   return {
     // State

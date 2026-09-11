@@ -146,12 +146,15 @@ export interface IniField {
 }
 
 export interface VpnStatusState {
+  transport?: 'wireguard' | 'easytier'
   controller?: string | null
   installed: boolean
   installError?: string | null
 }
 
 export interface VpnPeer {
+  connection?: 'direct' | 'relay' | 'connecting' | 'local'
+  latencyMs?: number
   id?: string
   ip?: string
   name?: string

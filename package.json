@@ -26,15 +26,16 @@
     "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
     "build:app": "npm run build:preload && npm run typecheck:renderer && vite build && tsc -p tsconfig.build.json",
     "build": "npm run bundle:torrent-agent && npm run bundle:torrent-agent-runtime && npm run build:app",
-    "dist:linux": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
-    "dist:appimage": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
-    "dist:rpm": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
-    "dist:pacman": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
-    "dist:win": "npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:windows && npm run build && electron-builder --win --publish never",
+    "dist:linux": "npm run fetch:easytier && npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux --publish never",
+    "dist:appimage": "npm run fetch:easytier && npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux appimage --publish never",
+    "dist:rpm": "npm run fetch:easytier && npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux rpm --publish never",
+    "dist:pacman": "npm run fetch:easytier && npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:linux && node scripts/patch-electron-builder.js && npm run build && electron-builder --linux pacman --publish never",
+    "dist:win": "node scripts/fetch-easytier.js --windows && npm run fetch:ludusavi && npm run fetch:legendary && npm run build:notification-overlay:windows && npm run build && electron-builder --win --publish never",
     "start": "electron .",
     "test:scraper": "node scripts/test-scraper-dist.js",
     "test:store-parser": "tsc -p tsconfig.build.json && node scripts/test-store-parser.js",
     "test:exe-detection": "tsc -p tsconfig.build.json && node scripts/test-exe-detection.js",
+    "test:release-assets": "tsc -p tsconfig.build.json && node scripts/test-release-assets.js",
     "fixes:index": "node scripts/build-fixes-index.js",
     "fixes:check": "node scripts/build-fixes-index.js --check",
     "version:show": "node -p \"require('./package.json').version\"",
@@ -43,7 +44,9 @@
     "version:major": "npm version major --no-git-tag-version",
     "version:beta": "npm version prerelease --preid=beta --no-git-tag-version",
     "version:preminor": "npm version preminor --preid=beta --no-git-tag-version",
-    "version:rc": "npm version prerelease --preid=rc --no-git-tag-version"
+    "version:rc": "npm version prerelease --preid=rc --no-git-tag-version",
+    "fetch:easytier": "node scripts/fetch-easytier.js",
+    "test:vpn": "tsc -p tsconfig.build.json && node --test scripts/test-vpn.js scripts/test-vpn-controller.mjs"
   },
   "keywords": [],
   "author": "",
@@ -162,6 +165,20 @@
         "to": "notifications",
         "filter": [
           "*.wav"
+        ]
+      },
+      {
+        "from": "vendor/easytier",
+        "to": "easytier",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/vpn",
+        "to": "vpn",
+        "filter": [
+          "**/*"
         ]
       }
     ],

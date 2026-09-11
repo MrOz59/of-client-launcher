@@ -25,6 +25,7 @@ import {
 } from '../protonManager'
 import * as drive from '../drive'
 import * as cloudSaves from '../cloudSaves'
+import { getActiveVpnSession } from '../vpnSession'
 import { appendCloudSavesHistory, type CloudSavesHistoryEntry } from '../cloudSavesHistory'
 import { detectSteamAppIdFromInstall } from './achievementsHandlers'
 import type { IpcContext, IpcHandlerRegistrar, RunningGameProc } from './types'
@@ -891,6 +892,16 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         console.error('[Launch] ❌ Executable not found at', exePath)
         sendGameLaunchStatus({ gameUrl, status: 'error', message: 'Executável não encontrado' })
         return { success: false, error: 'Executável não encontrado', errorCode: 'executable-not-found' }
+      }
+
+      if (game.lan_mode === 'ofvpn' && game.lan_autoconnect) {
+        sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Conectando à sala multiplayer...' })
+        const vpn = await getActiveVpnSession()?.autoconnect(String(game.lan_network_id || ''))
+        if (!vpn?.success) {
+          const message = vpn?.error || 'Não foi possível conectar à sala. Abra as configurações de LAN.'
+          sendGameLaunchStatus({ gameUrl, status: 'error', message })
+          return { success: false, error: message }
+        }
       }
 
       let child: any

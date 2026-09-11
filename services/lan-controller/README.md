@@ -1,4 +1,9 @@
-## VPN/LAN Controller (WireGuard + legado ZeroTier)
+## VPN/LAN Controller (P2P, WireGuard e legado ZeroTier)
+
+Para conexões diretas entre jogadores com o VPS brasileiro apenas como diretório
+e ponto de encontro, use o novo [modo P2P](MESH.md) e `compose.mesh.yml`.
+As instruções WireGuard abaixo descrevem o modo legado, que retransmite o jogo
+pelo VPS.
 
 Serviço HTTP leve usado pelo launcher para:
 

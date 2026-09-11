@@ -1,0 +1,54 @@
+services:
+  lan-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    container_name: lan-controller
+    restart: unless-stopped
+    environment:
+      PORT: 8787
+      VPN_ENABLE: "true"
+      VPN_TRANSPORT: easytier
+      VPN_MESH_PEERS: ${VPN_MESH_PEERS:?Configure os endpoints públicos de encontro em .env}
+      VPN_STATE_FILE: /data/vpn-state.json
+      ROOMS_FILE: /data/rooms.json
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data:/data
+    networks:
+      - lan
+
+  rendezvous:
+    build:
+      context: .
+      dockerfile: Dockerfile.rendezvous
+    restart: unless-stopped
+    # This node exchanges peer discovery/control messages only. The empty
+    # whitelist forbids relaying game traffic for all room networks.
+    command:
+      - --no-tun
+      - "true"
+      - --network-name
+      - of-rendezvous
+      - --listeners
+      - udp://0.0.0.0:11010
+      - tcp://0.0.0.0:11010
+      - --relay-network-whitelist
+      - --relay-all-peer-rpc
+      - "true"
+      - --rpc-portal
+      - 127.0.0.1:15888
+    ports:
+      - "11010:11010/udp"
+      - "11010:11010/tcp"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - lan
+
+networks:
+  lan:
+    name: lan-controller-net

@@ -1,0 +1,17 @@
+FROM debian:bookworm-slim AS download
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) arch=x86_64; checksum=61b659eaedba658fa66fe47d17e1426cdd77e5d02fa15fed447bb4357c09dfd6 ;; \
+      arm64) arch=aarch64; checksum=f533ec25a7ea714e09f645615012200278058525795cc3bb690ff011aec1a70f ;; \
+      *) exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 "https://github.com/EasyTier/EasyTier/releases/download/v2.6.4/easytier-linux-${arch}-v2.6.4.zip" -o /tmp/runtime.zip; \
+    echo "$checksum  /tmp/runtime.zip" | sha256sum -c -; \
+    unzip /tmp/runtime.zip -d /tmp/runtime; \
+    find /tmp/runtime -name easytier-core -exec install -m 755 '{}' /usr/local/bin/easytier-core \;
+FROM debian:bookworm-slim
+COPY --from=download /usr/local/bin/easytier-core /usr/local/bin/easytier-core
+USER 65534:65534
+ENTRYPOINT ["/usr/local/bin/easytier-core"]

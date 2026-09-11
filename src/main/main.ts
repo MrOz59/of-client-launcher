@@ -92,8 +92,6 @@ import { resolveTorrentFileUrl, deriveTitleFromTorrentUrl } from './torrentResol
 // fs is already imported at the top for early sandbox configuration
 import { isLinux, findProtonRuntime, setSavedProtonRuntime, buildProtonLaunch, getPrefixPath, getDefaultPrefixPath, listProtonRuntimes, setCustomProtonRoot, setCustomProtonRoots, ensurePrefixDefaults, ensureGamePrefixFromDefault, getPrefixRootDir, ensureDefaultPrefix, getExpectedDefaultPrefixPath, ensureGameCommonRedists } from './protonManager.js'
 import { spawn } from 'child_process'
-import { vpnControllerCreateRoom, vpnControllerJoinRoom, vpnControllerListPeers, vpnControllerStatus } from './vpnControllerClient.js'
-import { vpnCheckInstalled, vpnConnectFromConfig, vpnDisconnect, vpnInstallBestEffort } from './ofVpnManager.js'
 import { AchievementsManager } from './achievements/manager.js'
 import { notifyDownloadComplete } from './desktopNotifications.js'
 import { resolveAppIconPath } from './appIcon.js'
@@ -118,7 +116,6 @@ import {
   isKnownUnknownVersion
 } from './utils/index.js'
 
-const DEFAULT_LAN_CONTROLLER_URL = 'https://vpn.mroz.dev.br'
 
 app.setName('VoidLauncher')
 
@@ -618,40 +615,6 @@ function recordCloudSaves(entry: CloudSavesHistoryEntry) {
 // NOTE: isPidAlive, killProcessTreeBestEffort, readFileTailBytes, trimToMaxChars,
 // extractInterestingProtonLog, configureLinuxTempDir, isDirWritableAndExecutable
 // moved to src/main/utils/
-
-async function ensureOfVpnBeforeLaunch(gameUrl: string, roomCode: string) {
-  const configuredDefault = String(getSetting('lan_default_network_id') || '').trim()
-  const code = String(roomCode || configuredDefault || '').trim()
-  if (!code) {
-    sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'VPN: sala não configurada' })
-    return
-  }
-
-  sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'VPN: conectando…' })
-
-  const controllerUrl = String(getSetting('lan_controller_url') || DEFAULT_LAN_CONTROLLER_URL).trim()
-  const join = await vpnControllerJoinRoom({ controllerUrl, code, name: '' })
-  if (!join.success) {
-    sendGameLaunchStatus({ gameUrl, status: 'starting', message: `VPN: ${join.error || 'falha ao entrar'} (continuando)` })
-    return
-  }
-
-  const userDataDir = app.getPath('userData')
-  const cfg = String((join as any).config || '').trim()
-  if (!cfg) {
-    sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'VPN: resposta inválida do servidor (continuando)' })
-    return
-  }
-  const conn = await vpnConnectFromConfig({ configText: cfg, userDataDir })
-  if (!conn.success) {
-    const msg = conn.needsInstall ? 'VPN: WireGuard não instalado' : `VPN: ${conn.error || 'falha ao conectar'}`
-    sendGameLaunchStatus({ gameUrl, status: 'starting', message: `${msg} (continuando)` })
-    return
-  }
-
-  const ip = String(join.vpnIp || '').trim()
-  sendGameLaunchStatus({ gameUrl, status: 'starting', message: `VPN: conectado${ip ? ` (${ip})` : ''}` })
-}
 
 // Suppress noisy UTP connection reset errors from utp-native (network transient)
 const UTP_LOG_INTERVAL_MS = 5000

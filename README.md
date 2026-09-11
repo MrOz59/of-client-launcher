@@ -23,7 +23,7 @@ VoidLauncher is an Electron desktop app with a React/Vite renderer. It centraliz
 - Launcher-managed Ludusavi and EOS Overlay tooling
 - Cloud saves with Ludusavi and Google Drive
 - Local achievement discovery, schema editing, unlock watching, and toast notifications
-- LAN/VPN rooms through a WireGuard controller service
+- LAN/VPN rooms with direct P2P connections (EasyTier) and legacy WireGuard support
 - Optional donate link to support launcher maintenance
 
 ## Tech Stack
@@ -38,7 +38,7 @@ VoidLauncher is an Electron desktop app with a React/Vite renderer. It centraliz
 - Ludusavi for save backup/restore
 - Legendary for Epic/EOS overlay support
 - Ghostery adblocker engine for store ad filtering
-- WireGuard controller service for VPN rooms
+- EasyTier P2P room service, with an optional legacy WireGuard controller
 
 ## Repository Layout
 
@@ -53,7 +53,7 @@ src/renderer/components/           Store, library, downloads, settings, and side
 src/renderer/components/library/   Library modals, hooks, filters, and game card UI
 src/types/                         Shared external type declarations
 services/torrent-agent/            Python libtorrent JSON-RPC sidecar source
-services/lan-controller/           WireGuard/ZeroTier-compatible controller API
+services/lan-controller/           P2P room/discovery service and legacy VPN API
 notification-overlay/              Standalone toast notification project
 notification-overlay/scripts/      Toast overlay build scripts
 notification-overlay/src-tauri/    Tauri/Rust notification binary source
@@ -77,7 +77,7 @@ Generated folders such as `node_modules/`, `dist/`, `dist-preload/`, `release/`,
 - Store injection: `src/main/webviewInjection.ts`
 - Cloud saves: `src/main/cloudSaves.ts`, `src/main/ludusavi.ts`, `src/main/drive.ts`
 - Achievements: `src/main/achievements/*`
-- VPN/LAN: `src/main/ofVpnManager.ts`, `src/main/vpnControllerClient.ts`
+- VPN/LAN: `src/main/vpnSession.ts`, `src/main/vpnMeshManager.ts`, `src/main/vpnControllerClient.ts` (legacy: `src/main/ofVpnManager.ts`)
 
 The renderer only talks to privileged functionality through the preload API. `nodeIntegration` is disabled and `contextIsolation` is enabled.
 
@@ -100,7 +100,7 @@ For release builds:
 For Linux runtime features:
 
 - Wine/Proton compatible runtime
-- WireGuard tools for VPN connect/disconnect
+- Bundled EasyTier for P2P; WireGuard tools only for legacy VPN rooms
 - `winetricks` or `protontricks` for optional prefix components
 - `tar` with gzip/xz/zstd support for managed Proton runtime extraction
 
@@ -372,6 +372,11 @@ python scripts/test-toast-focus.py --game-backend wayland
 ```
 
 ## VPN/LAN Controller
+
+The P2P deployment keeps the Brazil VPS for room admission and peer discovery;
+game traffic connects players directly. The rendezvous node does not relay game
+traffic. Restrictive networks need a separately configured regional relay.
+See [P2P setup, architecture and validation](services/lan-controller/MESH.md).
 
 The launcher talks to a controller API for VPN rooms. The default controller URL in code is:
 

@@ -1,0 +1,15 @@
+EasyTier 2.6.4
+Copyright: EasyTier contributors.
+License: GNU Lesser General Public License, version 3 (see EasyTier-LICENSE
+and the incorporated GNU GPL version 3 in EasyTier-GPL3).
+
+The launcher invokes unmodified EasyTier executables as separate processes.
+Upstream project: https://github.com/EasyTier/EasyTier
+Versioned source: https://github.com/EasyTier/EasyTier/tree/v2.6.4
+Source archive: https://github.com/EasyTier/EasyTier/archive/refs/tags/v2.6.4.tar.gz
+Binary release: https://github.com/EasyTier/EasyTier/releases/tag/v2.6.4
+
+Wintun 0.14.1 (Windows only)
+Copyright: WireGuard LLC. All Rights Reserved.
+The signed, precompiled wintun.dll is distributed under the license included
+in Wintun-LICENSE.txt. Upstream: https://www.wintun.net/

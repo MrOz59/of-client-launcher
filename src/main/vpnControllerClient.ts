@@ -1,7 +1,7 @@
-type VpnRoomCreateResponse = { ok: boolean; code?: string; config?: string; vpnIp?: string; peerId?: string; roomName?: string; error?: string }
-type VpnRoomJoinResponse = { ok: boolean; config?: string; vpnIp?: string; hostIp?: string | null; peerId?: string; roomName?: string; maxPlayers?: number; error?: string; needsPassword?: boolean }
+type VpnRoomCreateResponse = { ok: boolean; code?: string; config?: string; vpnIp?: string; peerId?: string; sessionToken?: string; roomName?: string; error?: string }
+type VpnRoomJoinResponse = { ok: boolean; config?: string; vpnIp?: string; hostIp?: string | null; peerId?: string; sessionToken?: string; roomName?: string; maxPlayers?: number; error?: string; needsPassword?: boolean }
 type VpnPeersResponse = { ok: boolean; peers?: Array<{ id: string; name?: string; ip?: string; role?: string; online?: boolean }>; error?: string }
-type VpnStatusResponse = { ok: boolean; enabled?: boolean; ready?: boolean; publicKey?: string; error?: string }
+type VpnStatusResponse = { ok: boolean; transport?: 'wireguard' | 'easytier'; topology?: 'hub' | 'mesh'; directConnections?: boolean; enabled?: boolean; ready?: boolean; publicKey?: string; error?: string }
 type VpnRoomListResponse = { ok: boolean; rooms?: Array<{
   code: string
   name: string
@@ -40,7 +40,7 @@ async function fetchJson<T>(url: string, init: RequestInit, timeoutMs: number): 
   try {
     const r = await fetch(url, { ...init, signal: ac.signal })
     const data = (await r.json().catch(() => null)) as T | null
-    if (!r.ok) return { ok: false, status: r.status, error: (data as any)?.error || `HTTP ${r.status}` }
+    if (!r.ok) return { ok: false, status: r.status, data: data ?? undefined, error: (data as any)?.error || `HTTP ${r.status}` }
     if (!data) return { ok: false, status: r.status, error: `HTTP ${r.status}` }
     return { ok: true, status: r.status, data }
   } catch (err: any) {
@@ -77,6 +77,7 @@ export async function vpnControllerCreateRoom(params: {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        transports: ['easytier', 'wireguard'],
         name: params.name || '',
         roomName: params.roomName || '',
         gameName: params.gameName || '',
@@ -94,6 +95,7 @@ export async function vpnControllerCreateRoom(params: {
     config: out.data.config,
     vpnIp: out.data.vpnIp,
     peerId: out.data.peerId,
+    sessionToken: out.data.sessionToken,
     roomName: out.data.roomName
   }
 }
@@ -114,7 +116,7 @@ export async function vpnControllerJoinRoom(params: {
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code, name: params.name || '', password: params.password || '' })
+      body: JSON.stringify({ transports: ['easytier', 'wireguard'], code, name: params.name || '', password: params.password || '' })
     },
     Number(params.timeoutMs || 12000)
   )
@@ -131,6 +133,7 @@ export async function vpnControllerJoinRoom(params: {
     vpnIp: out.data.vpnIp,
     hostIp: out.data.hostIp ?? null,
     peerId: out.data.peerId,
+    sessionToken: out.data.sessionToken,
     roomName: out.data.roomName,
     maxPlayers: out.data.maxPlayers
   }
@@ -157,12 +160,12 @@ export async function vpnControllerListRooms(params: { controllerUrl: string; ga
 }
 
 // Heartbeat to keep connection alive and get updated peer list
-export async function vpnControllerHeartbeat(params: { controllerUrl: string; peerId: string; timeoutMs?: number }) {
+export async function vpnControllerHeartbeat(params: { controllerUrl: string; peerId: string; sessionToken?: string; timeoutMs?: number }) {
   const endpoint = joinUrl(params.controllerUrl, '/api/vpn/heartbeat')
   if (!endpoint) return { success: false, error: 'VPN Controller URL inválida' }
   const out = await fetchJson<VpnHeartbeatResponse>(
     endpoint,
-    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ peerId: params.peerId }) },
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ peerId: params.peerId, sessionToken: params.sessionToken }) },
     Number(params.timeoutMs || 5000)
   )
   if (!out.ok || !out.data?.ok) return { success: false, error: out.error || out.data?.error || 'Heartbeat falhou' }
@@ -170,12 +173,12 @@ export async function vpnControllerHeartbeat(params: { controllerUrl: string; pe
 }
 
 // Leave room / disconnect cleanly
-export async function vpnControllerLeaveRoom(params: { controllerUrl: string; peerId: string; timeoutMs?: number }) {
+export async function vpnControllerLeaveRoom(params: { controllerUrl: string; peerId: string; sessionToken?: string; timeoutMs?: number }) {
   const endpoint = joinUrl(params.controllerUrl, '/api/vpn/rooms/leave')
   if (!endpoint) return { success: false, error: 'VPN Controller URL inválida' }
   const out = await fetchJson<{ ok: boolean; error?: string }>(
     endpoint,
-    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ peerId: params.peerId }) },
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ peerId: params.peerId, sessionToken: params.sessionToken }) },
     Number(params.timeoutMs || 5000)
   )
   if (!out.ok || !out.data?.ok) return { success: false, error: out.error || out.data?.error || 'Falha ao sair da sala' }

@@ -74,6 +74,9 @@ const roomTtlDays = Number(process.env.ROOM_TTL_DAYS || 30)
 
 // OF VPN (WireGuard) - optional
 const vpnEnabled = String(process.env.VPN_ENABLE || 'false').trim().toLowerCase() === 'true'
+// Existing deployments remain compatible until explicitly switched to mesh.
+const vpnTransport = String(process.env.VPN_TRANSPORT || 'wireguard').trim()
+const meshPeers = String(process.env.VPN_MESH_PEERS || '').split(',').map(value => value.trim()).filter(Boolean)
 const wgInterface = String(process.env.WG_INTERFACE || 'ofvpn0').trim() || 'ofvpn0'
 const wgListenPort = Number(process.env.WG_LISTEN_PORT || 51820)
 const wgEndpointHost = String(process.env.WG_ENDPOINT_HOST || '').trim() || null
@@ -114,7 +117,7 @@ function safeWriteJsonFile(filePath, data) {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
     fs.renameSync(tmp, filePath)
     return true
   } catch (err) {
@@ -127,7 +130,7 @@ function randomCode(length = 10) {
   // Easy to type, avoids ambiguous chars (0/O, 1/I).
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let out = ''
-  for (let i = 0; i < length; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)]
+  for (let i = 0; i < length; i++) out += alphabet[crypto.randomInt(alphabet.length)]
   return out
 }
 
@@ -230,6 +233,23 @@ const state = {
   vpn: safeReadJsonFile(vpnStateFile, { server: null, rooms: [], peers: [] })
 }
 
+// Presence is volatile. Coalesce heartbeats instead of blocking the event loop
+// with a complete state-file rewrite for every player on every poll.
+let vpnSaveTimer = null
+function persistVpnState() {
+  if (vpnSaveTimer) clearTimeout(vpnSaveTimer)
+  vpnSaveTimer = null
+  safeWriteJsonFile(vpnStateFile, state.vpn)
+}
+
+function scheduleVpnSave() {
+  if (vpnSaveTimer) return
+  vpnSaveTimer = setTimeout(persistVpnState, 15_000)
+  vpnSaveTimer.unref?.()
+}
+
+process.on('exit', () => { if (vpnSaveTimer) persistVpnState() })
+
 function cleanupRooms() {
   const ttlMs = Math.max(1, roomTtlDays) * 24 * 60 * 60 * 1000
   const cutoff = nowMs() - ttlMs
@@ -249,15 +269,17 @@ function cleanupVpn() {
 
   state.vpn.rooms = Array.isArray(state.vpn?.rooms) ? state.vpn.rooms : []
   state.vpn.peers = Array.isArray(state.vpn?.peers) ? state.vpn.peers : []
+  const previousRooms = state.vpn.rooms.length
+  const previousPeers = state.vpn.peers.length
 
   const keepRoom = new Set(
-    state.vpn.rooms.filter((r) => (r?.createdAt || 0) >= now - ttlRoomMs).map((r) => r.code)
+    state.vpn.rooms.filter((r) => (r?.lastActivity || r?.createdAt || 0) >= now - ttlRoomMs).map((r) => r.code)
   )
   state.vpn.rooms = state.vpn.rooms.filter((r) => keepRoom.has(r.code))
-  state.vpn.peers = state.vpn.peers.filter((p) => keepRoom.has(p.roomCode) && (p?.createdAt || 0) >= now - ttlPeerMs)
+  state.vpn.peers = state.vpn.peers.filter((p) => keepRoom.has(p.roomCode) && (p?.lastSeen || p?.createdAt || 0) >= now - ttlPeerMs)
   markOfflineVpnPeers()
 
-  safeWriteJsonFile(vpnStateFile, state.vpn)
+  if (previousRooms !== state.vpn.rooms.length || previousPeers !== state.vpn.peers.length) persistVpnState()
 }
 
 cleanupVpn()
@@ -305,7 +327,34 @@ function runCmd(bin, args, opts = {}) {
   })
 }
 
+let wgEnsurePromise = null
+let wgReadyUntil = 0
+
 async function ensureWireGuardServer() {
+  if (!vpnEnabled) return { ok: false, error: 'vpn_disabled' }
+  if (wgEnsurePromise) return wgEnsurePromise
+  if (nowMs() < wgReadyUntil) return { ok: true, publicKey: state.vpn.server.publicKey }
+  wgEnsurePromise = (async () => {
+    // Normal status requests only read the interface, once per 30 seconds.
+    // Reconfigure only at startup or after an interface/key change.
+    if (wgReadyUntil) {
+      const probe = await runCmd('wg', ['show', wgInterface, 'public-key'], { timeoutMs: 2000 })
+      if (probe.code === 0 && probe.stdout.trim() === state.vpn.server?.publicKey) {
+        return { ok: true, publicKey: state.vpn.server.publicKey }
+      }
+    }
+    return initializeWireGuardServer()
+  })()
+  try {
+    const result = await wgEnsurePromise
+    wgReadyUntil = result.ok ? nowMs() + 30_000 : 0
+    return result
+  } finally {
+    wgEnsurePromise = null
+  }
+}
+
+async function initializeWireGuardServer() {
   if (!vpnEnabled) return { ok: false, error: 'vpn_disabled' }
 
   // Ensure server keypair persisted.
@@ -360,6 +409,14 @@ async function ensureWireGuardServer() {
     if (r.code !== 0) await runCmd('iptables', ['-A', 'FORWARD', '-o', wgInterface, '-j', 'ACCEPT'], { timeoutMs: 2000 })
   })
 
+  // Container/interface recreation loses kernel peers, even though the room
+  // registry survives in /data. Restore their public keys before reporting ready.
+  for (const peer of state.vpn.peers) {
+    if (!peer.publicKey) continue
+    const restored = await wgAddPeer(peer.publicKey, peer.ip)
+    if (!restored.ok) return { ok: false, error: 'wg_restore_peer_failed' }
+  }
+
   return { ok: true, publicKey: state.vpn.server.publicKey }
 }
 
@@ -383,6 +440,43 @@ function buildClientConfig(params) {
   lines.push(`AllowedIPs = ${wgSubnetCidr}`)
   lines.push('PersistentKeepalive = 25')
   return lines.join('\n')
+}
+
+function meshConfig(room, peer) {
+  return JSON.stringify({
+    version: 1,
+    transport: 'easytier',
+    networkName: room.networkName,
+    networkSecret: room.networkSecret,
+    ipv4: `${peer.ip}/24`,
+    hostname: peer.id,
+    peers: meshPeers
+  })
+}
+
+async function ensureVpnTransport(transport) {
+  if (transport === 'wireguard') return ensureWireGuardServer()
+  if (transport !== 'easytier') return { ok: false, error: 'unsupported_vpn_transport' }
+  if (!meshPeers.length) return { ok: false, error: 'mesh_peers_not_configured' }
+  try {
+    if (meshPeers.length > 16) throw new Error('too_many_endpoints')
+    for (const peer of meshPeers) {
+      const endpoint = new URL(peer)
+      if (peer.length > 256 || !['tcp:', 'udp:'].includes(endpoint.protocol) || !endpoint.hostname ||
+          Number(endpoint.port) < 1 || Number(endpoint.port) > 65535 || endpoint.username || endpoint.password ||
+          endpoint.search || endpoint.hash || (endpoint.pathname && endpoint.pathname !== '/')) throw new Error('invalid_endpoint')
+    }
+  } catch {
+    return { ok: false, error: 'mesh_peers_invalid' }
+  }
+  return { ok: true }
+}
+
+function peerAuthorized(peer, body) {
+  if (!peer.sessionToken) return true // Compatibility with existing WireGuard sessions.
+  const actual = Buffer.from(String(body?.sessionToken || ''))
+  const expected = Buffer.from(peer.sessionToken)
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected)
 }
 
 
@@ -563,25 +657,29 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === '/api/vpn/status' && req.method === 'GET') {
       if (!vpnEnabled) return sendJson(res, 200, { ok: true, enabled: false })
-      const ensured = await ensureWireGuardServer()
-      if (!ensured.ok) return sendJson(res, 200, { ok: true, enabled: true, ready: false, error: ensured.error })
-      return sendJson(res, 200, { ok: true, enabled: true, ready: true, publicKey: ensured.publicKey })
+      const ensured = await ensureVpnTransport(vpnTransport)
+      if (!ensured.ok) return sendJson(res, 200, { ok: true, enabled: true, ready: false, transport: vpnTransport, error: ensured.error })
+      return sendJson(res, 200, { ok: true, enabled: true, ready: true, publicKey: ensured.publicKey, transport: vpnTransport, topology: vpnTransport === 'easytier' ? 'mesh' : 'hub', directConnections: vpnTransport === 'easytier' })
     }
 
     if (u.pathname === '/api/vpn/rooms/create' && req.method === 'POST') {
       if (!vpnEnabled) return sendJson(res, 400, { ok: false, error: 'vpn_disabled' })
       if (!rateLimit(`vpn_create:${ip}`, 30, 10 * 60 * 1000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' })
-      const ensured = await ensureWireGuardServer()
+      const body = await readJson(req)
+      if (vpnTransport === 'easytier' && !body?.transports?.includes('easytier')) {
+        return sendJson(res, 426, { ok: false, error: 'launcher_update_required' })
+      }
+      const ensured = await ensureVpnTransport(vpnTransport)
       if (!ensured.ok) return sendJson(res, 400, { ok: false, error: ensured.error })
 
       cleanupVpn()
-      const body = await readJson(req)
       const userName = String(body?.name || '').trim().slice(0, 64)
       const roomName = String(body?.roomName || '').trim().slice(0, 64)
       const gameName = String(body?.gameName || '').trim().slice(0, 128)
       const password = String(body?.password || '').trim()
       const isPublic = body?.public === true
-      const maxPlayers = Math.min(Math.max(Number(body?.maxPlayers || 8), 2), 32)
+      const requestedMax = Number(body?.maxPlayers || 8)
+      const maxPlayers = Number.isFinite(requestedMax) ? Math.min(Math.max(Math.trunc(requestedMax), 2), 32) : 8
 
       // Create room
       let code = randomCode(10)
@@ -590,6 +688,11 @@ const server = http.createServer(async (req, res) => {
 
       const room = {
         code,
+        transport: vpnTransport,
+        ...(vpnTransport === 'easytier' ? {
+          networkName: `of-room-${crypto.randomBytes(16).toString('hex')}`,
+          networkSecret: crypto.randomBytes(32).toString('hex')
+        } : {}),
         name: roomName || `Sala de ${userName || 'Anônimo'}`,
         gameName: gameName || null,
         hostName: userName || 'Anônimo',
@@ -601,39 +704,44 @@ const server = http.createServer(async (req, res) => {
       }
       // Create host peer
       const usedIps = new Set((Array.isArray(state.vpn?.peers) ? state.vpn.peers : []).map((p) => p?.ip).filter(Boolean))
-      const ipAddr = allocateIpFromSubnet(wgSubnetCidr, usedIps)
+      const ipAddr = vpnTransport === 'easytier' ? '10.77.0.2' : allocateIpFromSubnet(wgSubnetCidr, usedIps)
       if (!ipAddr) return sendJson(res, 500, { ok: false, error: 'ip_pool_exhausted' })
 
-      const kp = makeX25519Keypair()
+      const kp = vpnTransport === 'wireguard' ? makeX25519Keypair() : null
       const peer = {
         id: crypto.randomUUID(),
         roomCode: code,
         name: userName || 'host',
         ip: ipAddr,
-        publicKey: kp.publicKey,
+        publicKey: kp?.publicKey,
+        sessionToken: Array.isArray(body?.transports) ? crypto.randomBytes(32).toString('hex') : undefined,
         createdAt: nowMs(),
         lastSeen: nowMs(),
         role: 'host',
         online: true
       }
 
-      const add = await wgAddPeer(peer.publicKey, peer.ip)
-      if (!add.ok) return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
-
+      // Reserve membership/IP before the first await so concurrent requests
+      // cannot receive the same address or bypass the room capacity limit.
       state.vpn.rooms.push(room)
       state.vpn.peers.push(peer)
+      if (kp) {
+        const add = await wgAddPeer(peer.publicKey, peer.ip)
+        if (!add.ok) {
+          state.vpn.rooms = state.vpn.rooms.filter(r => r !== room)
+          state.vpn.peers = state.vpn.peers.filter(p => p !== peer)
+          return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
+        }
+      }
       safeWriteJsonFile(vpnStateFile, state.vpn)
 
-      const config = buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey })
-      return sendJson(res, 200, { ok: true, code, config, vpnIp: peer.ip, peerId: peer.id, roomName: room.name })
+      const config = kp ? buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey }) : meshConfig(room, peer)
+      return sendJson(res, 200, { ok: true, code, config, vpnIp: peer.ip, peerId: peer.id, sessionToken: peer.sessionToken, roomName: room.name })
     }
 
     if (u.pathname === '/api/vpn/rooms/join' && req.method === 'POST') {
       if (!vpnEnabled) return sendJson(res, 400, { ok: false, error: 'vpn_disabled' })
       if (!rateLimit(`vpn_join:${ip}`, 200, 10 * 60 * 1000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' })
-      const ensured = await ensureWireGuardServer()
-      if (!ensured.ok) return sendJson(res, 400, { ok: false, error: ensured.error })
-
       cleanupVpn()
       const body = await readJson(req)
       const code = String(body?.code || '').trim().toUpperCase()
@@ -643,6 +751,13 @@ const server = http.createServer(async (req, res) => {
 
       const room = state.vpn.rooms.find((r) => String(r?.code || '').toUpperCase() === code)
       if (!room) return sendJson(res, 404, { ok: false, error: 'room_not_found' })
+      const transport = room.transport || 'wireguard'
+      if (transport === 'easytier' && !body?.transports?.includes('easytier')) {
+        return sendJson(res, 426, { ok: false, error: 'launcher_update_required' })
+      }
+      const ensured = await ensureVpnTransport(transport)
+      if (!ensured.ok) return sendJson(res, 400, { ok: false, error: ensured.error })
+      if (!state.vpn.rooms.includes(room)) return sendJson(res, 404, { ok: false, error: 'room_not_found' })
 
       // Check password if set
       if (room.passwordHash) {
@@ -661,34 +776,39 @@ const server = http.createServer(async (req, res) => {
       const hostPeer = currentPeers.find((p) => p?.role === 'host')
       const hostIp = hostPeer?.ip || null
 
-      const usedIps = new Set((Array.isArray(state.vpn?.peers) ? state.vpn.peers : []).map((p) => p?.ip).filter(Boolean))
-      const ipAddr = allocateIpFromSubnet(wgSubnetCidr, usedIps)
+      const usedIps = new Set(state.vpn.peers.filter(p => transport !== 'easytier' || p.roomCode === room.code).map(p => p.ip))
+      const ipAddr = allocateIpFromSubnet(transport === 'easytier' ? '10.77.0.0/24' : wgSubnetCidr, usedIps)
       if (!ipAddr) return sendJson(res, 500, { ok: false, error: 'ip_pool_exhausted' })
 
-      const kp = makeX25519Keypair()
+      const kp = transport === 'wireguard' ? makeX25519Keypair() : null
       const peer = {
         id: crypto.randomUUID(),
         roomCode: room.code,
         name: userName || 'peer',
         ip: ipAddr,
-        publicKey: kp.publicKey,
+        publicKey: kp?.publicKey,
+        sessionToken: Array.isArray(body?.transports) ? crypto.randomBytes(32).toString('hex') : undefined,
         createdAt: nowMs(),
         lastSeen: nowMs(),
         role: 'peer',
         online: true
       }
 
-      const add = await wgAddPeer(peer.publicKey, peer.ip)
-      if (!add.ok) return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
-
       state.vpn.peers.push(peer)
+      if (kp) {
+        const add = await wgAddPeer(peer.publicKey, peer.ip)
+        if (!add.ok) {
+          state.vpn.peers = state.vpn.peers.filter(p => p !== peer)
+          return sendJson(res, 500, { ok: false, error: add.error || 'wg_add_peer_failed' })
+        }
+      }
       
       // Update room activity
       room.lastActivity = nowMs()
       safeWriteJsonFile(vpnStateFile, state.vpn)
 
-      const config = buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey })
-      return sendJson(res, 200, { ok: true, config, vpnIp: peer.ip, hostIp, peerId: peer.id, roomName: room.name, maxPlayers: room.maxPlayers || 8 })
+      const config = kp ? buildClientConfig({ privateKey: kp.privateKey, ip: peer.ip, serverPublicKey: ensured.publicKey }) : meshConfig(room, peer)
+      return sendJson(res, 200, { ok: true, config, vpnIp: peer.ip, hostIp, peerId: peer.id, sessionToken: peer.sessionToken, roomName: room.name, maxPlayers: room.maxPlayers || 8 })
     }
 
     // List public rooms (like Hamachi network browser)
@@ -734,6 +854,7 @@ const server = http.createServer(async (req, res) => {
       
       const peer = state.vpn.peers.find((p) => p?.id === peerId)
       if (!peer) return sendJson(res, 404, { ok: false, error: 'peer_not_found' })
+      if (!peerAuthorized(peer, body)) return sendJson(res, 403, { ok: false, error: 'invalid_session' })
       
       peer.lastSeen = nowMs()
       peer.online = true
@@ -744,7 +865,7 @@ const server = http.createServer(async (req, res) => {
       
       markOfflineVpnPeers()
       
-      safeWriteJsonFile(vpnStateFile, state.vpn)
+      scheduleVpnSave()
       
       // Return current peers in the room
       const roomPeers = activeRoomPeers(peer.roomCode)
@@ -764,6 +885,7 @@ const server = http.createServer(async (req, res) => {
       if (peerIndex === -1) return sendJson(res, 200, { ok: true }) // Already gone
       
       const peer = state.vpn.peers[peerIndex]
+      if (!peerAuthorized(peer, body)) return sendJson(res, 403, { ok: false, error: 'invalid_session' })
       
       // Remove peer from WireGuard
       if (peer.publicKey) {
@@ -785,7 +907,7 @@ const server = http.createServer(async (req, res) => {
           state.vpn.rooms.splice(roomIndex, 1)
         }
       } else {
-        state.vpn.peers.splice(peerIndex, 1)
+        state.vpn.peers = state.vpn.peers.filter(p => p !== peer)
       }
       
       safeWriteJsonFile(vpnStateFile, state.vpn)
@@ -968,7 +1090,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, '0.0.0.0', () => {
   const masked = ztToken ? `${ztToken.slice(0, 4)}…` : '(vazio)'
-  console.log(`[lan-controller] listening on :${port}`)
+  console.log(`[lan-controller] listening on :${server.address().port}`)
   console.log(`[lan-controller] ZT_DEFAULT_NETWORK_ID=${defaultNetworkId || '(vazio)'}`)
   console.log(`[lan-controller] LAN_CONTROLLER_API_KEY=${apiKey ? '(set)' : '(none)'}`)
   console.log(`[lan-controller] ZT_API_TOKEN=${masked}`)

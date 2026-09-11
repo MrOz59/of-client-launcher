@@ -2,6 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { spawn } from 'child_process'
+import { validateWireGuardConfig } from './vpnWireGuardConfig'
 
 function readOsRelease(): Record<string, string> {
   try {
@@ -97,8 +98,10 @@ export function getClientTunnelName() {
 
 export async function vpnCheckInstalled(): Promise<{ installed: boolean; error?: string }> {
   if (process.platform === 'linux') {
-    const wg = await run('wg', ['--version'], { timeoutMs: 3000 })
-    const wgQuick = await run('wg-quick', ['--help'], { timeoutMs: 3000 })
+    const [wg, wgQuick] = await Promise.all([
+      run('wg', ['--version'], { timeoutMs: 3000 }),
+      run('wg-quick', ['--help'], { timeoutMs: 3000 })
+    ])
     const installed = wg.code !== null && wgQuick.code !== null
     return { installed, error: installed ? undefined : 'WireGuard tools não encontrados (wg/wg-quick)' }
   }
@@ -172,6 +175,7 @@ function findWireGuardExeWindows(): string | null {
 }
 
 export async function vpnConnectFromConfig(params: { configText: string; userDataDir: string }): Promise<{ success: boolean; tunnelName?: string; configPath?: string; error?: string; needsInstall?: boolean }> {
+  validateWireGuardConfig(params.configText)
   const tunnelName = getClientTunnelName()
   const userDataDir = String(params.userDataDir || '').trim()
   if (!userDataDir) return { success: false, error: 'userDataDir inválido' }

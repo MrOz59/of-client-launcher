@@ -1740,7 +1740,8 @@ function LanTab(props: ConfigModalProps) {
     setShowJoinPassword(false)
   }
 
-  const isInRoom = !!(lanNetworkId && vpnConnected)
+  const activeRoomCode = lanRoomCode || lanNetworkId
+  const isInRoom = !!(vpnPeerId && activeRoomCode)
   const isHost = vpnPeers.find(p => p.id === vpnPeerId)?.role === 'host'
 
   return (
@@ -1788,9 +1789,9 @@ function LanTab(props: ConfigModalProps) {
               {vpnLoading ? (
                 <span>{t('library.configModal.lan.checking')}</span>
               ) : !vpnStatus?.installed ? (
-                <span>{t('library.configModal.lan.wireguardNotInstalled')}</span>
+                <span>{vpnStatus?.installError || t('library.configModal.lan.wireguardNotInstalled')}</span>
               ) : vpnConnected ? (
-                <span>{t('library.configModal.lan.connected')}</span>
+                <span>{t(vpnStatus?.transport === 'easytier' ? 'library.vpn.meshReady' : 'library.configModal.lan.connected')}</span>
               ) : (
                 <span>{t('library.configModal.lan.ready')}</span>
               )}
@@ -1800,7 +1801,7 @@ function LanTab(props: ConfigModalProps) {
                 {t('library.configModal.lan.install')}
               </button>
             )}
-            {vpnStatus?.installed && !vpnConnected && vpnConfig && (
+            {vpnStatus?.installed && !vpnConnected && (vpnConfig || vpnPeerId) && (
               <button className="btn small" onClick={onConnectVpn} disabled={vpnActionBusy}>
                 {t('library.configModal.lan.connect')}
               </button>
@@ -1826,10 +1827,10 @@ function LanTab(props: ConfigModalProps) {
                 <div className="vpn-room-info">
                   <h4>{lanRoomName || t('library.vpn.roomFallback')}</h4>
                   <div className="vpn-room-code">
-                    <code>{lanNetworkId}</code>
+                    <code>{activeRoomCode}</code>
                     <button
                       className="copy-btn"
-                      onClick={() => handleCopy(lanNetworkId, 'code')}
+                      onClick={() => handleCopy(activeRoomCode, 'code')}
                       title={t('library.configModal.lan.copyCode')}
                     >
                       {copiedField === 'code' ? <Check size={14} /> : <Copy size={14} />}
@@ -1888,6 +1889,12 @@ function LanTab(props: ConfigModalProps) {
                         <div className="vpn-peer-info">
                           <span className="vpn-peer-name">{peer.name || t('library.configModal.lan.player')}</span>
                           <span className="vpn-peer-ip">{peer.ip}</span>
+                          {peer.connection && (
+                            <span className="vpn-peer-ip">
+                              {t(`library.vpn.route.${peer.connection}`)}
+                              {typeof peer.latencyMs === 'number' && ` · ${Math.round(peer.latencyMs)} ms`}
+                            </span>
+                          )}
                         </div>
                         <div className={`vpn-peer-status ${peer.online !== false ? 'online' : 'offline'}`}>
                           {peer.online !== false ? '●' : '○'}
@@ -1897,6 +1904,10 @@ function LanTab(props: ConfigModalProps) {
                   )}
                 </div>
               </div>
+
+              {vpnStatus?.transport === 'easytier' && vpnPeers.some(peer => peer.connection === 'connecting' && peer.id !== vpnPeerId) && (
+                <div className="vpn-notice"><p>{t('library.vpn.directPending')}</p></div>
+              )}
 
               <label className="toggle" style={{ marginTop: 12 }}>
                 <input type="checkbox" checked={lanAutoconnect} onChange={(e) => onLanAutoconnectChange(e.target.checked)} />
