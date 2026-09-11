@@ -4078,6 +4078,113 @@ body {
   flex: 1;
 }
 
+/* Fix editor: tabs like the game's own settings, and a footer that never scrolls
+   away — the verdict on the fix and the actions have to stay in sight while the
+   fields above them move. */
+.fix-editor { max-width: 780px; }
+.fix-editor .config-modal-body { overflow: hidden; }
+
+.fix-editor-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 200px;
+  max-height: 52vh;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.fix-editor-group {
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fix-editor-group:last-child { padding-bottom: 0; border-bottom: none; }
+
+.fix-editor-group h5 {
+  margin: 0 0 10px;
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fix-editor-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.fix-editor-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.fix-editor-row .config-form-group { margin-bottom: 0; }
+
+.fix-editor-json-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.fix-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fix-editor-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #9ca3af;
+  font-size: 12px;
+  text-align: left;
+}
+
+.fix-editor-verdict span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fix-editor-verdict.ok { color: #4ade80; }
+.fix-editor-verdict.problem { color: #fbbf24; cursor: pointer; }
+.fix-editor-verdict.problem:hover { color: #fcd34d; text-decoration: underline; }
+
+.fix-editor-tab-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: rgba(245, 158, 11, 0.9);
+  color: #1f1300;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* JSON the fix editor is about to write, shown before it writes it. */
+.config-code-block {
+  max-height: 320px;
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #d7dee9;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .config-hint {
   font-size: 11px;
   color: #6b7280;

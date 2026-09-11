@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X, Upload, Download, SlidersHorizontal } from 'lucide-react'
+import { RefreshCw, Trash2, AlertCircle, Users, Globe, Lock, Unlock, Copy, Check, Wifi, WifiOff, Plus, LogIn, LogOut, Settings2, Crown, User, Image, FolderOpen, Play, FileText, Wrench, Gamepad2, Monitor, Terminal, ChevronDown, X, Upload, Download, SlidersHorizontal, PenLine } from 'lucide-react'
 import type { Game, GameConfigTab, ConfigSaveState, ProtonOptions, ProtonRuntime, LanMode, IniField, VpnStatusState, VpnPeer, PrefixJobState, VpnRoom, CommunityGameFix } from './types'
 import { useI18n } from '../../i18n'
 import { ipcErrorText } from '../../../shared/ipcErrors'
 import { useModalA11y } from '../../hooks/useModalA11y'
+import { FixEditorModal } from './FixEditorModal'
 
 export interface ConfigModalProps {
   game: Game
@@ -992,6 +993,8 @@ function FixesTab(props: ConfigModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [step, setStep] = useState<string | null>(null)
+  // { fix: null } opens the editor on a draft of how this game is set up now.
+  const [editor, setEditor] = useState<{ fix: CommunityGameFix | null } | null>(null)
 
   const currentRuntime = protonRuntimes.find(rt => rt.path === protonVersion)
   const currentRuntimeName = currentRuntime?.name || (protonVersion ? protonVersion.split(/[\\/]/).filter(Boolean).pop() : t('library.configModal.proton.autoExperimental'))
@@ -1234,13 +1237,17 @@ function FixesTab(props: ConfigModalProps) {
               <span className="config-danger-desc">{t('library.configModal.fixes.shareDesc')}</span>
             </div>
             <div className="config-btn-group">
-              <button className="config-btn secondary" onClick={exportFix} disabled={!!busy}>
-                {busy === 'export' ? <RefreshCw size={14} className="of-spin" /> : <Download size={14} />}
-                {t('library.configModal.fixes.export')}
+              <button className="config-btn primary" onClick={() => setEditor({ fix: null })} disabled={!!busy}>
+                <PenLine size={14} />
+                {t('library.configModal.fixes.create')}
               </button>
-              <button className="config-btn primary" onClick={importFix} disabled={!!busy}>
+              <button className="config-btn secondary" onClick={importFix} disabled={!!busy}>
                 {busy === 'import' ? <RefreshCw size={14} className="of-spin" /> : <Upload size={14} />}
                 {t('library.configModal.fixes.import')}
+              </button>
+              <button className="config-btn ghost" onClick={exportFix} disabled={!!busy} title={t('library.configModal.fixes.exportSnapshotHint')}>
+                {busy === 'export' ? <RefreshCw size={14} className="of-spin" /> : <Download size={14} />}
+                {t('library.configModal.fixes.exportSnapshot')}
               </button>
             </div>
           </div>
@@ -1336,6 +1343,9 @@ function FixesTab(props: ConfigModalProps) {
                     <div className="config-btn-group">
                       <button className="config-btn secondary" onClick={() => { setFix(itemFix); setMessage(null); setError(null); setWarnings([]) }} disabled={!!busy}>
                         {t('common.select')}
+                      </button>
+                      <button className="config-btn ghost" onClick={() => setEditor({ fix: itemFix })} disabled={!!busy} title={t('library.configModal.fixes.edit')} aria-label={t('library.configModal.fixes.edit')}>
+                        <PenLine size={14} />
                       </button>
                       <button className="config-btn ghost" onClick={() => deleteLocalFix(itemFix)} disabled={!!busy}>
                         <Trash2 size={14} />
@@ -1442,6 +1452,22 @@ function FixesTab(props: ConfigModalProps) {
           <p>{t('library.configModal.fixes.emptyDesc')}</p>
         </div>
       )}
+
+      {editor ? (
+        <FixEditorModal
+          gameUrl={game.url}
+          initialFix={editor.fix}
+          onClose={() => setEditor(null)}
+          onSaved={(saved) => {
+            setEditor(null)
+            setFix(saved)
+            setWarnings([])
+            setError(null)
+            setMessage(t('library.configModal.fixes.saved'))
+            void loadLocalFixes()
+          }}
+        />
+      ) : null}
     </div>
   )
 }

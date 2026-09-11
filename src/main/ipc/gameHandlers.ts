@@ -26,6 +26,7 @@ import {
   findRuntimeFacadeAssembly,
   sanitizeRuntimeAssemblies,
   findExecutableInDir,
+  listExecutablesInDir,
   getDisplayCompatibilityInfo,
   isEosOverlayPathValid,
   isPidAlive,
@@ -1071,13 +1072,17 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
     }
   })
 
-  ipcMain.handle('export-game-fix', async (_event, gameUrl: string) => {
+  ipcMain.handle('export-game-fix', async (_event, gameUrl: string, rawFix?: any) => {
     try {
       const game = getGame(gameUrl) as any
       if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 
-      const fix = buildGameFix(game)
-      const defaultPath = `${safeFileName(`${game.title || 'game'}-fix`)}.json`
+      // With a fix in hand this writes that one; without, it still exports a
+      // snapshot of how the game is configured right now.
+      const fix = rawFix ? normalizeGameFix(rawFix) : buildGameFix(game)
+      // The published repo requires the file to be named after the id, so a fix
+      // exported from the editor can be dropped straight into fixes/.
+      const defaultPath = `${safeFileName(rawFix ? fix.id : `${game.title || 'game'}-fix`)}.json`
       const saveOptions: SaveDialogOptions = {
         title: 'Exportar fix do jogo',
         defaultPath,
@@ -1096,6 +1101,38 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       return { success: true, fix, path: res.filePath }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao exportar fix' }
+    }
+  })
+
+  /**
+   * A fix that describes the game as it is set up right now: the runtime, its
+   * options and the executable in use. It is what the fix editor opens with, so
+   * writing one starts from a working configuration instead of a blank file.
+   */
+  ipcMain.handle('build-game-fix-draft', async (_event, gameUrl: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
+      return { success: true, fix: buildGameFix(game) }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao montar o rascunho do fix' }
+    }
+  })
+
+  /** The names a fix may put in launchExecutable, read off the game folder. */
+  ipcMain.handle('list-game-executables', async (_event, gameUrl: string) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
+
+      const installDir = String(game.install_path || '').trim()
+      if (!installDir || !fs.existsSync(installDir)) {
+        return { success: true, executables: [], installed: false }
+      }
+
+      return { success: true, executables: listExecutablesInDir(installDir), installed: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao listar executáveis' }
     }
   })
 

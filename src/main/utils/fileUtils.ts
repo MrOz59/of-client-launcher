@@ -323,6 +323,59 @@ export function findExecutableInDir(dir: string, options?: { prefer?: string | n
 }
 
 /**
+ * Every executable in a game folder, for someone writing a fix by hand.
+ *
+ * `findExecutableInDir` above answers "which one do we launch"; this one
+ * answers "which ones are there", so the fix editor can offer the names
+ * instead of asking anyone to type one and hope it exists. The relative path
+ * is carried only to tell two files of the same name apart on screen — a fix
+ * still names the file, never a path.
+ */
+export function listExecutablesInDir(dir: string, options?: { limit?: number }): Array<{ name: string; relativePath: string; size: number }> {
+  const root = String(dir || '').trim()
+  if (!root) return []
+
+  const limit = Math.max(1, Math.min(400, options?.limit ?? 200))
+  const found: Array<{ name: string; relativePath: string; size: number }> = []
+
+  function scanDir(currentDir: string, depth: number = 0) {
+    if (depth > 4 || found.length >= limit) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      if (found.length >= limit) return
+      const fullPath = path.join(currentDir, entry.name)
+
+      if (entry.isDirectory()) {
+        const skipDirs = ['__macosx', 'redist', 'directx', '_commonredist', 'vcredist', 'support', 'dotnet']
+        if (!skipDirs.includes(entry.name.toLowerCase())) scanDir(fullPath, depth + 1)
+        continue
+      }
+
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.exe')) continue
+
+      let size = 0
+      try { size = fs.statSync(fullPath).size || 0 } catch {}
+      found.push({ name: entry.name, relativePath: path.relative(root, fullPath), size })
+    }
+  }
+
+  scanDir(root)
+
+  // Shallowest first, then largest: that is the order someone scanning the list
+  // for the game's own binary reads it in.
+  return found.sort((a, b) => {
+    const depth = a.relativePath.split(path.sep).length - b.relativePath.split(path.sep).length
+    return depth !== 0 ? depth : b.size - a.size
+  })
+}
+
+/**
  * Get directory size in bytes (with limits to avoid hanging)
  */
 export async function getDirectorySizeBytes(

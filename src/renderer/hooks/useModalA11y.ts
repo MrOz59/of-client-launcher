@@ -10,6 +10,16 @@ const FOCUSABLE = [
 ].join(', ')
 
 /**
+ * Every dialog currently mounted, oldest first.
+ *
+ * Both handlers below listen on the document in the capture phase, so with one
+ * dialog opened from inside another they would both answer the same Escape —
+ * closing the dialog the user meant and the one behind it — and each would try
+ * to trap Tab inside itself. Only the dialog on top of this stack acts.
+ */
+const openDialogs: Array<symbol> = []
+
+/**
  * Dialog keyboard behaviour: Escape closes, Tab cycles inside the dialog, and
  * focus returns to whatever opened it. Attach the returned ref to the dialog
  * element (not the backdrop).
@@ -29,6 +39,9 @@ export function useModalA11y<T extends HTMLElement>(onClose: () => void) {
   useEffect(() => {
     const container = ref.current
     const previouslyFocused = document.activeElement as HTMLElement | null
+    const token = Symbol('dialog')
+    openDialogs.push(token)
+    const isTopmost = () => openDialogs[openDialogs.length - 1] === token
 
     const focusable = (): HTMLElement[] => {
       if (!container) return []
@@ -39,6 +52,8 @@ export function useModalA11y<T extends HTMLElement>(onClose: () => void) {
     focusable()[0]?.focus()
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!isTopmost()) return
+
       if (event.key === 'Escape') {
         event.stopPropagation()
         onCloseRef.current()
@@ -66,6 +81,8 @@ export function useModalA11y<T extends HTMLElement>(onClose: () => void) {
     document.addEventListener('keydown', onKeyDown, true)
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
+      const index = openDialogs.indexOf(token)
+      if (index >= 0) openDialogs.splice(index, 1)
       try {
         previouslyFocused?.focus?.()
       } catch {

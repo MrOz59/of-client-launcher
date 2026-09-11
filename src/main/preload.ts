@@ -208,7 +208,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleGameFavorite: (gameUrl: string) => ipcRenderer.invoke('toggle-game-favorite', gameUrl),
   setGameProtonOptions: (gameUrl: string, runtime: string, options: any) =>
     ipcRenderer.invoke('set-game-proton-options', gameUrl, runtime, options),
-  exportGameFix: (gameUrl: string) => ipcRenderer.invoke('export-game-fix', gameUrl),
+  exportGameFix: (gameUrl: string, fix?: any) => ipcRenderer.invoke('export-game-fix', gameUrl, fix),
+  buildGameFixDraft: (gameUrl: string) => ipcRenderer.invoke('build-game-fix-draft', gameUrl),
+  listGameExecutables: (gameUrl: string) => ipcRenderer.invoke('list-game-executables', gameUrl),
   importGameFix: () => ipcRenderer.invoke('import-game-fix'),
   listGameFixes: (gameUrl: string) => ipcRenderer.invoke('list-game-fixes', gameUrl),
   listRemoteGameFixes: (gameUrl: string, force?: boolean) => ipcRenderer.invoke('list-remote-game-fixes', gameUrl, force),

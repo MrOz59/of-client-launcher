@@ -9,6 +9,7 @@ const os = require('os')
 const path = require('path')
 const {
   findExecutableInDir,
+  listExecutablesInDir,
   bareExecutableName,
   findRuntimeFacadeAssembly,
   sanitizeRuntimeAssemblies
@@ -148,6 +149,26 @@ check(one({ name: 'evil.exe', into: 'lib' }).length === 0, 'only .dll is accepte
 check(one({ name: 'x.dll', into: '' }).length === 0, 'a fix must say where it goes')
 check(sanitizeRuntimeAssemblies('not an array').length === 0, 'a non-list asks for nothing')
 check(sanitizeRuntimeAssemblies(new Array(50).fill({ name: 'a.dll', into: 'lib' })).length === 20, 'the list is capped')
+
+// Writing a fix by hand means picking the executable out of a list, so the
+// list has to hold every candidate — including the ones the scan above scores
+// down — and say enough to tell two files of the same name apart.
+console.log('\nevery executable, for someone writing a fix')
+const listed = listExecutablesInDir(root)
+const names = listed.map((entry) => entry.name)
+
+check(names.includes('BigGame.exe') && names.includes('LyraGame.exe'), 'the binaries in the root are listed', names)
+check(names.includes('unins000.exe'), 'a binary the scan scores down is still offered', names)
+check(names.includes('Shipping.exe'), 'a binary in a subfolder is listed too', names)
+check(
+  listed.find((entry) => entry.name === 'Shipping.exe')?.relativePath === path.join('Binaries', 'Win64', 'Shipping.exe'),
+  'the path is relative to the game folder, to tell two of a name apart',
+  listed.find((entry) => entry.name === 'Shipping.exe')?.relativePath
+)
+check(listed[0]?.name === 'BigGame.exe', 'shallowest first, largest first within a folder', names)
+check(listed.every((entry) => entry.name.toLowerCase().endsWith('.exe')), 'nothing but executables', names)
+check(listExecutablesInDir(root, { limit: 2 }).length === 2, 'the list is capped', listExecutablesInDir(root, { limit: 2 }).length)
+check(listExecutablesInDir('').length === 0 && listExecutablesInDir(path.join(root, 'nope')).length === 0, 'no folder means no names')
 
 fs.rmSync(root, { recursive: true, force: true })
 
