@@ -106,6 +106,16 @@ jobs:
           }
         shell: pwsh
       
+      # electron-builder packs vendor/easytier, vendor/ludusavi and
+      # vendor/legendary as extra resources, and none of them is in the
+      # repository: without this the artifact ships without P2P rooms, cloud
+      # saves or Epic support. The dist:* scripts fetch them for local builds;
+      # the jobs here call electron-builder directly, so they fetch them too.
+      - name: Fetch bundled runtimes
+        run: |
+          npm run fetch:easytier
+          npm run fetch:ludusavi
+          npm run fetch:legendary
       - name: Build and package Windows app
         run: |
           npm run build:notification-overlay:windows
@@ -161,6 +171,16 @@ jobs:
         working-directory: services/torrent-agent
       - name: Build bundled torrent-agent binary
         run: npm run bundle:torrent-agent
+      # electron-builder packs vendor/easytier, vendor/ludusavi and
+      # vendor/legendary as extra resources, and none of them is in the
+      # repository: without this the artifact ships without P2P rooms, cloud
+      # saves or Epic support. The dist:* scripts fetch them for local builds;
+      # the jobs here call electron-builder directly, so they fetch them too.
+      - name: Fetch bundled runtimes
+        run: |
+          npm run fetch:easytier
+          npm run fetch:ludusavi
+          npm run fetch:legendary
       - name: Build Linux artifacts (no pacman here)
         run: |
           npm run build:notification-overlay:linux
@@ -230,6 +250,16 @@ jobs:
         working-directory: services/torrent-agent
       - name: Build bundled torrent-agent binary
         run: npm run bundle:torrent-agent
+      # electron-builder packs vendor/easytier, vendor/ludusavi and
+      # vendor/legendary as extra resources, and none of them is in the
+      # repository: without this the artifact ships without P2P rooms, cloud
+      # saves or Epic support. The dist:* scripts fetch them for local builds;
+      # the jobs here call electron-builder directly, so they fetch them too.
+      - name: Fetch bundled runtimes
+        run: |
+          npm run fetch:easytier
+          npm run fetch:ludusavi
+          npm run fetch:legendary
       - name: Build pacman package
         run: |
           npm run build:notification-overlay:linux
