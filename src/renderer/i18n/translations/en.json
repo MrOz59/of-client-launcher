@@ -912,5 +912,5 @@
   "library.vpn.route.relay": "Via relay",
   "library.vpn.route.connecting": "Finding a direct connection",
   "library.vpn.route.local": "You",
-  "library.vpn.directPending": "Trying to connect players directly. Restrictive networks may require a regional relay; the rendezvous node in Brazil does not relay game traffic."
+  "library.vpn.directPending": "Trying to connect the players directly. When one side's network blocks it (CGNAT, symmetric NAT or filtered UDP), a third player both sides can reach becomes the bridge — the rendezvous node in Brazil never relays game traffic."
 }

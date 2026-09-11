@@ -102,8 +102,11 @@ O cliente novo negocia ambos os transportes.
 
 Proximidade geográfica não garante conectividade direta: CGNAT/NAT simétrico,
 firewalls e bloqueios de UDP podem impedir a conexão. Com apenas o ponto de
-encontro brasileiro, esses casos permanecem sem rota de jogo. O launcher mostra
-`Buscando conexão direta` e explica a necessidade de um relay regional.
+encontro brasileiro, um par nessas condições fica sem rota de jogo enquanto
+estiver só entre eles — um terceiro jogador alcançável pelos dois passa a ser a
+ponte, porque cada cliente retransmite a própria sala. O launcher mostra
+`Buscando conexão direta` e diz isso ao jogador, sem prometer relay: nenhum está
+hospedado.
 
 Para oferecer fallback, hospede outro nó EasyTier **fora do Brasil**, próximo aos
 jogadores, permitindo retransmissão para `of-room-*`, e acrescente seus endpoints

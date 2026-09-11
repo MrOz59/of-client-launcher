@@ -912,5 +912,5 @@
   "library.vpn.route.relay": "Via relay",
   "library.vpn.route.connecting": "Buscando conexão direta",
   "library.vpn.route.local": "Você",
-  "library.vpn.directPending": "Tentando conectar os jogadores diretamente. Redes restritivas podem exigir um relay regional; o ponto de encontro no Brasil não retransmite o jogo."
+  "library.vpn.directPending": "Tentando conectar os jogadores diretamente. Quando a rede de um dos lados bloqueia (CGNAT, NAT simétrico ou UDP fechado), um terceiro jogador que alcance os dois vira a ponte — o ponto de encontro no Brasil não retransmite o jogo."
 }
