@@ -7,6 +7,7 @@
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { captureStoreFixture, clearStoreCache, getStoreGame, getStoreListing } from '../store/catalog'
+import { getStoreGameComments, postStoreGameComment } from '../store/comments'
 import { clearStoreImageCache } from '../store/imageProxy'
 import { clearStoreInstructionTranslationCache, translateStoreInstructions } from '../store/instructionTranslation'
 import { getStoreGameMetadata } from '../store/metadata'
@@ -58,6 +59,39 @@ export const registerStoreHandlers: IpcHandlerRegistrar = (_ctx: IpcContext) => 
           error: err?.message || String(err),
           errorCode: err?.code || 'store-translation-unavailable'
         }
+      }
+    }
+  )
+
+  // The comment thread of a game page. With no page asked for, the last one
+  // comes back: that is where the site keeps what was said most recently.
+  ipcMain.handle(
+    'store-game-comments',
+    async (_event: IpcMainInvokeEvent, payload: { url: string; page?: number; force?: boolean }) => {
+      try {
+        const thread = await getStoreGameComments({
+          url: String(payload?.url || ''),
+          page: payload?.page,
+          force: payload?.force === true
+        })
+        return { success: true, thread }
+      } catch (err: any) {
+        console.warn('[Store] Comments failed:', err?.message || err)
+        return { success: false, error: err?.message || String(err), errorCode: err?.code || 'store-comments-failed' }
+      }
+    }
+  )
+
+  // Posts as the signed-in account, through the site's own comment endpoint.
+  ipcMain.handle(
+    'store-post-comment',
+    async (_event: IpcMainInvokeEvent, payload: { url: string; text: string }) => {
+      try {
+        const result = await postStoreGameComment({ url: String(payload?.url || ''), text: String(payload?.text || '') })
+        return { success: true, ...result }
+      } catch (err: any) {
+        console.warn('[Store] Posting a comment failed:', err?.message || err)
+        return { success: false, error: err?.message || String(err), errorCode: err?.code || 'store-comment-failed' }
       }
     }
   )

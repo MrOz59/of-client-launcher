@@ -3,7 +3,10 @@ import fs from 'fs'
 import path from 'path'
 import { resolveSteamAppIdByTitle } from '../achievements/steamAppId'
 import { getUiLanguage } from '../i18nMain'
+import { mapRequirements, type StoreGameRequirements } from './requirements'
 import { cleanStoreTitle } from './title'
+
+export type { StoreGameRequirements, StoreRequirementRow } from './requirements'
 
 /**
  * Everything the store page shows that the site itself does not provide.
@@ -21,7 +24,7 @@ const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MISS_TTL_MS = 24 * 60 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 15000
 /** Bump when a new field is read: a week-old file would otherwise never carry it. */
-const CACHE_SCHEMA_VERSION = 2
+const CACHE_SCHEMA_VERSION = 3
 
 export type StoreGameTrailer = {
   name?: string
@@ -46,6 +49,8 @@ export type StoreGameMetadata = {
   publishers?: string[]
   releaseDate?: string
   trailer?: StoreGameTrailer
+  /** What the machine needs, as the store page states it. */
+  requirements?: StoreGameRequirements
 }
 
 type CachedMetadata = { schema?: number; fetchedAt: number; metadata: StoreGameMetadata }
@@ -140,7 +145,8 @@ function mapAppDetails(appId: string, data: any): StoreGameMetadata {
     developers: Array.isArray(data?.developers) ? data.developers.slice(0, 3) : [],
     publishers: Array.isArray(data?.publishers) ? data.publishers.slice(0, 3) : [],
     releaseDate: String(data?.release_date?.date || '') || undefined,
-    trailer: pickTrailer(data?.movies)
+    trailer: pickTrailer(data?.movies),
+    requirements: mapRequirements(data)
   }
 }
 

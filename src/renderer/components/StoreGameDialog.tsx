@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, BookOpen, Check, ChevronLeft, ChevronRight, Download, Images, Languages, Loader2, PlayCircle, RotateCcw, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, BookOpen, Check, ChevronLeft, ChevronRight, Download, Images, Languages, Loader2, MessageSquare, PlayCircle, RotateCcw, X } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { useToast } from './ToastHost'
 import { ipcErrorText } from '../../shared/ipcErrors'
 import { useModalA11y } from '../hooks/useModalA11y'
+import StoreGameComments from './StoreGameComments'
 import type { StoreItem, LibraryEntry } from './StoreNextTab'
 
 type StoreGameDetails = {
@@ -34,6 +35,14 @@ type StoreGameMetadata = {
   publishers?: string[]
   releaseDate?: string
   trailer?: { name?: string; thumbnail?: string; hls?: string; webm?: string; mp4?: string }
+  requirements?: StoreGameRequirements
+}
+
+/** What the machine needs, as Steam's own store page states it. */
+type StoreRequirementRow = { label?: string; value: string }
+type StoreGameRequirements = {
+  minimum?: StoreRequirementRow[]
+  recommended?: StoreRequirementRow[]
 }
 
 /**
@@ -43,6 +52,9 @@ type StoreGameMetadata = {
 type GalleryItem =
   | { kind: 'trailer'; label: string; poster?: string; hls?: string; webm?: string; mp4?: string }
   | { kind: 'screenshot'; url: string }
+
+/** Minimum first: it is the question a player actually asks of this list. */
+const REQUIREMENT_TIERS = ['minimum', 'recommended'] as const
 
 /**
  * The game page, composed rather than mirrored.
@@ -79,6 +91,9 @@ export default function StoreGameDialog({
   const [translatedInstructions, setTranslatedInstructions] = useState<string[] | null>(null)
   const [translationStatus, setTranslationStatus] = useState<'idle' | 'loading' | 'translated' | 'error'>('idle')
   const [translationRetryKey, setTranslationRetryKey] = useState(0)
+  // The thread is fetched when it is first looked at, and stays mounted after
+  // that so switching tabs does not throw away what was already read.
+  const [commentsOpened, setCommentsOpened] = useState(false)
 
   useEffect(() => {
     let disposed = false
@@ -133,6 +148,10 @@ export default function StoreGameDialog({
     return () => { disposed = true }
   }, [details?.instructions, item.url, language, translationRetryKey])
 
+  useEffect(() => {
+    if (activeTab === 'comments') setCommentsOpened(true)
+  }, [activeTab])
+
   const startDownload = async () => {
     if (!details?.torrentUrl) return
     setDownloading(true)
@@ -177,12 +196,14 @@ export default function StoreGameDialog({
   const tabs = [
     { id: 'overview', label: t('storeNext.detail.overview'), icon: BookOpen },
     { id: 'instructions', label: t('storeNext.detail.howTo'), icon: Languages },
-    { id: 'gallery', label: t('storeNext.detail.media'), icon: Images }
+    { id: 'gallery', label: t('storeNext.detail.media'), icon: Images },
+    { id: 'comments', label: t('storeNext.detail.comments'), icon: MessageSquare }
   ]
   const selectTab = (tab: string) => {
     setActiveTab(tab)
     bodyRef.current?.scrollTo({ top: 0 })
   }
+  const requirements = metadata?.requirements
   const release = metadata?.releaseDate || details?.releaseDate || (item.publishedAt ? new Date(item.publishedAt).toLocaleDateString(language) : undefined)
   const facts: Array<[string, string]> = [
     [t('storeNext.detail.version'), loading ? '…' : details?.version || t('storeNext.card.noVersion')],
@@ -278,6 +299,27 @@ export default function StoreGameDialog({
               </div>
             ))}
           </dl>
+          {requirements && (
+            <div className="store-next-requirements-block">
+              <h4 className="store-next-section-title">{t('storeNext.detail.requirements')}</h4>
+              <div className="store-next-requirements">
+                {REQUIREMENT_TIERS.filter((tier) => requirements[tier]?.length).map((tier) => (
+                  <div key={tier} className="store-next-requirements-card">
+                    <h5>{t(tier === 'minimum' ? 'storeNext.detail.requirementsMinimum' : 'storeNext.detail.requirementsRecommended')}</h5>
+                    <dl>
+                      {requirements[tier]!.map((row, index) => (
+                        <div key={index}>
+                          {row.label && <dt>{row.label}</dt>}
+                          <dd className={row.label ? undefined : 'store-next-requirement-note'}>{row.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
+              </div>
+              <p className="store-next-source">{t('storeNext.detail.requirementsSource')}</p>
+            </div>
+          )}
           <button className="store-next-howto-link" onClick={() => { selectTab('instructions'); document.getElementById('store-detail-tab-instructions')?.focus() }}>
             <Languages size={20} aria-hidden="true" />
             <span><strong>{t('storeNext.detail.howTo')}</strong><small>{t('storeNext.detail.howToHint')}</small></span>
@@ -369,6 +411,10 @@ export default function StoreGameDialog({
                   )}
             </div>
           ) : !loading && <p className="store-next-detail-description">{t('storeNext.detail.noInstructions')}</p>}
+          </section>
+
+          <section id="store-detail-panel-comments" role="tabpanel" aria-labelledby="store-detail-tab-comments" hidden={activeTab !== 'comments'} tabIndex={0}>
+            {commentsOpened && <StoreGameComments url={item.url} />}
           </section>
 
           {error && (

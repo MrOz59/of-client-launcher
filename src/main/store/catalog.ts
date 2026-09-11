@@ -224,6 +224,82 @@ export async function fetchStoreHtml(url: string, options?: { force?: boolean })
   }
 }
 
+/**
+ * A request that is not a catalogue page: DLE's own AJAX endpoints, which
+ * answer per interaction and must never be cached. Same session, same rate
+ * gate and same charset decode as the pages, so the store still talks to the
+ * site with one voice.
+ */
+export async function requestStoreText(
+  url: string,
+  options?: { method?: 'GET' | 'POST'; body?: string; referer?: string }
+): Promise<string> {
+  const target = new URL(url, STORE_HOME_URL).toString()
+  if (!isOnlineFixHost(new URL(target).hostname)) {
+    throw new StoreRequestError('store-unavailable', `Refusing to fetch a host outside the store: ${target}`)
+  }
+
+  const cooldown = getStoreCooldownMs()
+  if (cooldown > 0) {
+    const seconds = Math.max(1, Math.ceil(cooldown / 1000))
+    throw new StoreRequestError('store-rate-limited', `Store rate limit is active; retry in ${seconds}s`)
+  }
+
+  await reserveStoreRequestSlot(MIN_REQUEST_INTERVAL_MS)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+  try {
+    const response = await storeSession().fetch(target, {
+      method: options?.method || 'GET',
+      body: options?.body,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, text/html, */*',
+        // The endpoints are the ones the site's own scripts call.
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(options?.body ? { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } : {}),
+        ...(options?.referer ? { Referer: options.referer } : {})
+      }
+    })
+
+    if (response.status === 429) {
+      noteStoreRateLimit(response.headers.get('retry-after'))
+      throw new StoreRequestError('store-rate-limited', '429 Too Many Requests')
+    }
+
+    if (!response.ok) {
+      throw new StoreRequestError('store-http-error', `${response.status} ${response.statusText}`)
+    }
+
+    return decodeBody(Buffer.from(await response.arrayBuffer()), response.headers.get('content-type'))
+  } catch (err: any) {
+    if (err instanceof StoreRequestError) throw err
+    throw new StoreRequestError('store-unavailable', err?.message || String(err))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Drops one page from the cache.
+ *
+ * Used when the launcher itself is what changed that page — posting a comment —
+ * so the next read shows the thread as it is now instead of the copy from
+ * before, which the six-hour page cache would otherwise keep serving.
+ */
+export async function invalidateStorePage(url: string): Promise<void> {
+  try {
+    const target = new URL(url, STORE_HOME_URL).toString()
+    const key = cacheKey(await cacheScope(), target)
+    cache.delete(key)
+    fs.rmSync(path.join(cacheDirectory(false), `${key}.json`), { force: true })
+  } catch (err) {
+    console.warn('[Store] Failed to invalidate cached page:', err)
+  }
+}
+
 function listingUrl(page: number, query?: string): string {
   const trimmed = String(query || '').trim()
   if (trimmed) {

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { Cookie } from 'electron'
+import type { StoreComment, StoreCommentsThread } from '../shared/storeComments'
 
 type DownloadResult = { success: boolean; error?: string }
 type VersionResult =
@@ -196,7 +197,25 @@ declare global {
           publishers?: string[]
           releaseDate?: string
           trailer?: { name?: string; thumbnail?: string; hls?: string; webm?: string; mp4?: string }
+          requirements?: {
+            minimum?: Array<{ label?: string; value: string }>
+            recommended?: Array<{ label?: string; value: string }>
+          }
         }
+        error?: string
+        errorCode?: string
+      }>
+      storeGameComments: (url: string, page?: number, force?: boolean) => Promise<{
+        success: boolean
+        thread?: StoreCommentsThread
+        error?: string
+        errorCode?: string
+      }>
+      storePostComment: (url: string, text: string) => Promise<{
+        success: boolean
+        comment?: StoreComment
+        pending?: boolean
+        notice?: string
         error?: string
         errorCode?: string
       }>
@@ -278,7 +297,14 @@ declare global {
       setGameFavorite: (gameUrl: string, isFavorite: boolean) => Promise<{ success: boolean; isFavorite?: boolean; error?: string }>
       toggleGameFavorite: (gameUrl: string) => Promise<{ success: boolean; isFavorite?: boolean; error?: string }>
       setGameProtonOptions: (gameUrl: string, runtime: string, options: any) => Promise<{ success: boolean; error?: string }>
-      exportGameFix: (gameUrl: string) => Promise<{ success: boolean; canceled?: boolean; fix?: any; path?: string; error?: string }>
+      exportGameFix: (gameUrl: string, fix?: any) => Promise<{ success: boolean; canceled?: boolean; fix?: any; path?: string; error?: string }>
+      buildGameFixDraft: (gameUrl: string) => Promise<{ success: boolean; fix?: any; error?: string }>
+      listGameExecutables: (gameUrl: string) => Promise<{
+        success: boolean
+        executables?: Array<{ name: string; relativePath: string; size: number }>
+        installed?: boolean
+        error?: string
+      }>
       importGameFix: () => Promise<{ success: boolean; canceled?: boolean; fix?: any; path?: string; error?: string }>
       listRemoteGameFixes: (gameUrl: string, force?: boolean) => Promise<{
         success: boolean
@@ -302,7 +328,7 @@ declare global {
       installGameFixComponents: (gameUrl: string, fix: any) => Promise<{ success: boolean; prefix?: string; installed?: string[]; warnings?: string[]; error?: string }>
       getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => Promise<{ success: boolean; text?: string; live?: boolean; logPath?: string | null; pid?: number; updatedAt?: number; hasProcessOutput?: boolean; hasProtonLog?: boolean; error?: string }>
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>
-      vpnStatus: () => Promise<{ success: boolean; controller?: any; installed?: boolean; installError?: string; error?: string }>
+      vpnStatus: () => Promise<{ success: boolean; controller?: any; installed?: boolean; installError?: string; transport?: import('../shared/vpn').VpnTransport; session?: import('../shared/vpn').VpnSessionState | null; error?: string }>
       vpnInstall: () => Promise<{ success: boolean; error?: string; url?: string }>
       vpnRoomCreate: (payload?: {
         name?: string

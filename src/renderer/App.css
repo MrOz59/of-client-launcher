@@ -4037,6 +4037,10 @@ body {
   transition: all 0.2s;
 }
 
+/* Without this a textarea keeps the browser's monospace default and reads as a
+   different control from the inputs beside it. */
+textarea.config-input { font-family: inherit; line-height: 1.5; resize: vertical; }
+
 .config-input:focus {
   outline: none;
   border-color: #8b5cf6;
@@ -6062,6 +6066,61 @@ textarea:focus-visible,
 .store-next-translation-error { flex-wrap: wrap; color: #fbbf24; }
 .store-next-translation-error .settings-btn { padding-block: 3px; color: #fde68a; }
 
+/* ── What the machine needs, from the game's Steam page ──────────────────── */
+
+.store-next-requirements-block { margin-top: 22px; }
+.store-next-requirements { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.store-next-requirements-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: #17171c; }
+.store-next-requirements-card h5 { margin: 0 0 10px; color: #c4b5fd; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.store-next-requirements-card dl { display: flex; flex-direction: column; gap: 7px; margin: 0; }
+.store-next-requirements-card dl > div { display: grid; grid-template-columns: minmax(78px, 34%) 1fr; gap: 10px; }
+.store-next-requirements-card dt { color: var(--muted-2); font-size: 11.5px; }
+.store-next-requirements-card dd { margin: 0; overflow-wrap: anywhere; color: #d4d4dc; font-size: 12px; line-height: 1.45; }
+/* A line the publisher wrote without a label ("Requires a 64-bit processor"). */
+.store-next-requirements-card dl > div:has(> .store-next-requirement-note) { grid-template-columns: 1fr; }
+.store-next-requirement-note { color: var(--muted); font-size: 11.5px; }
+.store-next-requirements-block .store-next-source { margin-top: 9px; }
+
+/* ── The thread under a game ─────────────────────────────────────────────── */
+
+.store-next-comments { display: flex; flex-direction: column; gap: 14px; }
+.store-next-comments-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.store-next-comments-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.store-next-comments-older { align-self: center; }
+
+.store-next-comment-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; list-style: none; background: var(--border); }
+.store-next-comment { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 14px 16px; background: #17171c; }
+.store-next-comment-avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: #26262d; }
+.store-next-comment-avatar.placeholder { display: grid; place-items: center; color: #c4b5fd; font-size: 14px; font-weight: 700; }
+.store-next-comment-main { min-width: 0; }
+.store-next-comment-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.store-next-comment-author { color: var(--text); font-size: 12.5px; font-weight: 650; }
+.store-next-comment-date { color: var(--muted-2); font-size: 11px; }
+.store-next-comment-number { color: var(--muted-2); font-size: 10.5px; }
+.store-next-comment-text { margin: 0 0 8px; overflow-wrap: anywhere; color: #d4d4dc; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.store-next-comment-text:last-child { margin-bottom: 0; }
+.store-next-comment-text.muted { color: var(--muted-2); font-style: italic; }
+.store-next-comment-mention { color: #c4b5fd; font-weight: 600; }
+.store-next-comment-link { color: #93c5fd; text-decoration: underline; text-decoration-color: rgba(147, 197, 253, .4); cursor: pointer; }
+.store-next-comment-link:hover { text-decoration-color: #93c5fd; }
+/* The site's smileys are punctuation, not pictures: keep them at text size. */
+.store-next-comment-emoji { height: 1.15em; width: auto; vertical-align: -0.15em; }
+.store-next-comment-image { display: block; max-width: 100%; max-height: 260px; margin: 6px 0; border-radius: 8px; }
+.store-next-comment-quote { margin: 0 0 8px; padding: 8px 12px; border-left: 2px solid rgba(167, 139, 250, .45); border-radius: 0 8px 8px 0; background: rgba(255, 255, 255, .03); }
+.store-next-comment-quote cite { display: block; margin-bottom: 4px; color: #c4b5fd; font-size: 11px; font-style: normal; font-weight: 650; }
+.store-next-comment-quote .store-next-comment-text { margin: 0; color: var(--muted); font-size: 12.5px; }
+.store-next-comment-spoiler { margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255, 255, 255, .02); }
+.store-next-comment-spoiler summary { color: #c4b5fd; font-size: 12px; cursor: pointer; }
+.store-next-comment-spoiler .store-next-comment-text { margin: 8px 0 0; }
+
+.store-next-comment-form { display: flex; flex-direction: column; gap: 9px; padding: 15px 16px; border: 1px solid var(--border); border-radius: 12px; background: #17171c; }
+.store-next-comment-label { color: var(--muted); font-size: 11.5px; }
+.store-next-comment-form textarea { width: 100%; padding: 11px 12px; border: 1px solid rgba(255, 255, 255, .1); border-radius: 8px; color: #fff; background: rgba(0, 0, 0, .4); font: inherit; font-size: 13px; line-height: 1.5; resize: vertical; }
+.store-next-comment-form textarea:focus { outline: none; border-color: rgba(167, 139, 250, .55); }
+.store-next-comment-form textarea::placeholder { color: var(--muted-2); }
+.store-next-comment-form textarea:disabled { opacity: .6; }
+.store-next-comment-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+
 .store-next-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 28px; border-top: 1px solid var(--border); background: rgba(17, 17, 20, 0.96); }
 .store-next-detail-actions .settings-btn.primary { margin-right: auto; }
 .store-next-download-hint { flex-basis: 100%; margin: 0 0 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -6099,6 +6158,10 @@ textarea:focus-visible,
   .store-next-detail-tabs { padding-inline: 8px; gap: 0; }
   .store-next-detail-tabs button { flex: 1; justify-content: center; padding: 15px 8px; font-size: 11px; gap: 5px; }
   .store-next-shots button { flex-basis: 88px; }
+  .store-next-requirements { grid-template-columns: 1fr; }
+  .store-next-requirements-card dl > div { grid-template-columns: 1fr; gap: 2px; }
+  .store-next-comment { grid-template-columns: 28px 1fr; gap: 10px; padding: 12px 13px; }
+  .store-next-comment-avatar { width: 28px; height: 28px; }
   .store-next-detail-actions { padding: 12px 20px; }
   .store-next-detail-actions .settings-btn { flex: 1 1 auto; }
   .store-next-detail-actions .settings-btn.primary { flex-basis: 100%; margin-right: 0; }

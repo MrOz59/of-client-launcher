@@ -144,6 +144,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('store-translate-instructions', { url, instructions, language, force }),
   storeGameMetadata: (url: string, title: string, steamAppId?: string) =>
     ipcRenderer.invoke('store-game-metadata', { url, title, steamAppId }),
+  storeGameComments: (url: string, page?: number, force?: boolean) =>
+    ipcRenderer.invoke('store-game-comments', { url, page, force }),
+  storePostComment: (url: string, text: string) => ipcRenderer.invoke('store-post-comment', { url, text }),
   storeCaptureFixture: (url: string, name?: string) => ipcRenderer.invoke('store-capture-fixture', { url, name }),
   storeClearCache: () => ipcRenderer.invoke('store-clear-cache'),
   setUiLanguage: (language: string) => ipcRenderer.invoke('set-ui-language', language),

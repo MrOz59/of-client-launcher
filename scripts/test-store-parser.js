@@ -7,6 +7,8 @@
 const fs = require('fs')
 const path = require('path')
 const { parseListing, parseGamePage } = require('../dist/main/store/parser.js')
+const { parseComments, parseCommentsContext, parseCommentDate } = require('../dist/main/store/commentsParser.js')
+const { mapRequirements, parseRequirements } = require('../dist/main/store/requirements.js')
 
 const BASE = 'https://online-fix.me/'
 let failures = 0
@@ -216,6 +218,114 @@ check(
   launchExeOf(['Запускаем Steam, заходим в свой профиль.']) === undefined,
   'no binary named means no hint',
   launchExeOf(['Запускаем Steam, заходим в свой профиль.'])
+)
+
+console.log('\ncomment thread captured from a real game page')
+const commentsHtml = fs.readFileSync(path.join(__dirname, 'fixtures', 'game-comments.html'), 'utf8')
+const GAME_URL = 'https://online-fix.me/games/adventures/18237-tainted-grail-the-fall-of-avalon-po-seti.html'
+const thread = parseComments(commentsHtml, GAME_URL)
+const context = parseCommentsContext(commentsHtml)
+const [first, second, third] = thread
+
+check(thread.length === 3, 'reads every comment in the thread', thread.length)
+check(first?.author === 'FeldOtto55', 'reads the author', first?.author)
+check(first?.number === 21, 'keeps the number the site gave it', first?.number)
+check(
+  first?.permalink === `${GAME_URL.replace('18237-', 'page,1,1,18237-')}#comment-id-407695`,
+  'keeps the link to the comment',
+  first?.permalink
+)
+check(first?.avatarUrl === undefined, 'the template default avatar is not an avatar', first?.avatarUrl)
+check(
+  first?.body[0]?.segments[0]?.text === 'Do you need to download the modification for it as well,\nor is that included in the torrent already?',
+  'a <br> is a line break inside the comment, not two comments',
+  first?.body[0]?.segments[0]
+)
+
+check(second?.authorColor === '#843232', 'keeps the colour of the author group', second?.authorColor)
+check(second?.avatarUrl === 'https://online-fix.me/uploads/fotos/foto_1561717.png', 'reads a real avatar', second?.avatarUrl)
+
+const secondSegments = second?.body[0]?.segments || []
+check(
+  secondSegments[0]?.kind === 'mention' && secondSegments[0]?.name === 'FeldOtto55',
+  'the answer button writes a mention, not an "@" and a link',
+  secondSegments[0]
+)
+check(
+  secondSegments.some((segment) => segment.kind === 'link' && segment.url === 'https://example.com/patchnotes'),
+  'an outbound link is unwrapped from the site redirector',
+  secondSegments.filter((segment) => segment.kind === 'link')
+)
+check(
+  secondSegments.some((segment) => segment.kind === 'image' && segment.inline === true),
+  'a smiley stays an inline image',
+  secondSegments.filter((segment) => segment.kind === 'image')
+)
+
+check(third?.body[0]?.kind === 'quote', 'a quoted reply comes back as a quote block', third?.body.map((block) => block.kind))
+check(third?.body[0]?.title === 'FeldOtto55', 'the quote keeps its attribution', third?.body[0]?.title)
+check(
+  third?.body[1]?.kind === 'text' && /font looks weird/.test(third?.body[1]?.segments[0]?.text || ''),
+  'the answer under the quote is its own block',
+  third?.body[1]
+)
+
+check(context.total === 23, 'reads how many comments the thread has', context.total)
+check(context.currentPage === 2, 'the page the site served is the one its pager marks', context.currentPage)
+check(context.pageCount === 2, 'reads how many pages the thread has', context.pageCount)
+check(first?.number === 21, 'so the comments on it are not numbered from one', first?.number)
+check(context.newsId === '18237', 'reads the article id the comment endpoint needs', context.newsId)
+check(context.skin === 'FixLand', 'reads the template name that endpoint needs', context.skin)
+check(context.canPost === true, 'the form on the page means this account may post', context.canPost)
+check(context.author === 'MrOz', 'reads the name a comment would be posted under', context.author)
+
+// What a signed-out reader gets: the same thread, and no form anywhere on it.
+const guestHtml = commentsHtml.replace(/<form[^>]*id="dle-comments-form"[\s\S]*?<\/form>/, '')
+const guestContext = parseCommentsContext(guestHtml)
+check(parseComments(guestHtml, GAME_URL).length === 3, 'a signed-out reader still gets the thread')
+check(guestContext.canPost === false, 'no form means this account may not post', guestContext.canPost)
+
+// A thread that fits on one page has no pager, and that page is the first one.
+const onePage = parseCommentsContext(commentsHtml.replace(/<nav class="pagination[\s\S]*?<\/nav>/, ''))
+check(onePage.currentPage === undefined, 'no pager means nothing to say about pages', onePage.currentPage)
+
+console.log('\ncomment times')
+const NOW = new Date('2026-09-11T09:00:00Z')
+check(parseCommentDate('Вчера, 18:28', NOW) === '2026-09-10T15:28:00.000Z', 'yesterday, in the site\'s own timezone', parseCommentDate('Вчера, 18:28', NOW))
+check(parseCommentDate('Сегодня, 07:13', NOW) === '2026-09-11T04:13:00.000Z', 'today, in the site\'s own timezone', parseCommentDate('Сегодня, 07:13', NOW))
+check(parseCommentDate('10 сен 2026, 23:43', NOW) === '2026-09-10T20:43:00.000Z', 'a dated post with a Russian month name', parseCommentDate('10 сен 2026, 23:43', NOW))
+check(parseCommentDate('какая-то ерунда', NOW) === undefined, 'an unreadable date is left to the site\'s own wording', parseCommentDate('какая-то ерунда', NOW))
+
+console.log('\nsystem requirements, from a saved Steam payload')
+const steam = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'steam-requirements.json'), 'utf8'))
+const requirements = mapRequirements(steam)
+const minimum = requirements?.minimum || []
+const labelled = Object.fromEntries(minimum.filter((row) => row.label).map((row) => [row.label, row.value]))
+
+check(minimum.length === 8, 'reads every line of the minimum block', minimum.length)
+check(labelled['Processor'] === 'i5 8th gen or AMD equivalent', 'splits a row into its label and its value', labelled['Processor'])
+check(labelled['Memory'] === '12 GB RAM', 'reads the memory row', labelled['Memory'])
+check(
+  minimum.some((row) => !row.label && /64-bit processor/.test(row.value)),
+  'a line the publisher wrote without a label is kept as a note',
+  minimum.filter((row) => !row.label)
+)
+check(
+  !minimum.some((row) => /^Minimum$/i.test(row.label || '')),
+  'the heading above the list is not a row',
+  minimum[0]
+)
+check(
+  requirements?.recommended?.some((row) => row.label === 'Graphics' && row.value === 'RTX 2070 Super'),
+  'reads the recommended block as well',
+  requirements?.recommended
+)
+check(parseRequirements(steam.mac_requirements.minimum) === undefined, 'an empty list is no requirements at all', parseRequirements(steam.mac_requirements.minimum))
+check(parseRequirements(undefined) === undefined, 'a game with no block at all is handled')
+check(
+  parseRequirements(steam.prose_requirements.minimum)?.length === 3,
+  'an entry written as prose instead of a list still reads back',
+  parseRequirements(steam.prose_requirements.minimum)
 )
 
 console.log(failures === 0 ? '\nall parser checks passed' : `\n${failures} check(s) failed`)

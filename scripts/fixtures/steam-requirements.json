@@ -1,0 +1,14 @@
+{
+  "_comment": "Trimmed from store.steampowered.com/api/appdetails?appids=1466060 (Tainted Grail: The Fall of Avalon). Kept verbatim: these blocks are markup written for Steam's own page, and the launcher reads them back into rows.",
+  "pc_requirements": {
+    "minimum": "<strong>Minimum:</strong><br><ul class=\"bb_ul\"><li>Requires a 64-bit processor and operating system<br></li><li><strong>OS:</strong> Windows 10 64-bit<br></li><li><strong>Processor:</strong> i5 8th gen or AMD equivalent<br></li><li><strong>Memory:</strong> 12 GB RAM<br></li><li><strong>Graphics:</strong> GTX 1060 6GB or AMD equivalent<br></li><li><strong>DirectX:</strong> Version 11<br></li><li><strong>Storage:</strong> 31 GB available space<br></li><li><strong>Additional Notes:</strong> Low settings, 30 FPS, Full HD, SSD Strongly Recommended</li></ul>",
+    "recommended": "<strong>Recommended:</strong><br><ul class=\"bb_ul\"><li>Requires a 64-bit processor and operating system<br></li><li><strong>OS:</strong> Windows 10/11 (64-bit)<br></li><li><strong>Processor:</strong> i7 13th gen<br></li><li><strong>Memory:</strong> 16 GB RAM<br></li><li><strong>Graphics:</strong> RTX 2070 Super<br></li><li><strong>DirectX:</strong> Version 11<br></li><li><strong>Storage:</strong> 31 GB available space<br></li><li><strong>Additional Notes:</strong> Ultra settings, 60 FPS, Full HD, SSD Strongly Recommended</li></ul>"
+  },
+  "mac_requirements": {
+    "minimum": "<strong>Minimum:</strong><br><ul class=\"bb_ul\"></ul>",
+    "recommended": "<strong>Recommended:</strong><br><ul class=\"bb_ul\"></ul>"
+  },
+  "prose_requirements": {
+    "minimum": "<strong>Minimum:</strong><br>OS: Windows 7<br>Processor: Dual core<br>Memory: 4 GB RAM"
+  }
+}

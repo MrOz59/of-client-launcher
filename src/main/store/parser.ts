@@ -87,7 +87,8 @@ export type StoreGameDetails = {
   unavailableNotice?: string
 }
 
-function absoluteUrl(href: string | undefined, baseUrl: string): string | null {
+/** Shared with the comment parser, which reads the same pages. */
+export function absoluteUrl(href: string | undefined, baseUrl: string): string | null {
   const value = String(href || '').trim()
   if (!value || value.startsWith('#') || value.startsWith('javascript:')) return null
   try {
@@ -97,7 +98,7 @@ function absoluteUrl(href: string | undefined, baseUrl: string): string | null {
   }
 }
 
-function cleanText(value: string | undefined | null): string {
+export function cleanText(value: string | undefined | null): string {
   return String(value || '').replace(/\s+/g, ' ').trim()
 }
 
