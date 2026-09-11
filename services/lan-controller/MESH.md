@@ -57,11 +57,22 @@ Estas alterações estão no repositório; não executam deploy automaticamente.
 3. Configure no `.env`:
 
    ```dotenv
-   VPN_MESH_PEERS=udp://vpn.mroz.dev.br:11010,tcp://vpn.mroz.dev.br:11010
+   VPN_ENABLE=true
+   VPN_TRANSPORT=easytier
+   VPN_MESH_PEERS=udp://191.252.212.22:11010,tcp://191.252.212.22:11010
    ```
 
-4. Libere `11010/udp` e `11010/tcp` e mantenha o proxy HTTPS existente para
-   `127.0.0.1:8787`. O HTTPS atende às salas, não transporta os jogos.
+   **O endereço precisa chegar ao VPS direto.** `vpn.mroz.dev.br` está atrás do
+   Cloudflare, que encaminha apenas portas HTTP(S) e nenhuma UDP: anunciar esse
+   nome em `VPN_MESH_PEERS` faria os clientes baterem na borda do Cloudflare na
+   11010 e não encontrarem ninguém. Por isso o deploy usa o IP. Para não depender
+   do IP, aponte um subdomínio **sem proxy** (nuvem cinza) para o VPS e use esse
+   nome aqui; o valor é distribuído por sala pelo controlador, então trocar a
+   variável basta.
+
+4. Libere `11010/udp` e `11010/tcp` (`ufw allow 11010/tcp`, `ufw allow
+   11010/udp`) e mantenha o proxy HTTPS existente para `127.0.0.1:8787`. O HTTPS
+   atende às salas, não transporta os jogos.
    Se usar o Caddy do compose original, ele pode continuar apontando para
    `lan-controller:8787` pela rede Docker `lan-controller-net`, compartilhada
    com o novo compose. Não remova esse Caddy ao trocar o controlador.
