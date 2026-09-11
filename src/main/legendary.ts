@@ -4,6 +4,7 @@ import path from 'path'
 import { app } from 'electron'
 import https from 'https'
 import os from 'os'
+import { assetNamesHostArch, assetRunsOnHost } from './utils/releaseAssets'
 
 export type LegendaryExecResult = {
   ok: boolean
@@ -267,17 +268,13 @@ function extractArchive(archivePath: string, extractDir: string, timeoutMs: numb
 }
 
 function selectLegendaryAsset(assets: any[], platform: NodeJS.Platform, arch: string): any | null {
-  const archNeedles =
-    arch === 'x64'
-      ? ['x86_64', 'amd64', 'x64']
-      : arch === 'arm64'
-        ? ['aarch64', 'arm64']
-        : [arch]
-
   const candidates = assets
     .filter(a => a?.name)
     .map(a => ({ asset: a, name: String(a.name).toLowerCase() }))
     .filter(c => !c.name.startsWith('source code'))
+    // Scoring alone would still rank a foreign build above nothing, and a
+    // release that ships only arm64 would install a binary that cannot run.
+    .filter(c => assetRunsOnHost(c.name, arch))
 
   if (!candidates.length) return null
 
@@ -302,7 +299,7 @@ function selectLegendaryAsset(assets: any[], platform: NodeJS.Platform, arch: st
     if (platform === 'linux' && isLinux(n)) s += 6
     if (platform === 'darwin' && isMac(n)) s += 6
     if (platform === 'win32' && isWin(n)) s += 6
-    if (archNeedles.some(a => n.includes(a))) s += 3
+    if (assetNamesHostArch(n, arch)) s += 3
     if (n === 'legendary' || n.startsWith('legendary-') || n.startsWith('legendary_')) s += 2
     if (isArchive(n)) s += 1
     if (isAppImage(n)) s += 1

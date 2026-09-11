@@ -14,6 +14,7 @@ import {
   winetricksAvailable
 } from '../protonManager'
 import { ensureLegendaryAvailable, resolveLegendaryBinary, runLegendary } from '../legendary'
+import { assetNamesHostArch, assetRunsOnHost } from '../utils/releaseAssets'
 import { ensureLudusaviAvailable, resolveLudusaviBinary, runLudusavi } from '../ludusavi'
 import { findEosOverlayInstallPath, isEosOverlayPathValid } from '../utils'
 import { resolveAppIconPath } from '../appIcon'
@@ -531,7 +532,6 @@ function selectAsset(release: any, tool: ManagedTool): { name?: string; url?: st
   if (tool === 'legendary') {
     const n = (value: string) => value.toLowerCase()
     const platform = process.platform
-    const arch = process.arch
     const platformScore = (name: string) => {
       const v = n(name)
       if (platform === 'win32' && (v.includes('win') || v.endsWith('.exe'))) return 5
@@ -539,23 +539,22 @@ function selectAsset(release: any, tool: ManagedTool): { name?: string; url?: st
       if (platform === 'darwin' && (v.includes('mac') || v.includes('darwin') || v.includes('osx'))) return 5
       return 0
     }
-    const archScore = (name: string) => {
-      const v = n(name)
-      if (arch === 'x64' && /(x86_64|x64|amd64|64)/.test(v)) return 3
-      if (arch === 'arm64' && /(arm64|aarch64)/.test(v)) return 3
-      return 0
-    }
     return names
       .filter((a: any) => /legendary/i.test(a.name) || a.name.toLowerCase() === 'legendary')
-      .sort((a: any, b: any) => (platformScore(b.name) + archScore(b.name)) - (platformScore(a.name) + archScore(a.name)))[0] || {}
+      // A build for another architecture is not a candidate at all: scoring it
+      // let legendary_linux_arm64 tie with legendary_linux_x64 and win on order.
+      .filter((a: any) => assetRunsOnHost(a.name))
+      .sort((a: any, b: any) =>
+        (platformScore(b.name) + (assetNamesHostArch(b.name) ? 3 : 0)) -
+        (platformScore(a.name) + (assetNamesHostArch(a.name) ? 3 : 0)))[0] || {}
   }
 
   if (tool === 'ludusavi') {
     const platformNeedle = process.platform === 'win32' ? /win|windows/i : process.platform === 'darwin' ? /mac|darwin|osx/i : /linux/i
-    const archNeedle = process.arch === 'arm64' ? /arm64|aarch64/i : /x86_64|x64|amd64|64/i
     return names
       .filter((a: any) => /\.(zip|tar\.gz|tgz)$/i.test(a.name) && platformNeedle.test(a.name))
-      .sort((a: any, b: any) => Number(archNeedle.test(b.name)) - Number(archNeedle.test(a.name)))[0] || {}
+      .filter((a: any) => assetRunsOnHost(a.name))
+      .sort((a: any, b: any) => Number(assetNamesHostArch(b.name)) - Number(assetNamesHostArch(a.name)))[0] || {}
   }
 
   return {}

@@ -176,18 +176,32 @@ function findFileRecursive(root, predicate, maxFiles = 5000) {
   return null
 }
 
+/**
+ * Mirrors src/main/utils/releaseAssets.ts, which this script cannot import: it
+ * runs before the TypeScript build. ARM is tested first because `aarch64` ends
+ * in "64", and nothing matches a bare "64" — that is what let an arm build pass
+ * for an x86 one in the launcher.
+ */
+function declaredArch(name) {
+  if (/(?:^|[^a-z0-9])(arm64|aarch64|armv8)(?:[^a-z0-9]|$)/i.test(name)) return 'arm64'
+  if (/(?:^|[^a-z0-9])(x86[-_]?64|amd64|x64|win64|linux64)(?:[^a-z0-9]|$)/i.test(name)) return 'x64'
+  return null
+}
+
+function hostArchFamily(arch) {
+  return arch === 'arm64' || arch === 'arm' ? 'arm64' : 'x64'
+}
+
 function selectLegendaryAsset(assets, platform, arch) {
-  const archNeedles =
-    arch === 'x64'
-      ? ['x86_64', 'amd64', 'x64']
-      : arch === 'arm64'
-        ? ['aarch64', 'arm64']
-        : [arch]
+  const family = hostArchFamily(arch)
 
   const candidates = assets
     .filter(a => a && a.name)
     .map(a => ({ asset: a, name: String(a.name).toLowerCase() }))
     .filter(c => !c.name.startsWith('source code'))
+    // A build for another architecture is never a candidate: bundling one would
+    // ship a binary that cannot run, instead of failing here where it is seen.
+    .filter(c => declaredArch(c.name) === null || declaredArch(c.name) === family)
 
   if (!candidates.length) return null
 
@@ -210,7 +224,7 @@ function selectLegendaryAsset(assets, platform, arch) {
     if (platform === 'linux' && isLinux(n)) s += 6
     if (platform === 'darwin' && isMac(n)) s += 6
     if (platform === 'win32' && isWin(n)) s += 6
-    if (archNeedles.some(a => n.includes(a))) s += 3
+    if (declaredArch(n) === family) s += 3
     if (n === 'legendary' || n.startsWith('legendary-') || n.startsWith('legendary_')) s += 2
     if (isArchive(n)) s += 1
     if (isAppImage(n)) s += 1
