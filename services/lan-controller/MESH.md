@@ -77,10 +77,11 @@ Estas alterações estão no repositório; não executam deploy automaticamente.
    no launcher confirma a conexão de cada jogador.
 
 O compose P2P usa um controlador sem ferramentas WireGuard e mantém as rotas de
-API. Se o mesmo serviço também atende OAuth do Google Drive, monte o arquivo
-existente `google-oauth-secrets.mjs` em `/app/google-oauth-secrets.mjs:ro` no serviço
-`lan-controller`; o Dockerfile P2P não embute segredos. Não use o `deploy.sh`
-antigo para esta migração: ele foi feito para ZeroTier e sobrescreve o `.env`.
+API. O mesmo serviço atende o OAuth do Google Drive do launcher: o Dockerfile P2P
+não embute segredos, então o `compose.mesh.yml` monta o `google-oauth-secrets.mjs`
+existente em `/app/google-oauth-secrets.mjs:ro`. Sem esse arquivo a API continua
+de pé e apenas esse proxy se desliga. Não use o `deploy.sh` antigo para esta
+migração: ele foi feito para ZeroTier e sobrescreve o `.env`.
 
 Para manter um deploy WireGuard existente, continue usando seu compose atual.
 O servidor ainda assume `VPN_TRANSPORT=wireguard` quando a variável está ausente.

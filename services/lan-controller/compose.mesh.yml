@@ -16,6 +16,10 @@ services:
       - "127.0.0.1:8787:8787"
     volumes:
       - ./data:/data
+      # The same service answers the launcher's Google Drive OAuth: this image
+      # embeds no secrets, so the existing file is mounted instead. Without it
+      # the API still runs and only that proxy turns itself off.
+      - ./google-oauth-secrets.mjs:/app/google-oauth-secrets.mjs:ro
     networks:
       - lan
 
