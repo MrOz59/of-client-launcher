@@ -220,7 +220,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadRemoteGameFix: (gameUrl: string, fixId: string) => ipcRenderer.invoke('download-remote-game-fix', gameUrl, fixId),
   saveGameFix: (gameUrl: string, fix: any) => ipcRenderer.invoke('save-game-fix', gameUrl, fix),
   deleteGameFix: (gameUrl: string, fixId: string) => ipcRenderer.invoke('delete-game-fix', gameUrl, fixId),
-  applyGameFix: (gameUrl: string, fix: any) => ipcRenderer.invoke('apply-game-fix', gameUrl, fix),
+  applyGameFix: (gameUrl: string, fix: any, inputValues?: Record<string, string>) => ipcRenderer.invoke('apply-game-fix', gameUrl, fix, inputValues),
+  installGameFixDownloads: (gameUrl: string, fix: any) => ipcRenderer.invoke('install-game-fix-downloads', gameUrl, fix),
+  onGameFixDownloadProgress: (cb: (data: any) => void) => {
+    const handler = (_event: IpcRendererEvent, data: any) => cb(data)
+    ipcRenderer.on('game-fix-download-progress', handler)
+    return () => ipcRenderer.removeListener('game-fix-download-progress', handler)
+  },
   installGameFixComponents: (gameUrl: string, fix: any) => ipcRenderer.invoke('install-game-fix-components', gameUrl, fix),
   getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) =>
     ipcRenderer.invoke('get-proton-log-snapshot', payload),

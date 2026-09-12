@@ -125,6 +125,9 @@ export default function LibraryTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isLinux, setIsLinux] = useState(false)
+  // The fixes tab needs the system itself, not just "is it Linux": a fix says
+  // which systems it is for, and skips the parts that do not apply.
+  const [platform, setPlatform] = useState<string>('')
 
   // Library filters
   const [librarySearch, setLibrarySearch] = useState<string>('')
@@ -493,6 +496,7 @@ export default function LibraryTab() {
       try {
         const settings = await window.electronAPI.getSettings()
         setIsLinux(Boolean(settings?.isLinux || settings?.platform === 'linux'))
+        if (settings?.platform) setPlatform(String(settings.platform))
       } catch {}
     })()
 
@@ -926,6 +930,7 @@ export default function LibraryTab() {
         <ConfigModal
           game={configGame}
           isLinux={isLinux}
+          platform={platform}
 
           // Tab state
           configTab={gameConfig.configTab}

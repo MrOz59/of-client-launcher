@@ -1259,7 +1259,19 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
           icon: game.image_url || null
         })
 
-        child = spawn(exePath, [], {
+        // The same launch arguments the Proton path passes. A mod that takes
+        // the player's name off the command line needs them wherever the game
+        // runs, and a fix that sets them was being ignored here.
+        let nativeArgs: string[] = []
+        try {
+          const nativeOpts = game.proton_options ? JSON.parse(game.proton_options) : {}
+          nativeArgs = String(nativeOpts?.launchArgs || '').split(' ').filter(Boolean)
+        } catch {
+          // A settings blob that will not parse is not a reason to refuse to
+          // start the game; it just means no extra arguments.
+        }
+
+        child = spawn(exePath, nativeArgs, {
           env: nativeEnv,
           cwd: installDir,
           detached: true,
@@ -1268,7 +1280,7 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
 
         pushLiveLog('launcher', [
           `cmd: ${exePath}`,
-          `args: `,
+          `args: ${nativeArgs.join(' ')}`,
           `cwd: ${installDir}`,
           `pid: pending`,
           ''
