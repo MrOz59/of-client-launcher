@@ -14,14 +14,8 @@ import {
 } from '../db'
 import {
   isLinux,
-  findProtonRuntime,
   buildProtonLaunch,
-  getPrefixPath,
-  getPrefixRootDir,
-  ensurePrefixDefaults,
-  ensureGamePrefixFromDefault,
-  getExpectedDefaultPrefixPath,
-  ensureGameCommonRedists
+  ensureGamePrefixFromDefault
 } from '../protonManager'
 import * as drive from '../drive'
 import * as cloudSaves from '../cloudSaves'
@@ -951,35 +945,17 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
         const protonOpts = game.proton_options ? JSON.parse(game.proton_options) : {}
         console.log('[Launch] ⚙️ Proton options:', protonOpts)
 
-        const managedRoot = getPrefixRootDir()
-        const storedPrefix = typeof game.proton_prefix === 'string' ? String(game.proton_prefix) : ''
-        let storedExists = !!(storedPrefix && fs.existsSync(storedPrefix))
-
+        // Installation, refresh and launch share the same prefix and dependency state.
+        if (inFlightPrefixJobs.has(gameUrl)) throw new Error('Prefixo está sendo preparado/atualizado. Aguarde.')
+        inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
         let prefixPath: string
-        let defaultPrefixPath: string | null = null
         try {
-          defaultPrefixPath = getExpectedDefaultPrefixPath(game.proton_runtime || undefined)
-        } catch {}
-
-        if (storedExists && defaultPrefixPath && path.resolve(storedPrefix) === path.resolve(defaultPrefixPath)) {
-          console.warn('[Launch] ⚠️ Game configured prefix points to default prefix; creating per-game prefix instead')
-          storedExists = false
-        }
-
-        if (storedExists) {
-          prefixPath = storedPrefix
-          try {
-            await ensurePrefixDefaults(prefixPath, game.proton_runtime || undefined, undefined, (msg) => {
-              sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
-            })
-          } catch (err: any) {
-            console.warn('[Launch] ensurePrefixDefaults failed for stored prefix:', err)
-          }
-        } else {
-          prefixPath = await ensureGamePrefixFromDefault(slug, game.proton_runtime || undefined, undefined, false)
-          if (game.proton_prefix !== prefixPath) {
-            updateGameInfo(gameUrl, { proton_prefix: prefixPath })
-          }
+          prefixPath = await ensureGamePrefixFromDefault(slug, game.proton_runtime || undefined, undefined, false, (msg) => {
+            sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
+          }, installDir, game.proton_prefix || undefined, true)
+          if (game.proton_prefix !== prefixPath) updateGameInfo(gameUrl, { proton_prefix: prefixPath })
+        } finally {
+          inFlightPrefixJobs.delete(gameUrl)
         }
 
         console.log('[Launch] 📂 Prefix path:', prefixPath)
@@ -1014,19 +990,6 @@ export const registerLaunchHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
           appId: overlayPolicy.realSteamAppId || normalizeSteamId(detectedSteamAppId) || normalizeSteamId(steamAppId),
           icon: game.image_url || null
         })
-
-        // Run known redistributables
-        try {
-          sendGameLaunchStatus({ gameUrl, status: 'starting', message: 'Verificando dependências...' })
-          const redistRes = await ensureGameCommonRedists(installDir, prefixPath, game.proton_runtime || undefined, (msg) => {
-            sendGameLaunchStatus({ gameUrl, status: 'starting', message: msg })
-          })
-          if (redistRes.ran) {
-            sendGameLaunchStatus({ gameUrl, status: 'starting', message: redistRes.ok ? 'Dependências instaladas' : 'Dependências: alguns installers falharam' })
-          }
-        } catch (err: any) {
-          console.warn('[Launch] Failed to run common redists:', err)
-        }
 
         let eosOverlayEnabled = false
         if (enableEosOverlay) {

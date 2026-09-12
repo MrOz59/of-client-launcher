@@ -53,7 +53,6 @@ type ToolStatus = {
     defaultRuntime?: string | null
     prefixRoot?: string
     winetricks?: boolean
-    protontricks?: boolean
   }
   protonCachyos?: {
     root?: string
@@ -61,7 +60,6 @@ type ToolStatus = {
     defaultRuntime?: string | null
     prefixRoot?: string
     winetricks?: boolean
-    protontricks?: boolean
   }
   tools?: {
     legendary?: { path?: string | null; version?: string | null; managedVersion?: string | null; managedDir?: string; auth?: LegendaryAuthInfo }
@@ -436,10 +434,6 @@ export default function ToolsTab() {
             <div>
               <span>winetricks</span>
               <StatusPill ok={!!status?.protonGe?.winetricks} label={status?.protonGe?.winetricks ? t('common.available') : t('common.missing')} />
-            </div>
-            <div>
-              <span>protontricks</span>
-              <StatusPill ok={!!status?.protonGe?.protontricks} label={status?.protonGe?.protontricks ? t('common.available') : t('common.missing')} />
             </div>
           </div>
         </div>

@@ -35,6 +35,7 @@
     "test:scraper": "node scripts/test-scraper-dist.js",
     "test:store-parser": "tsc -p tsconfig.build.json && node scripts/test-store-parser.js",
     "test:exe-detection": "tsc -p tsconfig.build.json && node scripts/test-exe-detection.js",
+    "test:prefix": "tsc -p tsconfig.build.json && node --test scripts/test-prefix-lifecycle.js",
     "test:release-assets": "tsc -p tsconfig.build.json && node scripts/test-release-assets.js",
     "fixes:index": "node scripts/build-fixes-index.js",
     "fixes:check": "node scripts/build-fixes-index.js --check",

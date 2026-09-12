@@ -2,22 +2,18 @@
  * IPC Handlers for Proton (Linux game compatibility layer)
  */
 import { ipcMain } from 'electron'
-import fs from 'fs'
 import { getGame, updateGameInfo, extractGameIdFromUrl } from '../db'
 import {
   isLinux,
   findProtonRuntime,
   setSavedProtonRuntime,
   buildProtonLaunch,
-  getPrefixPath,
   ensureDefaultPrefix,
   ensureGamePrefixFromDefault,
   setCustomProtonRoot,
   listProtonRuntimes,
   winetricksAvailable,
-  protontricksAvailable,
   installExtraComponents,
-  runProtontricksComponents,
   openWinetricksGui,
   openWinecfg,
   openRegedit,
@@ -90,11 +86,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
     try {
       if (!isLinux()) return { success: false, error: 'Proton only supported on Linux', errorCode: 'linux-only' }
       const runtime = findProtonRuntime() || undefined
-      const prefix = await ensureDefaultPrefix(runtime)
-      if (forceRecreate) {
-        try { fs.rmSync(prefix, { recursive: true, force: true }) } catch {}
-        await ensureDefaultPrefix(runtime)
-      }
+      const prefix = await ensureDefaultPrefix(runtime, forceRecreate)
       return { success: true, prefix }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao criar prefixo default' }
@@ -104,7 +96,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
   ipcMain.handle('proton-prepare-prefix', async (_event, slug: string) => {
     try {
       if (!isLinux()) return { success: false, error: 'Proton only supported on Linux', errorCode: 'linux-only' }
-      const prefix = getPrefixPath(slug)
+      const prefix = await ensureGamePrefixFromDefault(slug)
       return { success: true, prefix }
     } catch (err: any) {
       return { success: false, error: err.message }
@@ -117,15 +109,16 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       if (ctx.inFlightPrefixJobs.has(gameUrl)) return { success: false, error: 'Prefixo já está sendo preparado', errorCode: 'prefix-operation-in-progress' }
 
       const existing = getGame(gameUrl) as any
+      if (!existing) return { success: false, error: 'Jogo não encontrado', errorCode: 'game-not-found' }
       const stableId = (existing?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
       const slug = stableId ? `game_${stableId}` : slugify(title || existing?.title || gameUrl || 'game')
       const runtime = ((existing?.proton_runtime as string | null) || findProtonRuntime() || undefined)
 
       ctx.inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
       ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo...' })
-      const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
+      const prefix = await ensureGamePrefixFromDefault(slug, runtime, _commonRedistPath, true, (msg) => {
         ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-      })
+      }, existing.install_path || undefined, existing.proton_prefix || undefined)
       updateGameInfo(gameUrl, { proton_prefix: prefix })
       ctx.sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
       ctx.inFlightPrefixJobs.delete(gameUrl)
@@ -147,19 +140,18 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
     }
   })
 
-  ipcMain.handle('proton-tricks-status', async () => {
+  ipcMain.handle('winetricks-status', async () => {
     try {
       return {
         success: true,
-        winetricks: winetricksAvailable(),
-        protontricks: protontricksAvailable()
+        winetricks: winetricksAvailable()
       }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
   })
 
-  ipcMain.handle('proton-run-tricks', async (_event, gameUrl: string, tool: 'winetricks' | 'protontricks', components: string[]) => {
+  ipcMain.handle('winetricks-run', async (_event, gameUrl: string, components: string[]) => {
     try {
       if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux', errorCode: 'linux-only' }
       if (!components.length) return { success: false, error: 'Nenhum componente informado', errorCode: 'no-components-selected' }
@@ -171,39 +163,25 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       // Prevent concurrent jobs on same game
       if (ctx.inFlightPrefixJobs.has(gameUrl)) return { success: false, error: 'Já existe uma operação em andamento para este jogo', errorCode: 'game-operation-in-progress' }
 
-      ctx.inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
-      const toolLabel = tool === 'protontricks' ? 'protontricks' : 'winetricks'
-      ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: `Executando ${toolLabel}...` })
-
-      let ok = false
-      if (tool === 'protontricks') {
-        if (!protontricksAvailable()) {
-          ctx.inFlightPrefixJobs.delete(gameUrl)
-          ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: 'protontricks não encontrado no sistema' })
-          return { success: false, error: 'protontricks não está instalado', errorCode: 'protontricks-missing' }
-        }
-        ok = await runProtontricksComponents(prefix, components, (msg) => {
-          ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-        })
-      } else {
-        if (!winetricksAvailable()) {
-          ctx.inFlightPrefixJobs.delete(gameUrl)
-          ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: 'winetricks não encontrado no sistema' })
-          return { success: false, error: 'winetricks não está instalado', errorCode: 'winetricks-missing' }
-        }
-        ok = await installExtraComponents(prefix, components, (msg) => {
-          ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-        })
+      if (!winetricksAvailable()) {
+        return { success: false, error: 'winetricks não está instalado', errorCode: 'winetricks-missing' }
       }
+
+      ctx.inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
+      ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Executando winetricks...' })
+
+      const ok = await installExtraComponents(prefix, components, (msg) => {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
+      }, existing.proton_runtime || undefined)
 
       ctx.inFlightPrefixJobs.delete(gameUrl)
       if (ok) {
-        ctx.sendPrefixJobStatus({ gameUrl, status: 'done', message: `${toolLabel} concluído com sucesso`, prefix })
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'done', message: 'winetricks concluído com sucesso', prefix })
       } else {
-        ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: `${toolLabel} finalizou com erros` })
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: 'winetricks finalizou com erros' })
       }
 
-      return { success: ok, error: ok ? undefined : `${toolLabel} finalizou com erros` }
+      return { success: ok, error: ok ? undefined : 'winetricks finalizou com erros' }
     } catch (err: any) {
       try { ctx.inFlightPrefixJobs.delete(gameUrl) } catch {}
       ctx.sendPrefixJobStatus({ gameUrl, status: 'error', message: err?.message || String(err) })
@@ -217,7 +195,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const existing = getGame(gameUrl) as any
       const prefix = existing?.proton_prefix as string | undefined
       if (!prefix) return { success: false, error: 'Prefixo Wine não configurado para este jogo.', errorCode: 'wine-prefix-missing' }
-      return openWinetricksGui(prefix)
+      return openWinetricksGui(prefix, existing.proton_runtime || undefined)
     } catch (err: any) {
       return { success: false, error: err.message }
     }
@@ -229,7 +207,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const existing = getGame(gameUrl) as any
       const prefix = existing?.proton_prefix as string | undefined
       if (!prefix) return { success: false, error: 'Prefixo Wine não configurado para este jogo.', errorCode: 'wine-prefix-missing' }
-      return openWinecfg(prefix)
+      return openWinecfg(prefix, existing.proton_runtime || undefined)
     } catch (err: any) {
       return { success: false, error: err.message }
     }
@@ -241,7 +219,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const existing = getGame(gameUrl) as any
       const prefix = existing?.proton_prefix as string | undefined
       if (!prefix) return { success: false, error: 'Prefixo Wine não configurado para este jogo.', errorCode: 'wine-prefix-missing' }
-      return openRegedit(prefix)
+      return openRegedit(prefix, existing.proton_runtime || undefined)
     } catch (err: any) {
       return { success: false, error: err.message }
     }
@@ -253,7 +231,7 @@ export const registerProtonHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => 
       const existing = getGame(gameUrl) as any
       const prefix = existing?.proton_prefix as string | undefined
       if (!prefix) return { success: false, error: 'Prefixo Wine não configurado para este jogo.', errorCode: 'wine-prefix-missing' }
-      return openWineFileManager(prefix)
+      return openWineFileManager(prefix, existing.proton_runtime || undefined)
     } catch (err: any) {
       return { success: false, error: err.message }
     }

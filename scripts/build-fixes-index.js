@@ -32,7 +32,7 @@ function validate(file, fix) {
   const game = fix.game || {}
   if (!game.id && !game.url && !game.title) fail(file, 'game needs at least one of id, url or title')
 
-  for (const verb of [...(fix.components?.winetricks || []), ...(fix.components?.protontricks || [])]) {
+  for (const verb of fix.components?.winetricks || []) {
     if (!/^[a-z0-9_.+-]+$/i.test(verb)) fail(file, `component "${verb}" is not a plain winetricks verb`)
   }
 

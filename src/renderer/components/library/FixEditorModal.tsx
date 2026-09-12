@@ -66,7 +66,6 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
   // Free text while typing: a list rebuilt on every keystroke would eat the
   // space between two verbs before the second one exists.
   const [winetricksText, setWinetricksText] = React.useState('')
-  const [protontricksText, setProtontricksText] = React.useState('')
   const [notesText, setNotesText] = React.useState('')
   const [carryOptions, setCarryOptions] = React.useState(true)
 
@@ -87,7 +86,6 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
 
         setDraft({ ...base, id: base.id && ID_PATTERN.test(base.id) ? base.id : slugify(base.title || 'game-fix') })
         setWinetricksText((base.components?.winetricks || []).join(' '))
-        setProtontricksText((base.components?.protontricks || []).join(' '))
         setNotesText((base.notes || []).join('\n'))
         setCarryOptions(Object.keys(base.proton?.options || {}).length > 0)
       } catch (err: any) {
@@ -124,7 +122,6 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
   }
 
   const winetricks = parseComponents(winetricksText)
-  const protontricks = parseComponents(protontricksText)
   const notes = notesText.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 12)
   const assemblies = draft?.runtimeAssemblies || []
 
@@ -136,7 +133,7 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
     if (draft.launchExecutable && !EXECUTABLE_PATTERN.test(draft.launchExecutable)) {
       problems.push({ tab: 'proton', message: t('library.fixEditor.problem.executable', { name: draft.launchExecutable }) })
     }
-    for (const verb of [...winetricks, ...protontricks]) {
+    for (const verb of winetricks) {
       if (!COMPONENT_PATTERN.test(verb)) problems.push({ tab: 'extras', message: t('library.fixEditor.problem.component', { name: verb }) })
     }
     for (const entry of assemblies) {
@@ -162,7 +159,7 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
         // which is what a fix about components or an executable should say.
         options: carryOptions ? draft.proton?.options || {} : {}
       },
-      components: { winetricks, protontricks },
+      components: { winetricks },
       launchExecutable: draft.launchExecutable || null,
       runtimeAssemblies: assemblies.filter((entry) => entry.name || entry.into),
       notes
@@ -408,10 +405,6 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
                         <div className="config-form-group">
                           <label htmlFor="fix-winetricks">winetricks</label>
                           <input id="fix-winetricks" className="config-input" value={winetricksText} onChange={(e) => { setWinetricksText(e.target.value); setMessage(null) }} placeholder="dotnetdesktop9 vcrun2022" />
-                        </div>
-                        <div className="config-form-group">
-                          <label htmlFor="fix-protontricks">protontricks</label>
-                          <input id="fix-protontricks" className="config-input" value={protontricksText} onChange={(e) => { setProtontricksText(e.target.value); setMessage(null) }} />
                         </div>
                       </div>
                       <p className="config-hint">{t('library.fixEditor.componentsHint')}</p>

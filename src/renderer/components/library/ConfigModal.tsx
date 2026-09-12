@@ -540,27 +540,33 @@ function ProtonTab(props: ConfigModalProps) {
   const isPrefixBusy = prefixJob?.status === 'starting' || prefixJob?.status === 'progress'
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  // Winetricks/Protontricks state
+  // Winetricks state
   const [tricksInput, setTricksInput] = useState('')
-  const [tricksTool, setTricksTool] = useState<'winetricks' | 'protontricks'>('winetricks')
   const [tricksRunning, setTricksRunning] = useState(false)
-  const [tricksToolStatus, setTricksToolStatus] = useState<{ winetricks?: boolean; protontricks?: boolean } | null>(null)
+  const [tricksError, setTricksError] = useState('')
+  const [tricksToolStatus, setTricksToolStatus] = useState<{ winetricks?: boolean } | null>(null)
 
   // Check tool availability on mount
   React.useEffect(() => {
-    window.electronAPI.protonTricksStatus().then((res) => {
-      if (res.success) setTricksToolStatus({ winetricks: res.winetricks, protontricks: res.protontricks })
+    window.electronAPI.winetricksStatus().then((res) => {
+      if (res.success) setTricksToolStatus({ winetricks: res.winetricks })
     }).catch(() => {})
   }, [])
 
   const handleRunTricks = async () => {
+    if (isPrefixBusy || tricksRunning || tricksToolStatus?.winetricks !== true) return
     const components = tricksInput.trim().split(/[\s,]+/).filter(Boolean)
     if (!components.length) return
     setTricksRunning(true)
+    setTricksError('')
     try {
-      await window.electronAPI.protonRunTricks(game.url, tricksTool, components)
-    } catch {}
-    setTricksRunning(false)
+      const res = await window.electronAPI.runWinetricks(game.url, components)
+      if (!res.success) setTricksError(ipcErrorText(t, res, t('library.configModal.proton.prefixFailed')))
+    } catch (err: any) {
+      setTricksError(err?.message || t('library.configModal.proton.prefixFailed'))
+    } finally {
+      setTricksRunning(false)
+    }
   }
 
   return (
@@ -620,47 +626,20 @@ function ProtonTab(props: ConfigModalProps) {
         </div>
       </div>
 
-      {/* Winetricks / Protontricks Section */}
+      {/* Winetricks Section */}
       {protonPrefix && (
         <div className="config-section">
           <div className="config-section-header">
             <Settings2 size={18} />
-            <h4>Winetricks / Protontricks</h4>
+            <h4>Winetricks</h4>
           </div>
           <div className="config-section-content">
             <div className="config-form-group">
-              <label>{t('library.configModal.proton.tool')}</label>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <label className="config-toggle-item" style={{ flex: 1 }}>
-                  <input
-                    type="radio"
-                    name="tricks-tool"
-                    checked={tricksTool === 'winetricks'}
-                    onChange={() => setTricksTool('winetricks')}
-                    disabled={isPrefixBusy || tricksRunning}
-                  />
-                  <div className="config-toggle-info">
-                    <span className="config-toggle-name">winetricks</span>
-                    <span className="config-toggle-desc">
-                      {tricksToolStatus?.winetricks === false ? t('common.notInstalled') : t('common.available')}
-                    </span>
-                  </div>
-                </label>
-                <label className="config-toggle-item" style={{ flex: 1 }}>
-                  <input
-                    type="radio"
-                    name="tricks-tool"
-                    checked={tricksTool === 'protontricks'}
-                    onChange={() => setTricksTool('protontricks')}
-                    disabled={isPrefixBusy || tricksRunning}
-                  />
-                  <div className="config-toggle-info">
-                    <span className="config-toggle-name">protontricks</span>
-                    <span className="config-toggle-desc">
-                      {tricksToolStatus?.protontricks === false ? t('common.notInstalled') : t('common.available')}
-                    </span>
-                  </div>
-                </label>
+              <div className="config-toggle-info" style={{ marginBottom: 8 }}>
+                <span className="config-toggle-name">winetricks</span>
+                <span className="config-toggle-desc">
+                  {tricksToolStatus?.winetricks === undefined ? t('common.loading') : tricksToolStatus.winetricks ? t('common.available') : t('common.notInstalled')}
+                </span>
               </div>
             </div>
 
@@ -679,7 +658,7 @@ function ProtonTab(props: ConfigModalProps) {
                 <button
                   className="config-btn primary"
                   onClick={handleRunTricks}
-                  disabled={isPrefixBusy || tricksRunning || !tricksInput.trim()}
+                  disabled={isPrefixBusy || tricksRunning || tricksToolStatus?.winetricks !== true || !tricksInput.trim()}
                 >
                   {tricksRunning ? (
                     <><RefreshCw size={14} className="of-spin" /> {t('library.configModal.proton.running')}</>
@@ -688,6 +667,7 @@ function ProtonTab(props: ConfigModalProps) {
                   )}
                 </button>
               </div>
+              {tricksError && <div className="config-error"><AlertCircle size={14} /><span>{tricksError}</span></div>}
               <span className="config-hint">
                 {t('library.configModal.proton.componentsHint')}
               </span>
@@ -767,6 +747,7 @@ function ProtonTab(props: ConfigModalProps) {
             <label>{t('library.configModal.proton.version')}</label>
             <select
               value={protonVersion}
+              disabled={isPrefixBusy || tricksRunning}
               onChange={(e) => onProtonVersionChange(e.target.value)}
               className="config-select"
             >
@@ -1000,10 +981,7 @@ function FixesTab(props: ConfigModalProps) {
   const currentRuntimeName = currentRuntime?.name || (protonVersion ? protonVersion.split(/[\\/]/).filter(Boolean).pop() : t('library.configModal.proton.autoExperimental'))
   const targetRuntimeName = fix?.proton?.runtimeName || t('library.configModal.proton.autoExperimental')
   const targetOptions = fix?.proton?.options || {}
-  const fixComponents = Array.from(new Set([
-    ...(fix?.components?.winetricks || []),
-    ...(fix?.components?.protontricks || [])
-  ]))
+  const fixComponents = Array.from(new Set(fix?.components?.winetricks || []))
 
   const optionRows = ([
     ['ESYNC', protonOptions.esync, targetOptions.esync],
@@ -1327,7 +1305,7 @@ function FixesTab(props: ConfigModalProps) {
             <div className="diagnostic-check-list">
               {localFixes.map((item) => {
                 const itemFix = item.fix
-                const componentCount = (itemFix.components?.winetricks?.length || 0) + (itemFix.components?.protontricks?.length || 0)
+                const componentCount = itemFix.components?.winetricks?.length || 0
                 return (
                   <div className={`diagnostic-check ${fix?.id === itemFix.id ? 'diagnostic-check--ok' : 'diagnostic-check--warn'}`} key={itemFix.id}>
                     <div className="diagnostic-check-status">
@@ -1410,7 +1388,6 @@ function FixesTab(props: ConfigModalProps) {
               {fixComponents.length ? (
                 <div className="config-tips" style={{ marginTop: 12 }}>
                   <p><strong>winetricks</strong> {fixComponents.join(' ')}</p>
-                  {fix.components?.protontricks?.length ? <p>{t('library.configModal.fixes.protontricksCompat')}</p> : null}
                 </div>
               ) : null}
 

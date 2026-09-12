@@ -208,6 +208,7 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
       .catch((err: any) => {
         setConfigSaveState({ status: 'error', message: err?.message || t('library.config.saveFailed'), updatedAt: Date.now() })
       })
+    return configAutosaveQueueRef.current
   }, [t])
 
   const scheduleConfigAutosave = useCallback((game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
@@ -241,6 +242,17 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
       configAutosaveTimerRef.current = null
       void performConfigAutosave(game, snapshot, setGames)
     }, 650)
+  }, [getConfigSnapshot, performConfigAutosave, t])
+
+  const flushConfigAutosave = useCallback(async (game: Game, setGames: React.Dispatch<React.SetStateAction<Game[]>>) => {
+    if (configAutosaveTimerRef.current) clearTimeout(configAutosaveTimerRef.current)
+    configAutosaveTimerRef.current = null
+    const snapshot = getConfigSnapshot()
+    await performConfigAutosave(game, snapshot, setGames)
+    const saved = lastSavedConfigRef.current
+    if (saved?.protonRuntime !== snapshot.protonRuntime || saved?.protonPrefix !== snapshot.protonPrefix) {
+      throw new Error(t('library.config.saveProtonFailed'))
+    }
   }, [getConfigSnapshot, performConfigAutosave, t])
 
   const openConfig = useCallback((game: Game) => {
@@ -405,6 +417,7 @@ export function useGameConfig(gamesRef: React.RefObject<Game[]>) {
     loadProtonRuntimes,
     addProtonRoot,
     scheduleConfigAutosave,
+    flushConfigAutosave,
     fetchBanner,
     applyBannerUrl,
     pickBannerFile,

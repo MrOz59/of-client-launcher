@@ -82,7 +82,6 @@ type CommunityGameFix = {
   }
   components?: {
     winetricks?: string[]
-    protontricks?: string[]
   }
   /**
    * The binary to launch, as a bare file name. A game whose mod ships its own
@@ -174,8 +173,12 @@ function normalizeGameFix(raw: any): CommunityGameFix {
       steamAppId: safeText(proton.steamAppId, 32).replace(/[^\d]/g, '') || null
     },
     components: {
-      winetricks: safeComponentList(components.winetricks),
-      protontricks: safeComponentList(components.protontricks)
+      // A fix written before protontricks was dropped still names plain winetricks
+      // verbs, so its list is folded in here rather than thrown away.
+      winetricks: safeComponentList([
+        ...(Array.isArray(components.winetricks) ? components.winetricks : []),
+        ...(Array.isArray((components as any).protontricks) ? (components as any).protontricks : [])
+      ])
     },
     // A name, never a path: it only ever selects among the executables already
     // found inside the game's own folder.
@@ -213,8 +216,7 @@ function buildGameFix(game: any): CommunityGameFix {
       steamAppId: game?.steam_app_id ? String(game.steam_app_id) : null
     },
     components: {
-      winetricks: [],
-      protontricks: []
+      winetricks: []
     },
     launchExecutable: bareExecutableName(game?.launch_executable),
     runtimeAssemblies: [],
@@ -372,12 +374,7 @@ function listLocalGameFixes(game: any) {
 }
 
 function getFixWinetricksComponents(fix: CommunityGameFix) {
-  return Array.from(new Set([
-    ...(fix.components?.winetricks || []),
-    // Backward compatibility for early fix files. Protontricks component names are
-    // winetricks verbs, and our managed prefixes are targeted more reliably via winetricks.
-    ...(fix.components?.protontricks || [])
-  ])).filter(Boolean)
+  return Array.from(new Set(fix.components?.winetricks || [])).filter(Boolean)
 }
 
 function pathInfo(p?: string | null, baseDir?: string | null) {
@@ -771,8 +768,7 @@ async function collectGameDiagnostics(gameUrl: string, ctx: IpcContext) {
       tools: {
         gamescope: commandExists('gamescope'),
         gamemoderun: commandExists('gamemoderun'),
-        winetricks: commandExists('winetricks'),
-        protontricks: commandExists('protontricks')
+        winetricks: commandExists('winetricks')
       },
       checks,
       repairActions
@@ -927,7 +923,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
               ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Autocorreção: preparando prefixo...' })
               const prefix = await ensureGamePrefixFromDefault(slug, runtimePath, undefined, true, (msg) => {
                 ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: `Autocorreção: ${msg}` })
-              })
+              }, latestGame?.install_path || undefined, latestGame?.proton_prefix || undefined)
               updateGameInfo(gameUrl, { proton_prefix: prefix })
               ctx.inFlightPrefixJobs.delete(gameUrl)
               ctx.sendPrefixJobStatus({ gameUrl, status: 'done', message: 'Prefixo pronto', prefix })
@@ -1285,7 +1281,7 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         patch,
         warnings,
         copiedAssemblies: assemblies.copied,
-        pendingComponents: fix.components || { winetricks: [], protontricks: [] }
+        pendingComponents: fix.components || { winetricks: [] }
       }
     } catch (err: any) {
       return { success: false, error: err?.message || 'Falha ao aplicar fix' }
@@ -1312,10 +1308,6 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
         return { success: false, error: 'Já existe uma operação de prefixo em andamento para este jogo', errorCode: 'prefix-operation-in-progress' }
       }
 
-      if ((fix.components?.protontricks || []).length) {
-        warnings.push('Componentes protontricks do fix foram executados via winetricks no prefixo gerenciado.')
-      }
-
       const runtimeFromFix = resolveRuntimePathFromFix(fix)
       if (runtimeFromFix.warning) warnings.push(runtimeFromFix.warning)
       const runtimePath = runtimeFromFix.runtimePath || game.proton_runtime || findProtonRuntime() || undefined
@@ -1323,19 +1315,16 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
       const slug = stableId ? `game_${stableId}` : slugify(game?.title || gameUrl || 'game')
 
       ctx.inFlightPrefixJobs.set(gameUrl, { startedAt: Date.now() })
-      let prefix = String(game.proton_prefix || '').trim()
-      if (!prefix || !fs.existsSync(prefix)) {
-        ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Criando prefixo para instalar componentes...' })
-        prefix = await ensureGamePrefixFromDefault(slug, runtimePath, undefined, false, (msg) => {
-          ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-        })
-        updateGameInfo(gameUrl, { proton_prefix: prefix })
-      }
+      ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo para instalar componentes...' })
+      const prefix = await ensureGamePrefixFromDefault(slug, runtimePath, undefined, false, (msg) => {
+        ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
+      }, game.install_path || undefined, game.proton_prefix || undefined, true)
+      if (game.proton_prefix !== prefix) updateGameInfo(gameUrl, { proton_prefix: prefix })
 
       ctx.sendPrefixJobStatus({ gameUrl, status: 'starting', message: `Instalando componentes do fix: ${components.join(' ')}`, prefix })
       const ok = await installExtraComponents(prefix, components, (msg) => {
         ctx.sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg, prefix })
-      })
+      }, runtimePath)
 
       ctx.inFlightPrefixJobs.delete(gameUrl)
       if (ok) {

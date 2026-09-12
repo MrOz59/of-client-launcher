@@ -272,7 +272,7 @@ function readPrefixSentinel(prefixPath: string): { proton?: string } | null {
 type ComponentInstallState = {
   attempts?: number
   lastAttemptAt?: string
-  tool?: 'protontricks' | 'winetricks' | null
+  tool?: 'winetricks' | null
   ok?: boolean | null
 }
 
@@ -286,13 +286,13 @@ type DefaultDepsMeta = {
   dotnet?: ComponentInstallState
   // Steam-like flow: track individual components that have been installed.
   installedComponents?: string[]
+  components?: Record<string, ComponentInstallState>
   // Track detected requirements for this game.
   detectedRequirements?: string[]
   // Track whether smart install was used.
   smartInstallUsed?: boolean
   // Legacy fields (file name existed before schema field)
   winetricks?: boolean
-  protontricks?: boolean
 }
 
 function readDefaultDepsMeta(prefixCompatDataPath: string): DefaultDepsMeta | null {
@@ -311,28 +311,17 @@ function readDefaultDepsMeta(prefixCompatDataPath: string): DefaultDepsMeta | nu
 function writeDefaultDepsMeta(prefixCompatDataPath: string, meta: DefaultDepsMeta) {
   try {
     const sentinel = path.join(prefixCompatDataPath, DEFAULT_DEPS_SENTINEL)
-    fs.writeFileSync(sentinel, JSON.stringify(meta, null, 2))
+    fs.writeFileSync(`${sentinel}.tmp`, JSON.stringify(meta, null, 2))
+    fs.renameSync(`${sentinel}.tmp`, sentinel)
   } catch (err) {
     // Without the sentinel the prefix dependencies get reinstalled every launch.
     console.warn('[Proton] Failed to write prefix dependency metadata:', err)
+    throw err
   }
 }
 
 function nowIso() {
   return new Date().toISOString()
-}
-
-function resetVcredistState(prefixCompatDataPath: string) {
-  try {
-    const meta = readDefaultDepsMeta(prefixCompatDataPath)
-    if (!meta) return
-    meta.schema = DEFAULT_DEPS_SCHEMA
-    meta.updatedAt = nowIso()
-    meta.vcredist = { attempts: 0, ok: null, tool: null }
-    writeDefaultDepsMeta(prefixCompatDataPath, meta)
-  } catch {
-    // ignore
-  }
 }
 
 function getRunnerForRuntime(runtimePath?: string): string | null {
@@ -342,13 +331,9 @@ function getRunnerForRuntime(runtimePath?: string): string | null {
 }
 
 function resolveCompatDataPaths(prefixPath: string, allowMigrate: boolean) {
-  const normalized = prefixPath
-  const managed = normalized.startsWith(DEFAULT_PREFIX_DIR)
-
-  // If already points to .../pfx
-  if (normalized.endsWith(`${path.sep}pfx`)) {
-    return { compatDataPath: path.dirname(normalized), winePrefix: normalized }
-  }
+  const absolute = path.resolve(prefixPath)
+  const normalized = absolute.endsWith(`${path.sep}pfx`) ? path.dirname(absolute) : absolute
+  const managed = normalized.startsWith(DEFAULT_PREFIX_DIR + path.sep)
 
   const pfx = path.join(normalized, 'pfx')
   if (fs.existsSync(pfx)) {
@@ -404,7 +389,7 @@ function resolveCompatDataPaths(prefixPath: string, allowMigrate: boolean) {
   }
 
   // Fresh compatdata structure
-  if (managed && allowMigrate) {
+  if (allowMigrate && !hasOldLayout) {
     try { fs.mkdirSync(pfx, { recursive: true }) } catch {}
     return { compatDataPath: normalized, winePrefix: pfx }
   }
@@ -415,6 +400,7 @@ function resolveCompatDataPaths(prefixPath: string, allowMigrate: boolean) {
 
 function findCommonRedistDir(installDir: string) {
   try {
+    if (path.basename(installDir).toLowerCase() === '_commonredist' && fs.existsSync(installDir)) return installDir
     const direct = path.join(installDir, '_CommonRedist')
     if (fs.existsSync(direct)) return direct
   } catch {
@@ -445,11 +431,9 @@ function readRedistState(prefixCompatDataPath: string): RedistState {
 }
 
 function writeRedistState(prefixCompatDataPath: string, state: RedistState) {
-  try {
-    fs.writeFileSync(getRedistSentinelPath(prefixCompatDataPath), JSON.stringify(state, null, 2))
-  } catch {
-    // ignore
-  }
+  const sentinel = getRedistSentinelPath(prefixCompatDataPath)
+  fs.writeFileSync(`${sentinel}.tmp`, JSON.stringify(state, null, 2))
+  fs.renameSync(`${sentinel}.tmp`, sentinel)
 }
 
 async function runInstallerWithProton(
@@ -489,7 +473,8 @@ export async function ensureGameCommonRedists(
   installDir: string,
   prefixCompatDataPath: string,
   runtimePath?: string,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  retryFailed = false
 ): Promise<{ ran: boolean; ok: boolean; details?: string }> {
   if (!isLinux()) return { ran: false, ok: true }
   const common = findCommonRedistDir(installDir)
@@ -545,8 +530,10 @@ export async function ensureGameCommonRedists(
     const key = item.path
 
     const prev = state.completed[key]
-    if (prev && prev.mtimeMs === mtimeMs) {
-      if (!(prev.status === 0 || prev.status === 3010)) {
+    const previouslyOk = prev?.status === 0 || prev?.status === 3010
+    if (prev && prev.mtimeMs === mtimeMs && (previouslyOk || !retryFailed)) {
+      if (!previouslyOk) {
+        okAll = false
         console.log(`[Proton] Skipping repeated redist attempt for ${path.basename(item.path)}; previous status: ${prev.status}`)
       }
       continue
@@ -593,7 +580,7 @@ async function clonePrefix(sourcePrefix: string, targetPrefix: string) {
   }
 }
 
-export async function ensureDefaultPrefix(runtimePath?: string) {
+export async function ensureDefaultPrefix(runtimePath?: string, forceRecreate = false) {
   const key = runtimePath || 'auto'
   const existing = inFlightDefaultPrefix.get(key)
   if (existing) return existing
@@ -602,11 +589,13 @@ export async function ensureDefaultPrefix(runtimePath?: string) {
     const prefix = getManagedPrefixPath(DEFAULT_PREFIX_NAME, runtimePath)
     const desiredRunner = getRunnerForRuntime(runtimePath) || undefined
     const meta = readPrefixSentinel(prefix)
-    if (meta?.proton && desiredRunner && meta.proton !== desiredRunner) {
-      console.log('[Proton] Default prefix runtime changed, recreating:', meta.proton, '->', desiredRunner)
+    if (forceRecreate || (meta?.proton && desiredRunner && meta.proton !== desiredRunner)) {
+      console.log('[Proton] Recreating default prefix:', meta?.proton, '->', desiredRunner)
       try { await fs.promises.rm(prefix, { recursive: true, force: true }) } catch {}
     }
-    await ensurePrefixDefaults(prefix, runtimePath)
+    if (!await ensurePrefixDefaults(prefix, runtimePath)) {
+      throw new Error('Falha ao preparar prefixo padrão do Proton')
+    }
     return prefix
   })()
 
@@ -626,81 +615,40 @@ export async function ensureDefaultPrefix(runtimePath?: string) {
 export async function ensureGamePrefixFromDefault(
   gameSlug: string,
   runtimePath?: string,
-  _commonRedistPath?: string,
-  forceRecreate?: boolean,
+  commonRedistPath?: string,
+  retryFailed = false,
   onProgress?: (msg: string) => void,
-  gameInstallPath?: string  // Game install path for smart detection.
+  gameInstallPath?: string,
+  storedPrefixPath?: string,
+  allowIncomplete = false
 ) {
-  const taskKey = `${gameSlug}::${runtimePath || 'auto'}::${forceRecreate ? 'recreate' : 'keep'}`
+  // Keep the configured prefix across runtime changes so saves and settings survive.
+  // A shared default prefix must never be used as a game's writable prefix.
+  const stored = storedPrefixPath ? path.resolve(storedPrefixPath) : undefined
+  const storedRoot = stored?.endsWith(`${path.sep}pfx`) ? path.dirname(stored) : stored
+  const isDefault = storedRoot && path.dirname(storedRoot) === DEFAULT_PREFIX_DIR
+    && /^__default(?:__rt_[a-f0-9]+)?$/.test(path.basename(storedRoot))
+  const gamePrefix = stored && !isDefault ? stored : getManagedPrefixPath(gameSlug, runtimePath)
+  const { compatDataPath } = resolveCompatDataPaths(gamePrefix, true)
+  // Serialize by destination, including callers using the pfx subdirectory.
+  const taskKey = path.resolve(compatDataPath)
   const existing = inFlightGamePrefix.get(taskKey)
   if (existing) return existing
 
-  const task = (async () => {
-    onProgress?.('Preparando prefixo do jogo...')
-
-    const gamePrefix = getManagedPrefixPath(gameSlug, runtimePath)
-
-    const meta = readDefaultDepsMeta(gamePrefix)
-    const hasSentinel = !!meta && (meta.schema === DEFAULT_DEPS_SCHEMA || !!meta.initialized)
-    const desiredRunner = getRunnerForRuntime(runtimePath) || undefined
-    const runtimeMismatch = !!(meta?.proton && desiredRunner && meta.proton !== desiredRunner)
-
-    if (runtimeMismatch) {
-      console.log('[Proton] Game prefix runtime changed, recreating:', meta?.proton, '->', desiredRunner)
-    }
-
-    // Determine game install path for smart detection
-    const effectiveGamePath = gameInstallPath || _commonRedistPath?.replace('/_CommonRedist', '') || undefined
-
-    if (forceRecreate || !fs.existsSync(gamePrefix) || !hasSentinel || runtimeMismatch) {
-      onProgress?.('Criando/atualizando prefixo do jogo...')
-
-      // Use smart install with the game path for requirement detection.
-      await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress, effectiveGamePath)
-    }
-
-    // Reset vcredist state only when forcing recreate
-    if (forceRecreate) {
-      const { compatDataPath } = resolveCompatDataPaths(gamePrefix, true)
-      resetVcredistState(compatDataPath)
-    }
-
-    // If the game package includes an _CommonRedist folder, attempt to run its installers
-    // inside the game prefix (DirectX / bundled vcredist). This helps games that ship their
-    // own redistributables instead of relying on winetricks.
-    // Preferred method: use the game's own installers first.
-    try {
-      if (_commonRedistPath && fs.existsSync(_commonRedistPath)) {
-        onProgress?.('Aplicando redistribuíveis do jogo...')
-        console.log('[Proton] 📦 Running game bundled redistributables (preferred over winetricks)')
-        await ensureGameCommonRedists(_commonRedistPath, gamePrefix, runtimePath, onProgress)
+  const task = Promise.resolve().then(async () => {
+    const effectiveGamePath = gameInstallPath || (commonRedistPath
+      ? path.basename(commonRedistPath).toLowerCase() === '_commonredist'
+        ? path.dirname(commonRedistPath) : commonRedistPath
+      : undefined)
+    const ok = await ensurePrefixDefaults(gamePrefix, runtimePath, commonRedistPath, onProgress, effectiveGamePath, retryFailed)
+    if (!ok) {
+      if (!allowIncomplete || !validatePrefixInstallation(gamePrefix).winebootOk || !getRunnerForRuntime(runtimePath)) {
+        throw new Error('Falha ao preparar prefixo do Proton. Verifique as dependências e tente atualizar o prefixo nas configurações.')
       }
-    } catch (err) {
-      console.warn('[Proton] Failed to run game _CommonRedist installers:', err)
+      onProgress?.('Dependências pendentes; atualize o prefixo nas configurações.')
     }
-
-    // Steam-like flow: only verify essential Wine files, not VC++ because the game may not need it.
-    try {
-      const { winePrefix } = resolveCompatDataPaths(gamePrefix, true)
-      const sys32 = path.join(winePrefix, 'drive_c', 'windows', 'system32')
-
-      // Only check for Wine essentials, not VC++ (which may not be needed)
-      const wineEssentials = ['wineboot.exe']
-      const missing = wineEssentials.filter(e => !fs.existsSync(path.join(sys32, e)))
-
-      if (missing.length) {
-        console.warn('[Proton] Wine prefix not properly initialized, repairing...')
-        onProgress?.('Reparando prefixo Wine...')
-        await ensurePrefixDefaults(gamePrefix, runtimePath, undefined, onProgress, effectiveGamePath)
-      } else {
-        console.log('[Proton] ✅ Wine prefix looks healthy')
-      }
-    } catch (err) {
-      console.warn('[Proton] Failed to verify game prefix:', err)
-    }
-
     return gamePrefix
-  })()
+  })
 
   inFlightGamePrefix.set(taskKey, task)
   try {
@@ -1337,10 +1285,6 @@ export function winetricksAvailable(): boolean {
   return commandExists('winetricks')
 }
 
-export function protontricksAvailable(): boolean {
-  return commandExists('protontricks')
-}
-
 // =====================================================
 // Steam-like requirement detection system.
 // =====================================================
@@ -1386,7 +1330,7 @@ export function detectGameRequirements(installPath: string): GameRequirements {
 
   try {
     // Collect all DLLs and executables for analysis
-    const files = findFilesRecursive(installPath, /\.(dll|exe)$/i)
+    const files = findFilesRecursive(installPath, /\.(dll|exe|exe\.config)$/i)
     const fileNames = new Set(files.map(f => path.basename(f).toLowerCase()))
 
     // Check for VC++ Runtime dependencies
@@ -1591,11 +1535,6 @@ const COMMON_PREREQUISITES = {
     'd3dcompiler_47', // DirectX Shader Compiler
     'xact',           // X3DAudio (XAudio)
     'physx',          // NVIDIA PhysX
-  ],
-  // .NET via protontricks (melhor compatibilidade)
-  protontricks: [
-    'dotnet48',       // .NET Framework 4.8
-    'dotnet40',       // .NET Framework 4.0
   ]
 }
 
@@ -1606,7 +1545,8 @@ async function runWinetricks(
   components: string[],
   env: NodeJS.ProcessEnv,
   onProgress?: (msg: string) => void,
-  protonDir?: string | null
+  protonDir?: string | null,
+  onResult?: (components: string[], ok: boolean) => void
 ): Promise<boolean> {
   const winetricksCmd = findCommandPath('winetricks')
   if (!winetricksCmd) {
@@ -1651,7 +1591,7 @@ async function runWinetricks(
     })
 
     const result = await new Promise<number | null>((resolve) => {
-      const hidden = makeHiddenProcess(winetricksCmd, ['--force', '-q', ...comps], winetricksEnv)
+      const hidden = makeHiddenProcess(winetricksCmd, ['-q', ...comps], winetricksEnv)
       const proc = spawn(hidden.cmd, hidden.args, {
         env: hidden.env,
         stdio: ['ignore', 'pipe', 'pipe']
@@ -1723,6 +1663,7 @@ async function runWinetricks(
   // Run fast components together (2 minute timeout)
   if (fastComponents.length > 0) {
     const fastOk = await runWithRetry(fastComponents, 2 * 60 * 1000)
+    onResult?.(fastComponents, fastOk)
     if (!fastOk) okAll = false
   }
 
@@ -1730,158 +1671,16 @@ async function runWinetricks(
   for (const component of slowComponents) {
     try {
       const ok = await runWithRetry([component], 3 * 60 * 1000)
+      onResult?.([component], ok)
       if (!ok) okAll = false
     } catch (err) {
       console.warn(`[Proton] Failed to install ${component}:`, err)
+      onResult?.([component], false)
       okAll = false
     }
   }
 
   return okAll
-}
-
-// Steam-like optimized protontricks runner with smart timeout.
-async function runProtontricks(
-  prefixPath: string,
-  components: string[],
-  env: NodeJS.ProcessEnv,
-  onProgress?: (msg: string) => void
-): Promise<boolean> {
-  const protontricksCmd = findCommandPath('protontricks')
-  if (!protontricksCmd) {
-    console.log('[Proton] protontricks not available, skipping .NET installation')
-    return false
-  }
-
-  if (components.length === 0) {
-    return true
-  }
-
-  let okAll = true
-
-  for (const component of components) {
-    try {
-      onProgress?.(`Instalando ${component}...`)
-      console.log(`[Proton] Installing ${component} via protontricks...`)
-
-      const result = await new Promise<number | null>((resolve) => {
-        const protontricksEnv = makeQuietWineEnv({
-          ...env,
-          STEAM_COMPAT_DATA_PATH: prefixPath,
-          WINETRICKS_NONINTERACTIVE: '1',
-          WINETRICKS_QUIET: '1'
-        })
-        const hidden = makeHiddenProcess(protontricksCmd, ['--no-steam', '-c', `winetricks -q ${component}`, prefixPath], protontricksEnv)
-        const proc = spawn(hidden.cmd, hidden.args, {
-          env: hidden.env,
-          stdio: ['ignore', 'pipe', 'pipe']
-        })
-
-        let lastOutput = Date.now()
-
-        proc.stdout?.on('data', (data: Buffer) => {
-          lastOutput = Date.now()
-          const text = data.toString().trim()
-          if (text) console.log(`[protontricks] ${text}`)
-        })
-
-        proc.stderr?.on('data', (data: Buffer) => {
-          lastOutput = Date.now()
-          const text = data.toString().trim()
-          if (text) console.log(`[protontricks] ${text}`)
-        })
-
-        proc.on('close', (code) => resolve(typeof code === 'number' ? code : null))
-        proc.on('error', () => resolve(null))
-
-        // Smart timeout: check for stalled process.
-        const checkInterval = setInterval(() => {
-          const elapsed = Date.now() - lastOutput
-          if (elapsed > 120000) { // No output for 2 minutes = stalled
-            console.warn('[protontricks] No output for 2 minutes, considering stalled')
-            clearInterval(checkInterval)
-            try { proc.kill() } catch {}
-            resolve(null)
-          }
-        }, 15000)
-
-        // Reduced hard timeout: 5 minutes instead of 10.
-        const hardTimeout = setTimeout(() => {
-          clearInterval(checkInterval)
-          console.warn('[protontricks] Hard timeout reached (5 minutes)')
-          try { proc.kill() } catch {}
-          resolve(null)
-        }, 5 * 60 * 1000)
-
-        proc.on('close', () => {
-          clearInterval(checkInterval)
-          clearTimeout(hardTimeout)
-        })
-        proc.on('error', () => {
-          clearInterval(checkInterval)
-          clearTimeout(hardTimeout)
-        })
-      })
-
-      if (result === 0) {
-        console.log(`[Proton] ✅ ${component} installed via protontricks`)
-      } else {
-        console.warn(`[Proton] ⚠️ ${component} protontricks returned code ${result}`)
-        okAll = false
-      }
-    } catch (err) {
-      console.warn(`[Proton] Failed to install ${component} via protontricks:`, err)
-      okAll = false
-    }
-  }
-
-  return okAll
-}
-
-async function runCommonRedistInstallers(
-  commonRedistPath: string,
-  runner: string,
-  env: NodeJS.ProcessEnv,
-  onProgress?: (msg: string) => void
-): Promise<void> {
-  if (!commonRedistPath || !fs.existsSync(commonRedistPath)) {
-    console.log('[Proton] No _CommonRedist folder found')
-    return
-  }
-
-  console.log('[Proton] Scanning _CommonRedist folder:', commonRedistPath)
-  
-  const installers = findFilesRecursive(commonRedistPath, /\.(exe|msi)$/i)
-  console.log(`[Proton] Found ${installers.length} installers in _CommonRedist`)
-
-  for (const installer of installers) {
-    try {
-      const filename = path.basename(installer)
-      onProgress?.(`Running ${filename}...`)
-      console.log(`[Proton] Running CommonRedist installer: ${filename}`)
-      
-      // Different args for MSI vs EXE
-      const isMsi = installer.toLowerCase().endsWith('.msi')
-      const args = isMsi 
-        ? ['run', 'msiexec', '/i', installer, '/quiet', '/norestart']
-        : ['run', installer, '/quiet', '/silent', '/norestart', '-silent', '-q']
-      
-      const hidden = makeHiddenProcess(runner, args, env)
-      const result = spawnSync(hidden.cmd, hidden.args, { 
-        env: hidden.env, 
-        stdio: 'pipe',
-        timeout: 120000 // 2 minute timeout per installer
-      })
-      
-      if (result.status === 0) {
-        console.log(`[Proton] ✅ ${filename} completed`)
-      } else {
-        console.warn(`[Proton] ⚠️ ${filename} returned code ${result.status}`)
-      }
-    } catch (err) {
-      console.warn('[Proton] Failed to run CommonRedist installer', installer, err)
-    }
-  }
 }
 
 // =====================================================
@@ -2007,7 +1806,7 @@ export function getPrefixStatus(prefixPath: string): {
     }
     result.exists = true
 
-    const meta = readDefaultDepsMeta(prefixPath)
+    const meta = readDefaultDepsMeta(resolveCompatDataPaths(prefixPath, false).compatDataPath)
     if (meta) {
       result.initialized = meta.winebootDone === true
       result.protonVersion = meta.proton || null
@@ -2015,11 +1814,7 @@ export function getPrefixStatus(prefixPath: string): {
       result.lastUpdated = meta.updatedAt || null
     }
 
-    // Check for pfx directory
-    const { winePrefix } = resolveCompatDataPaths(prefixPath, false)
-    if (fs.existsSync(path.join(winePrefix, 'drive_c'))) {
-      result.initialized = true
-    }
+    result.initialized = validatePrefixInstallation(prefixPath).winebootOk
 
   } catch (err) {
     console.warn('[getPrefixStatus] Error:', err)
@@ -2037,235 +1832,108 @@ export async function ensurePrefixDefaults(
   runtimePath?: string,
   commonRedistPath?: string,
   onProgress?: (msg: string) => void,
-  gameInstallPath?: string  // Game path for requirement detection.
+  gameInstallPath?: string,
+  retryFailed = false
 ): Promise<boolean> {
   try {
     if (!isLinux()) return false
     fs.mkdirSync(prefixPath, { recursive: true })
-    const resolved = resolveCompatDataPaths(prefixPath, true)
-    const compatDataPath = resolved.compatDataPath
-    const winePrefix = resolved.winePrefix
-
-    const protonPath = runtimePath || findProtonRuntime()
-    const { runner, protonDir } = getProtonRunner(protonPath)
-    if (!runner) {
-      console.error('[Proton] No Proton runner found!')
-      return false
-    }
-
-    const steamRoot = findSteamRoot()
+    const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, true)
+    const { runner, protonDir } = getProtonRunner(runtimePath || findProtonRuntime())
+    if (!runner) return false
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       WINEPREFIX: winePrefix,
       STEAM_COMPAT_DATA_PATH: compatDataPath,
-      STEAM_COMPAT_CLIENT_INSTALL_PATH: steamRoot,
+      STEAM_COMPAT_CLIENT_INSTALL_PATH: findSteamRoot(),
       WINEDEBUG: '-all',
       WINEDLLOVERRIDES: 'winemenubuilder.exe=d;mscoree,mshtml='
     }
 
     const prevMeta = readDefaultDepsMeta(compatDataPath)
-    const prevSchema = typeof prevMeta?.schema === 'number' ? prevMeta.schema : 0
+    const healthy = validatePrefixInstallation(prefixPath).winebootOk
     const runtimeMismatch = !!(prevMeta?.proton && prevMeta.proton !== runner)
-
     const meta: DefaultDepsMeta = {
+      ...prevMeta,
       schema: DEFAULT_DEPS_SCHEMA,
       initialized: prevMeta?.initialized || nowIso(),
-      updatedAt: nowIso(),
       proton: runner,
-      winebootDone: prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch ? prevMeta?.winebootDone === true : false,
-      vcredist: prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch
-        ? (prevMeta?.vcredist || { attempts: 0, ok: null, tool: null })
-        : { attempts: 0, ok: null, tool: null },
-      dotnet: prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch
-        ? (prevMeta?.dotnet || { attempts: 0, ok: null, tool: null })
-        : { attempts: 0, ok: null, tool: null },
-      winetricks: prevMeta?.winetricks,
-      protontricks: prevMeta?.protontricks
+      winebootDone: healthy && !runtimeMismatch && prevMeta?.winebootDone === true,
+      installedComponents: healthy ? [...(prevMeta?.installedComponents || [])] : [],
+      components: healthy ? { ...prevMeta?.components } : {}
     }
 
-    // Steam-like flow: detect game requirements when a game path is provided.
-    let detectedReqs: GameRequirements | null = null
-    let useSmartInstall = false
-
-    if (gameInstallPath && fs.existsSync(gameInstallPath)) {
-      onProgress?.('Analisando requisitos do jogo...')
-      detectedReqs = detectGameRequirements(gameInstallPath)
-      useSmartInstall = detectedReqs.detected.length > 0
-
-      if (useSmartInstall) {
-        console.log('[Proton] 🎯 Smart install mode: detected', detectedReqs.detected.length, 'requirements')
+    // Migrate the old aggregate result once, without invalidating successful installs.
+    if (healthy && !prevMeta?.components) {
+      if (prevMeta?.vcredist?.ok === true && !prevMeta.smartInstallUsed) {
+        meta.installedComponents!.push(...COMMON_PREREQUISITES.winetricks)
+      }
+      if (prevMeta?.dotnet?.ok === true) {
+        meta.installedComponents!.push(...(prevMeta.detectedRequirements || []).filter(c => c.startsWith('dotnet')))
       }
     }
-
-    const shouldAttempt = (attempts: number | undefined, max: number) => (attempts || 0) < max
-
-    const canWinetricks = winetricksAvailable()
-    const canProtontricks = protontricksAvailable()
-    const detectedWinetricksComponents = useSmartInstall && detectedReqs
-      ? requirementsToWinetricks(detectedReqs)
-      : []
-    const fallbackWinetricksComponents = !useSmartInstall ? COMMON_PREREQUISITES.winetricks : []
-    const pendingWinetricksComponents = detectedWinetricksComponents.length > 0
-      ? detectedWinetricksComponents
-      : fallbackWinetricksComponents
-    const needsWinetricksDeps = pendingWinetricksComponents.length > 0 && meta.vcredist?.ok !== true
-    const shouldRunWinetricksDeps = needsWinetricksDeps && canWinetricks && shouldAttempt(meta.vcredist?.attempts, 2)
-    const needsDotnet = !!(detectedReqs?.dotnet && detectedReqs.dotnet.length > 0 && meta.dotnet?.ok !== true)
-    const shouldRunDotnet = needsDotnet && canProtontricks && shouldAttempt(meta.dotnet?.attempts, 2)
-
-    if (meta.winebootDone && !shouldRunWinetricksDeps && !shouldRunDotnet && prevSchema === DEFAULT_DEPS_SCHEMA && !runtimeMismatch) {
-      console.log('[Proton] Prefix dependencies already satisfied; nothing to do')
-      return true
+    meta.installedComponents = Array.from(new Set(meta.installedComponents))
+    for (const component of meta.installedComponents) {
+      meta.components![component] = { ...meta.components![component], ok: true }
     }
-
-    console.log('[Proton] ========================================')
-    console.log('[Proton] Initializing game prefix:', compatDataPath)
-    console.log('[Proton] Using Proton:', runner)
-    console.log('[Proton] Steam root:', steamRoot)
-    console.log('[Proton] Smart install:', useSmartInstall ? 'enabled' : 'disabled (fallback mode)')
-    if (useSmartInstall && detectedReqs) {
-      console.log('[Proton] Detected requirements:', detectedReqs.detected.join(', '))
-    }
-    console.log('[Proton] ========================================')
-
-    // Step 1: Initialize Wine prefix (only once per prefix)
-    if (!meta.winebootDone) {
-      // Kill any previous wineserver for this prefix (common when switching Proton versions).
-      try {
-        await runProtonTool(runner, env, ['wineserver', '-k'], 15_000, '[wineserver]')
-        await runProtonTool(runner, env, ['wineserver', '-w'], 15_000, '[wineserver]')
-      } catch {
-        // ignore
-      }
-
-      onProgress?.('Inicializando prefixo Wine em background...')
-      console.log('[Proton] Step 1: Initializing Wine prefix in background...')
-
-      let winebootOk = await runWinebootBackground(runner, env, 60_000)
-      if (!winebootOk) {
-        console.warn('[Proton] Hidden wineboot failed or timed out; retrying hidden once')
-        onProgress?.('Inicializando prefixo Wine em modo oculto...')
-        const hiddenRetry = makeHiddenProcess(runner, ['run', 'wineboot', '-u'], env)
-        const code = await runLoggedProcess(
-          hiddenRetry.cmd,
-          hiddenRetry.args,
-          hiddenRetry.env,
-          60_000,
-          '[wineboot:hidden:retry]'
-        )
-        winebootOk = code === 0
-      }
-
-      meta.winebootDone = winebootOk || fs.existsSync(path.join(winePrefix, 'drive_c'))
+    const save = () => {
       meta.updatedAt = nowIso()
       writeDefaultDepsMeta(compatDataPath, meta)
-      console.log('[Proton] ✅ Wine prefix initialized')
-    } else {
-      console.log('[Proton] Prefix already bootstrapped; skipping wineboot')
     }
 
-    // Steam-like smart dependency installation based on detected requirements.
-    if (useSmartInstall && detectedReqs && canWinetricks) {
-      if (detectedWinetricksComponents.length > 0 && shouldRunWinetricksDeps) {
-        onProgress?.(`Instalando ${detectedWinetricksComponents.length} dependências detectadas...`)
-        console.log('[Proton] Step 2: Smart install - installing detected dependencies:', detectedWinetricksComponents)
-
-        meta.vcredist = {
-          attempts: (meta.vcredist?.attempts || 0) + 1,
-          lastAttemptAt: nowIso(),
-          tool: 'winetricks',
-          ok: null
-        }
-        meta.updatedAt = nowIso()
-        writeDefaultDepsMeta(compatDataPath, meta)
-
-        const ok = await runWinetricks(runner, compatDataPath, detectedWinetricksComponents, env, onProgress, protonDir)
-        meta.vcredist.ok = ok
-        meta.updatedAt = nowIso()
-        writeDefaultDepsMeta(compatDataPath, meta)
-
-        if (ok) {
-          console.log('[Proton] ✅ Smart install completed successfully')
-        } else {
-          console.warn('[Proton] ⚠️ Some smart install components may have failed')
-        }
-      } else if (detectedWinetricksComponents.length > 0 && meta.vcredist?.ok === true) {
-        console.log('[Proton] Smart install dependencies already installed; skipping')
-      } else if (detectedWinetricksComponents.length > 0) {
-        console.log('[Proton] Smart install dependencies unavailable or already attempted; skipping')
+    if (!meta.winebootDone) {
+      if (!healthy) fs.rmSync(getRedistSentinelPath(compatDataPath), { force: true })
+      onProgress?.('Inicializando prefixo Wine em background...')
+      await runProtonTool(runner, env, ['wineserver', '-k'], 15_000, '[wineserver]')
+      await runProtonTool(runner, env, ['wineserver', '-w'], 15_000, '[wineserver]')
+      let winebootOk = await runWinebootBackground(runner, env, 60_000)
+      if (!winebootOk) {
+        const hidden = makeHiddenProcess(runner, ['run', 'wineboot', '-u'], env)
+        winebootOk = await runLoggedProcess(hidden.cmd, hidden.args, hidden.env, 60_000, '[wineboot:retry]') === 0
       }
-
-      // Install .NET only if detected
-      if (detectedReqs.dotnet.length > 0 && shouldRunDotnet) {
-        onProgress?.(`Instalando .NET (${detectedReqs.dotnet.join(', ')})...`)
-        console.log('[Proton] Step 3: Installing detected .NET versions:', detectedReqs.dotnet)
-
-        const dotnetOk = await runProtontricks(compatDataPath, detectedReqs.dotnet, env, onProgress)
-        meta.dotnet = {
-          attempts: (meta.dotnet?.attempts || 0) + 1,
-          lastAttemptAt: nowIso(),
-          tool: 'protontricks',
-          ok: dotnetOk
-        }
-        meta.updatedAt = nowIso()
-        writeDefaultDepsMeta(compatDataPath, meta)
-      } else if (detectedReqs.dotnet.length > 0 && meta.dotnet?.ok === true) {
-        console.log('[Proton] .NET dependencies already installed; skipping')
-      } else if (detectedReqs.dotnet.length > 0) {
-        console.log('[Proton] .NET dependencies unavailable or already attempted; skipping')
-      }
-
-    } else {
-      // FALLBACK MODE: Install basic dependencies if smart detection wasn't available
-
-      // Step 2: Install VC++ Runtimes via winetricks (prefix is compatible with Proton)
-      if (shouldRunWinetricksDeps) {
-        meta.vcredist = {
-          attempts: (meta.vcredist?.attempts || 0) + 1,
-          lastAttemptAt: nowIso(),
-          tool: 'winetricks',
-          ok: null
-        }
-        meta.updatedAt = nowIso()
-        writeDefaultDepsMeta(compatDataPath, meta)
-
-        onProgress?.('Installing Visual C++ Runtimes...')
-        console.log('[Proton] Step 2 (fallback): Installing VC++ Runtimes via winetricks...')
-
-        // Only install basic prerequisites in fallback mode (faster)
-        const ok = await runWinetricks(runner, compatDataPath, COMMON_PREREQUISITES.winetricks, env, onProgress, protonDir)
-        meta.vcredist.ok = ok
-        meta.updatedAt = nowIso()
-        writeDefaultDepsMeta(compatDataPath, meta)
-      } else if (!canWinetricks) {
-        onProgress?.('Dependências VC++: winetricks não encontrado')
-        console.log('[Proton] ⚠️ winetricks not installed - skipping VC++ runtimes')
-        console.log('[Proton] CachyOS/Arch: sudo pacman -S winetricks')
-      } else if (meta.vcredist?.ok === true) {
-        console.log('[Proton] VC++ runtimes already installed; skipping')
-      }
-
-      // Step 3: Skip extras in fallback mode (they take too long and may not be needed)
-      // Games that need these should be detected by smart install
-      console.log('[Proton] Skipping extras in fallback mode (use smart install for full dependencies)')
+      meta.winebootDone = winebootOk && validatePrefixInstallation(prefixPath).winebootOk
+      save()
+      if (!meta.winebootDone) return false
     }
 
-    // Optional Step: install game-bundled installers if requested
-    try {
-      if (commonRedistPath && fs.existsSync(commonRedistPath)) {
-        onProgress?.('Aplicando redistribuíveis do jogo (se houver)...')
-        await runCommonRedistInstallers(commonRedistPath, runner, env, onProgress)
-      }
-    } catch (err) {
-      console.warn('[Proton] Failed to run CommonRedist installers:', err)
-    }
+    // All entry points use the same game path and the same persisted redist state.
+    const redistSource = commonRedistPath || gameInstallPath
+    const redists = redistSource
+      ? await ensureGameCommonRedists(redistSource, prefixPath, runtimePath, onProgress, retryFailed)
+      : { ok: true }
+    const detected = gameInstallPath && fs.existsSync(gameInstallPath)
+      ? detectGameRequirements(gameInstallPath) : null
+    meta.smartInstallUsed = !!detected?.detected.length
+    meta.detectedRequirements = detected?.detected || []
+    const required = Array.from(new Set([
+      ...(meta.smartInstallUsed && detected ? requirementsToWinetricks(detected) : COMMON_PREREQUISITES.winetricks),
+      ...(detected?.dotnet || [])
+    ]))
+    const pending = required.filter(c => meta.components![c]?.ok !== true)
+    const available = pending.length === 0 || winetricksAvailable()
+    if (pending.length && !available) onProgress?.('Dependências pendentes: winetricks não encontrado')
 
-    console.log('[Proton] ========================================')
-    console.log('[Proton] ✅ Prefix initialization complete!')
-    console.log('[Proton] ========================================')
-    
-    return true
+    if (available) {
+      // Each run already retries failed commands. Further retries require an explicit refresh.
+      const toInstall = pending.filter(c => retryFailed || !meta.components![c]?.attempts)
+      for (const component of toInstall) {
+        meta.components![component] = {
+          attempts: (meta.components![component]?.attempts || 0) + 1,
+          lastAttemptAt: nowIso(), tool: 'winetricks', ok: null
+        }
+      }
+      save()
+      await runWinetricks(runner, compatDataPath, toInstall, env, onProgress, protonDir, (components, ok) => {
+        for (const component of components) {
+          meta.components![component].ok = ok
+          if (ok && !meta.installedComponents!.includes(component)) meta.installedComponents!.push(component)
+        }
+        save()
+      })
+    }
+    save()
+    return redists.ok && required.every(c => meta.components![c]?.ok === true)
   } catch (err) {
     console.error('[Proton] ensurePrefixDefaults failed:', err)
     return false
@@ -2276,10 +1944,16 @@ export async function ensurePrefixDefaults(
 // Install extra prerequisites.
 // =====================================================
 
+function runtimeForPrefix(compatDataPath: string, runtimePath?: string) {
+  const recordedRunner = readDefaultDepsMeta(compatDataPath)?.proton
+  return runtimePath || (recordedRunner ? path.dirname(recordedRunner) : findProtonRuntime())
+}
+
 export async function installExtraComponents(
   prefixPath: string,
   components: string[],
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  runtimePath?: string
 ): Promise<boolean> {
   if (!isLinux()) return false
   
@@ -2287,7 +1961,7 @@ export async function installExtraComponents(
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
 
-  const protonPath = findProtonRuntime()
+  const protonPath = runtimeForPrefix(compatDataPath, runtimePath)
   const { runner, protonDir } = getProtonRunner(protonPath)
   if (!runner) return false
 
@@ -2301,40 +1975,33 @@ export async function installExtraComponents(
   console.log('[Proton] Installing extra components:', components)
   // Whether winetricks actually succeeded is the answer the caller reports to
   // the user. Returning a bare true here made a failed install look installed.
-  return runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir)
-}
-
-export async function runProtontricksComponents(
-  prefixPath: string,
-  components: string[],
-  onProgress?: (msg: string) => void
-): Promise<boolean> {
-  if (!isLinux()) return false
-
-  const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
-  const { compatDataPath } = resolveCompatDataPaths(prefixPath, allowMigrate)
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    STEAM_COMPAT_DATA_PATH: compatDataPath,
-  }
-
-  console.log('[Proton] Running protontricks components:', components)
-  return await runProtontricks(compatDataPath, components, env, onProgress)
+  return runWinetricks(runner, compatDataPath, components, env, onProgress, protonDir, (completed, ok) => {
+    const meta = readDefaultDepsMeta(compatDataPath) || {}
+    meta.components ||= {}
+    const installed = new Set(meta.installedComponents || [])
+    for (const component of completed) {
+      const previous = meta.components[component]
+      meta.components[component] = { attempts: (previous?.attempts || 0) + 1, lastAttemptAt: nowIso(), tool: 'winetricks', ok: ok || previous?.ok === true }
+      if (ok) installed.add(component)
+    }
+    meta.installedComponents = [...installed]
+    meta.updatedAt = nowIso()
+    writeDefaultDepsMeta(compatDataPath, meta)
+  })
 }
 
 /**
  * Open the full winetricks GUI targeting a game's Wine prefix.
  * This spawns winetricks in interactive mode (no --unattended, no components).
  */
-export function openWinetricksGui(prefixPath: string): { success: boolean; error?: string } {
+export function openWinetricksGui(prefixPath: string, runtimePath?: string): { success: boolean; error?: string } {
   if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
   if (!winetricksAvailable()) return { success: false, error: 'winetricks não está instalado' }
 
   const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
-  const protonPath = findProtonRuntime()
+  const protonPath = runtimeForPrefix(compatDataPath, runtimePath)
   const { protonDir } = getProtonRunner(protonPath)
   const protonOverrides = getProtonWineOverrides(protonDir)
   const winetricksCmd = findCommandPath('winetricks')
@@ -2357,13 +2024,13 @@ export function openWinetricksGui(prefixPath: string): { success: boolean; error
 /**
  * Open winecfg targeting a game's Wine prefix.
  */
-export function openWinecfg(prefixPath: string): { success: boolean; error?: string } {
+export function openWinecfg(prefixPath: string, runtimePath?: string): { success: boolean; error?: string } {
   if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
 
   const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
-  const protonPath = findProtonRuntime()
+  const protonPath = runtimeForPrefix(compatDataPath, runtimePath)
   const { runner, protonDir } = getProtonRunner(protonPath)
 
   // Try using Proton's wine binary first, fallback to system wine
@@ -2389,13 +2056,13 @@ export function openWinecfg(prefixPath: string): { success: boolean; error?: str
 /**
  * Open Wine regedit targeting a game's Wine prefix.
  */
-export function openRegedit(prefixPath: string): { success: boolean; error?: string } {
+export function openRegedit(prefixPath: string, runtimePath?: string): { success: boolean; error?: string } {
   if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
 
   const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
-  const protonPath = findProtonRuntime()
+  const protonPath = runtimeForPrefix(compatDataPath, runtimePath)
   const { protonDir } = getProtonRunner(protonPath)
 
   const protonOverrides = getProtonWineOverrides(protonDir)
@@ -2420,13 +2087,13 @@ export function openRegedit(prefixPath: string): { success: boolean; error?: str
 /**
  * Open Wine file manager (winefile) targeting a game's Wine prefix.
  */
-export function openWineFileManager(prefixPath: string): { success: boolean; error?: string } {
+export function openWineFileManager(prefixPath: string, runtimePath?: string): { success: boolean; error?: string } {
   if (!isLinux()) return { success: false, error: 'Apenas disponível no Linux' }
 
   const allowMigrate = prefixPath.startsWith(DEFAULT_PREFIX_DIR)
   const { compatDataPath, winePrefix } = resolveCompatDataPaths(prefixPath, allowMigrate)
   const steamRoot = findSteamRoot()
-  const protonPath = findProtonRuntime()
+  const protonPath = runtimeForPrefix(compatDataPath, runtimePath)
   const { protonDir } = getProtonRunner(protonPath)
 
   const protonOverrides = getProtonWineOverrides(protonDir)
@@ -2447,4 +2114,3 @@ export function openWineFileManager(prefixPath: string): { success: boolean; err
   proc.unref()
   return { success: true }
 }
-

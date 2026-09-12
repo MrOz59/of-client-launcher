@@ -556,13 +556,14 @@ function sendGameLaunchStatus(payload: GameLaunchStatusPayload) {
 
 function sendPrefixJobStatus(payload: PrefixJobStatusPayload) {
   const message = payload.message || ''
-  const isRedist = /redist|directx|vcredist|winetricks|protontricks|componente/i.test(message)
+  const isRedist = /redist|directx|vcredist|winetricks|componente/i.test(message)
   upsertTask({
-    id: taskId(isRedist ? 'redist' : 'prefix', payload.gameUrl),
+    // Dependency installation is a phase of this same job, not a second task.
+    id: taskId('prefix', payload.gameUrl),
     kind: isRedist ? 'redist' : 'prefix',
     title: isRedist ? 'Instalando redists/componentes' : 'Preparando prefixo Proton',
     status: payload.status === 'done' ? 'done' : payload.status === 'error' ? 'error' : 'running',
-    progress: payload.status === 'done' ? 100 : undefined,
+    progress: payload.status === 'done' ? 100 : payload.status === 'starting' ? 0 : undefined,
     message,
     gameUrl: payload.gameUrl,
     targetPath: payload.prefix,
@@ -945,15 +946,12 @@ async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, ins
 
   const existingJob = inFlightPrefixJobs.get(gameUrl)
   if (existingJob?.promise) return existingJob.promise
-  if (existingJob) return true
+  if (existingJob) return false
 
   const startedAt = Date.now()
-  const job = (async () => {
+  const job = Promise.resolve().then(async () => {
     try {
       const game = getGame(gameUrl) as any
-
-      // If a prefix already exists, there is nothing to create.
-      if (game?.proton_prefix) return true
 
       const stableId = (game?.game_id as string | null) || extractGameIdFromUrl(gameUrl)
       const slug = stableId ? `game_${stableId}` : slugify(title || game?.title || gameUrl || 'game')
@@ -962,9 +960,9 @@ async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, ins
       // Send visual feedback to the user.
       sendPrefixJobStatus({ gameUrl, status: 'starting', message: 'Preparando prefixo do Proton...' })
 
-      const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, true, (msg) => {
+      const prefix = await ensureGamePrefixFromDefault(slug, runtime, undefined, false, (msg) => {
         sendPrefixJobStatus({ gameUrl, status: 'progress', message: msg })
-      })
+      }, installPath, game?.proton_prefix || undefined)
       updateGameInfo(gameUrl, { proton_prefix: prefix })
 
       // Notificar que terminou
@@ -977,17 +975,15 @@ async function prepareGamePrefixAfterInstall(gameUrl: string, title: string, ins
     } finally {
       try { inFlightPrefixJobs.delete(gameUrl) } catch {}
     }
-  })()
+  })
 
   inFlightPrefixJobs.set(gameUrl, { startedAt, promise: job })
   return job
 }
 
-async function notifyGameReadyAfterInstall(gameUrl: string, title: string, installPath: string, firstInstall = true) {
-  if (firstInstall) {
-    const prefixReady = await prepareGamePrefixAfterInstall(gameUrl, title, installPath)
-    if (!prefixReady) return
-  }
+async function notifyGameReadyAfterInstall(gameUrl: string, title: string, installPath: string, _firstInstall = true) {
+  const prefixReady = await prepareGamePrefixAfterInstall(gameUrl, title, installPath)
+  if (!prefixReady) return
 
   try {
     notifyDownloadComplete(title || 'Jogo')

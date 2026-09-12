@@ -276,8 +276,8 @@ declare global {
       protonPreparePrefix: (slug: string) => Promise<{ success: boolean; prefix?: string; error?: string }>
       protonBuildLaunch: (exePath: string, args: string[], slug: string, runtimePath?: string, prefixPath?: string) => Promise<{ success: boolean; launch?: any; error?: string }>
       protonCreateGamePrefix: (gameUrl: string, title?: string, commonRedistPath?: string) => Promise<{ success: boolean; prefix?: string; error?: string }>
-      protonTricksStatus: () => Promise<{ success: boolean; winetricks?: boolean; protontricks?: boolean; error?: string }>
-      protonRunTricks: (gameUrl: string, tool: 'winetricks' | 'protontricks', components: string[]) => Promise<{ success: boolean; error?: string }>
+      winetricksStatus: () => Promise<{ success: boolean; winetricks?: boolean; error?: string }>
+      runWinetricks: (gameUrl: string, components: string[]) => Promise<{ success: boolean; error?: string }>
       protonOpenTricksGui: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       protonOpenWinecfg: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
       protonOpenRegedit: (gameUrl: string) => Promise<{ success: boolean; error?: string }>
@@ -324,7 +324,7 @@ declare global {
       listGameFixes: (gameUrl: string) => Promise<{ success: boolean; fixes?: Array<{ fix: any; path?: string; updatedAt?: string }>; directory?: string; error?: string }>
       saveGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; path?: string; error?: string }>
       deleteGameFix: (gameUrl: string, fixId: string) => Promise<{ success: boolean; error?: string }>
-      applyGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; copiedAssemblies?: string[]; pendingComponents?: { winetricks?: string[]; protontricks?: string[] }; error?: string }>
+      applyGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; copiedAssemblies?: string[]; pendingComponents?: { winetricks?: string[] }; error?: string }>
       installGameFixComponents: (gameUrl: string, fix: any) => Promise<{ success: boolean; prefix?: string; installed?: string[]; warnings?: string[]; error?: string }>
       getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => Promise<{ success: boolean; text?: string; live?: boolean; logPath?: string | null; pid?: number; updatedAt?: number; hasProcessOutput?: boolean; hasProtonLog?: boolean; error?: string }>
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>

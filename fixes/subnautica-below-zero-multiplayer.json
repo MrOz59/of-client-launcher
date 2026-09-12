@@ -1,0 +1,35 @@
+{
+  "kind": "voidlauncher.gameFix",
+  "schemaVersion": 1,
+  "id": "subnautica-below-zero-multiplayer",
+  "title": "Subnautica Below Zero + Multiplayer (BOT Benson)",
+  "description": "Launch the game itself instead of the mod's launcher. Subnautica.Multiplayer.exe never reaches the game on Linux: it dies on OnlineFix's self-protection, and even with OnlineFix kept out of it, it refuses to run and asks you to re-download the mod. The mod does not need that launcher — the game loads it from %AppData%\\.botbenson on its own, once the patched Assembly-CSharp.dll is in place. This fix points the launcher at SubnauticaZero.exe and passes the identity the mod would otherwise have taken from the launcher's account and VPN.",
+  "author": "MrOz59",
+  "createdAt": "2026-09-12T00:00:00.000Z",
+  "game": {
+    "id": "18049",
+    "title": "Subnautica Below Zero",
+    "url": "https://online-fix.me/games/survival/18049-subnautica-below-zero-po-seti.html",
+    "installedVersion": "Build 03102025"
+  },
+  "proton": {
+    "runtimeName": "Proton-GE Latest",
+    "options": {
+      "launchArgs": "-peerIp 127.0.0.1 -peerId player:connectIP:127.0.0.1 -userId 1 -username Player"
+    },
+    "steamAppId": "848450"
+  },
+  "launchExecutable": "SubnauticaZero.exe",
+  "notes": [
+    "Install the mod files BEFORE applying the fix: this fix only changes which executable runs and the arguments it gets. It cannot deliver the mod itself.",
+    "The mod files come from the Linux patch of the BOT Benson mod (Troplo, Subnautica-BZ-Multiplayer-Linux, release 1.0.3). From that ZIP: 'Game Folder' goes into the game directory — it replaces SubnauticaZero_Data/Managed/Assembly-CSharp.dll and adds DiscordRPCNativeNamedPipe.dll — and the '.botbenson' folder goes into the prefix, at drive_c/users/steamuser/AppData/Roaming. That folder is the mod: loader, plugins, dependencies and the 30 MB SpawnPoints.bin.",
+    "Back up the original Assembly-CSharp.dll first. It is the game's own code plus the mod's bootstrap, and any repack update overwrites it — after an update you reinstall the patched one, or the game silently starts vanilla.",
+    "THE ONE THAT ACTUALLY STOPS YOU, if you try the intended route: Subnautica.Multiplayer.exe loads the game folder's winmm.dll, which loads OnlineFix64.dll into the launcher process, and OnlineFix's self-protection aborts there with 'Self-protection failed. Error code: 4' before the launcher draws a window. The same OnlineFix64.dll is fine inside SubnauticaZero.exe — the game boots, and the mod log shows a real Steam id — so this is about which process it was loaded into, not about Wine. Confirm it with WINEDEBUG=+msgbox: the text is printed by the same thread that just loaded winmm, SteamOverlay64 and OnlineFix64.",
+    "And the launcher is a dead end even without OnlineFix: run it with winmm=b so the proxy stays out, and it gets further only to say 'A new update has been detected. Please re-download the mod from our website.' It wants to update itself against BOT Benson's service. There is nothing to fix in that process — skip it.",
+    "The four arguments are per player and MUST be changed. -peerIp is YOUR address: the LAN IP of this machine for players on the same network, your public IPv4 over the internet. -userId must be a different number for every player, -username a different name (no spaces); duplicates break the session. -peerId is any unique string; the 'connectIP:' part tells the mod which address to bind when hosting, so 'name:connectIP:127.0.0.1' keeps a host from trying to reach itself through its public IP.",
+    "Without these arguments the mod still loads, but it has no identity: the username shows as UNSET and hosting fails. They replace the launcher's login and NetBird VPN, which the Linux patch removes — NetBird has no Linux client, which is why the intended setup cannot work here at all.",
+    "The host forwards UDP 24032. That port is the patch's doing: the mod hardcodes 666, and the patch rewrites it. Radmin/Hamachi/ZeroTier work instead of port forwarding, as long as -peerIp is the address on that network.",
+    "Black screen at startup, or objects you cannot interact with: put 'taskset -c 0,1' in front of the command. It is a known race in the mod itself, not in the patch, and the cost is FPS — widen to 0,1,2 if it still behaves.",
+    "The mod reaches an API for invite codes and translations; the patch points it at the author of the patch's own reimplementation. It is not needed to host or join over LAN, only for invite codes, and the game starts normally when it is unreachable."
+  ]
+}

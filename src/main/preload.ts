@@ -183,9 +183,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ) => ipcRenderer.invoke('proton-build-launch', exePath, args, slug, runtimePath, prefixPath),
   protonCreateGamePrefix: (gameUrl: string, title?: string, commonRedistPath?: string) =>
     ipcRenderer.invoke('proton-create-game-prefix', gameUrl, title, commonRedistPath),
-  protonTricksStatus: () => ipcRenderer.invoke('proton-tricks-status'),
-  protonRunTricks: (gameUrl: string, tool: 'winetricks' | 'protontricks', components: string[]) =>
-    ipcRenderer.invoke('proton-run-tricks', gameUrl, tool, components),
+  winetricksStatus: () => ipcRenderer.invoke('winetricks-status'),
+  runWinetricks: (gameUrl: string, components: string[]) =>
+    ipcRenderer.invoke('winetricks-run', gameUrl, components),
   protonOpenTricksGui: (gameUrl: string) => ipcRenderer.invoke('proton-open-tricks-gui', gameUrl),
   protonOpenWinecfg: (gameUrl: string) => ipcRenderer.invoke('proton-open-winecfg', gameUrl),
   protonOpenRegedit: (gameUrl: string) => ipcRenderer.invoke('proton-open-regedit', gameUrl),

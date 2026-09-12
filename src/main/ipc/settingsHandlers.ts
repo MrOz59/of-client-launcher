@@ -10,7 +10,6 @@ import * as drive from '../drive'
 import {
   findProtonRuntime,
   listProtonRuntimes,
-  protontricksAvailable,
   setSavedProtonRuntime,
   setCustomProtonRoot,
   setCustomProtonRoots,
@@ -386,8 +385,7 @@ async function collectLauncherDiagnostics(settings: any) {
       legendaryPath,
       eosOverlayPath,
       eosOverlayValid: isEosOverlayPathValid(eosOverlayPath),
-      winetricks: isLinuxPlatform ? winetricksAvailable() : false,
-      protontricks: isLinuxPlatform ? protontricksAvailable() : false
+      winetricks: isLinuxPlatform ? winetricksAvailable() : false
     },
     tools: {
       torrentAgentPath,

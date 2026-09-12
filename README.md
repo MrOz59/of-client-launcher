@@ -101,7 +101,7 @@ For Linux runtime features:
 
 - Wine/Proton compatible runtime
 - Bundled EasyTier for P2P; WireGuard tools only for legacy VPN rooms
-- `winetricks` or `protontricks` for optional prefix components
+- `winetricks` for optional prefix components
 - `tar` with gzip/xz/zstd support for managed Proton runtime extraction
 
 ## Install

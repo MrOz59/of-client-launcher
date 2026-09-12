@@ -453,11 +453,18 @@ export default function LibraryTab() {
       ...prev,
       [game.url]: { status: 'starting', message: t('library.prefix.preparing'), updatedAt: Date.now() }
     }))
-    const res = await window.electronAPI.protonCreateGamePrefix(game.url, game.title)
-    if (res.success && res.prefix) {
+    try {
+      // Prefix preparation must use the runtime currently selected in the form.
+      await gameConfig.flushConfigAutosave(game, setGames)
+      const res = await window.electronAPI.protonCreateGamePrefix(game.url, game.title)
+      if (!res.success || !res.prefix) throw new Error(ipcErrorText(t, res, t('library.prefix.createFailed')))
       gameConfig.setProtonPrefix(res.prefix)
-    } else {
-      alert(ipcErrorText(t, res, t('library.prefix.createFailed')))
+      setGames(prev => prev.map(g => g.url === game.url ? { ...g, proton_prefix: res.prefix } : g))
+      setPrefixJobs(prev => ({ ...prev, [game.url]: { status: 'done', prefix: res.prefix, updatedAt: Date.now() } }))
+    } catch (err: any) {
+      const message = err?.message || t('library.prefix.createFailed')
+      setPrefixJobs(prev => ({ ...prev, [game.url]: { status: 'error', message, updatedAt: Date.now() } }))
+      alert(message)
     }
   }, [gameConfig, t])
 
@@ -674,6 +681,10 @@ export default function LibraryTab() {
       }))
 
       if (data.status === 'done') {
+        if (data.prefix) {
+          setGames(prev => prev.map(g => g.url === data.gameUrl ? { ...g, proton_prefix: data.prefix } : g))
+          if (gameConfig.showConfig === data.gameUrl) gameConfig.setProtonPrefix(data.prefix)
+        }
         const url = data.gameUrl
         setTimeout(() => {
           setPrefixJobs(p => {
@@ -687,7 +698,7 @@ export default function LibraryTab() {
       }
     })
     return () => { try { unsub?.() } catch {} }
-  }, [])
+  }, [gameConfig.showConfig, gameConfig.setProtonPrefix])
 
   // Config autosave effect - use JSON.stringify for objects to avoid reference comparison issues
   const protonOptionsJson = JSON.stringify(gameConfig.protonOptions)

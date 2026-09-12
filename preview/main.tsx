@@ -21,7 +21,7 @@ const draft = {
   launcherVersion: '0.4.0',
   game: { id: '18121', title: 'Subnautica', url: 'https://online-fix.me/games/survival/18121-subnautica-po-seti.html', installedVersion: 'Build 03102025' },
   proton: { runtimeName: 'Proton-GE Latest', options: {}, steamAppId: '264710' },
-  components: { winetricks: broken ? ['dotnet desktop/9'] : ['dotnetdesktop9'], protontricks: [] },
+  components: { winetricks: broken ? ['dotnet desktop/9'] : ['dotnetdesktop9'] },
   launchExecutable: 'Nitrox.Launcher.exe',
   runtimeAssemblies: broken
     ? [{ name: 'System.Net.Primitives.dll', into: '../../etc' }, { name: 'nope.txt', into: 'lib' }]

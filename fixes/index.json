@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "fixes": [
     {
+      "id": "subnautica-below-zero-multiplayer",
+      "file": "subnautica-below-zero-multiplayer.json",
+      "title": "Subnautica Below Zero + Multiplayer (BOT Benson)",
+      "description": "Launch the game itself instead of the mod's launcher. Subnautica.Multiplayer.exe never reaches the game on Linux: it dies on OnlineFix's self-protection, and even with OnlineFix kept out of it, it refuses to run and asks you to re-download the mod. The mod does not need that launcher — the game loads it from %AppData%\\.botbenson on its own, once the patched Assembly-CSharp.dll is in place. This fix points the launcher at SubnauticaZero.exe and passes the identity the mod would otherwise have taken from the launcher's account and VPN.",
+      "game": {
+        "id": "18049",
+        "title": "Subnautica Below Zero",
+        "url": "https://online-fix.me/games/survival/18049-subnautica-below-zero-po-seti.html"
+      }
+    },
+    {
       "id": "subnautica-nitrox",
       "file": "subnautica-nitrox.json",
       "title": "Subnautica + Nitrox (multiplayer)",

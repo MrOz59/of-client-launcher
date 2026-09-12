@@ -20,8 +20,7 @@
   "components": {
     "winetricks": [
       "dotnetdesktop9"
-    ],
-    "protontricks": []
+    ]
   },
   "launchExecutable": "Nitrox.Launcher.exe",
   "notes": [

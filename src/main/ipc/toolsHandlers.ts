@@ -9,7 +9,6 @@ import {
   getPrefixRootDir,
   getSavedProtonRuntime,
   isLinux,
-  protontricksAvailable,
   setSavedProtonRuntime,
   winetricksAvailable
 } from '../protonManager'
@@ -698,16 +697,14 @@ async function getToolsStatus() {
       installed: listInstalledProton('proton-ge'),
       defaultRuntime: getSavedProtonRuntime(),
       prefixRoot: getPrefixRootDir(),
-      winetricks: isLinux() ? winetricksAvailable() : false,
-      protontricks: isLinux() ? protontricksAvailable() : false
+      winetricks: isLinux() ? winetricksAvailable() : false
     },
     protonCachyos: {
       root: managedProtonRoot('proton-cachyos'),
       installed: listInstalledProton('proton-cachyos'),
       defaultRuntime: getSavedProtonRuntime(),
       prefixRoot: getPrefixRootDir(),
-      winetricks: isLinux() ? winetricksAvailable() : false,
-      protontricks: isLinux() ? protontricksAvailable() : false
+      winetricks: isLinux() ? winetricksAvailable() : false
     },
     tools: {
       legendary: {

@@ -74,7 +74,6 @@ export interface CommunityGameFix {
   }
   components?: {
     winetricks?: string[]
-    protontricks?: string[]
   }
   /** Bare file name of the binary to launch, for a game whose mod has its own launcher. */
   launchExecutable?: string | null
