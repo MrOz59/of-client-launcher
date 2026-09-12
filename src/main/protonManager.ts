@@ -1538,6 +1538,99 @@ const COMMON_PREREQUISITES = {
   ]
 }
 
+// =====================================================
+// Prefix Windows version.
+// =====================================================
+
+/**
+ * Proton prefixes report Windows 10, and things break when they stop.
+ *
+ * winetricks sets the Windows version as part of a verb's recipe — dotnet48
+ * drops the prefix to Windows XP on its way in — and puts it back only when the
+ * verb succeeds. A failed install therefore leaves the prefix pretending to be
+ * XP, and a game with OnlineFix then dies before it starts: under XP the DLL
+ * takes a legacy path into ntdll.NtCreateProcessEx, which Wine does not
+ * implement, so the process aborts with nothing in the game's own logs. It took
+ * a Proton log to find, and the game looked broken while the fix was fine.
+ *
+ * So the version is checked after every winetricks batch and on every prefix
+ * preparation, against what the prefix actually says rather than against a list
+ * of verbs known to change it — a list that would go stale on the next
+ * winetricks release.
+ */
+const WINDOWS_VERSION_VERB = 'win10'
+
+/** Windows 10 builds are five digits; everything older than it is four. */
+const OLDEST_CURRENT_WINDOWS_BUILD = 10000
+
+function readPrefixWindowsBuild(winePrefix: string): number | null {
+  try {
+    const registry = fs.readFileSync(path.join(winePrefix, 'system.reg'), 'utf8')
+    // The 32- and 64-bit views are written together by any version change, so
+    // the first one answers for both.
+    const match = /"CurrentBuildNumber"="(\d+)"/.exec(registry) || /"CurrentBuild"="(\d+)"/.exec(registry)
+    const build = match ? Number(match[1]) : NaN
+    return Number.isFinite(build) ? build : null
+  } catch {
+    // No registry to read yet, or one this does not understand: not something
+    // to act on.
+    return null
+  }
+}
+
+/**
+ * The other half of what a failed dotnet verb leaves behind.
+ *
+ * winetricks runs remove_mono on its way into installing .NET, which deletes
+ * the prefix's mscoree.dll — the stub that makes wine-mono load. When the
+ * install then fails, nothing puts it back, and from then on no .NET program
+ * starts in that prefix: not the mod launchers some fixes point at, not even
+ * Proton's own xalia helper. Wine restores it while updating the prefix.
+ */
+function prefixHasDotNetSupport(winePrefix: string): boolean {
+  // existsSync follows the link, so a symlink left pointing at a runtime that
+  // is no longer there counts as missing, which is what it is.
+  return fs.existsSync(path.join(winePrefix, 'drive_c', 'windows', 'system32', 'mscoree.dll'))
+}
+
+async function ensurePrefixDotNetSupport(
+  runner: string,
+  prefixCompatDataPath: string,
+  env: NodeJS.ProcessEnv,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const winePrefix = typeof env.WINEPREFIX === 'string' && env.WINEPREFIX.trim() !== ''
+    ? String(env.WINEPREFIX)
+    : path.join(prefixCompatDataPath, 'pfx')
+
+  if (prefixHasDotNetSupport(winePrefix)) return
+
+  console.warn('[Proton] Prefix has no mscoree.dll; restoring wine-mono')
+  onProgress?.('Restaurando o suporte a .NET do prefixo...')
+  await runWinebootBackground(runner, env, 60_000)
+  if (!prefixHasDotNetSupport(winePrefix)) console.warn('[Proton] wine-mono is still missing after updating the prefix')
+}
+
+async function ensurePrefixWindowsVersion(
+  runner: string,
+  prefixCompatDataPath: string,
+  env: NodeJS.ProcessEnv,
+  onProgress?: (msg: string) => void,
+  protonDir?: string | null
+): Promise<void> {
+  const winePrefix = typeof env.WINEPREFIX === 'string' && env.WINEPREFIX.trim() !== ''
+    ? String(env.WINEPREFIX)
+    : path.join(prefixCompatDataPath, 'pfx')
+
+  const build = readPrefixWindowsBuild(winePrefix)
+  if (build === null || build >= OLDEST_CURRENT_WINDOWS_BUILD) return
+
+  console.warn(`[Proton] Prefix reports Windows build ${build}; restoring ${WINDOWS_VERSION_VERB}`)
+  onProgress?.('Restaurando o prefixo para Windows 10...')
+  const ok = await runWinetricks(runner, prefixCompatDataPath, [WINDOWS_VERSION_VERB], env, () => {}, protonDir)
+  if (!ok) console.warn('[Proton] Could not restore the prefix Windows version')
+}
+
 // Steam-like optimized winetricks runner with better timeout and error handling.
 async function runWinetricks(
   runner: string,
@@ -1678,6 +1771,14 @@ async function runWinetricks(
       onResult?.([component], false)
       okAll = false
     }
+  }
+
+  // A verb that changed the Windows version and then failed leaves it changed,
+  // so the prefix is put back before anything tries to run in it. Skipped while
+  // restoring it, which is itself a winetricks verb.
+  if (!components.includes(WINDOWS_VERSION_VERB)) {
+    await ensurePrefixWindowsVersion(runner, prefixCompatDataPath, env, onProgress, protonDir)
+    await ensurePrefixDotNetSupport(runner, prefixCompatDataPath, env, onProgress)
   }
 
   return okAll
@@ -1932,6 +2033,11 @@ export async function ensurePrefixDefaults(
         save()
       })
     }
+    // Not only after installing something: a prefix left broken by an earlier
+    // run — or by anything else — comes back on the next launch.
+    await ensurePrefixWindowsVersion(runner, compatDataPath, env, onProgress, protonDir)
+    await ensurePrefixDotNetSupport(runner, compatDataPath, env, onProgress)
+
     save()
     return redists.ok && required.every(c => meta.components![c]?.ok === true)
   } catch (err) {
