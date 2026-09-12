@@ -5,7 +5,7 @@
       "id": "subnautica-nitrox",
       "file": "subnautica-nitrox.json",
       "title": "Subnautica + Nitrox (multiplayer)",
-      "description": "Faz o Nitrox carregar de verdade. O mod nao injeta por proxy DLL: quem carrega o NitroxPatcher e o proprio launcher do mod, um app .NET 9. Sem o runtime no prefixo ele nao inicia e o jogo sobe limpo. Este fix instala o .NET Desktop Runtime 9 no prefixo e aponta o lancamento para o launcher do Nitrox.",
+      "description": "Get Nitrox to load properly. The mod doesn't load via DLL proxy; instead, it uses NitroxPatcher and the mod's own launcher—a .NET 9 application. Without the runtime present in the prefix, it won't start, and the game launches in its vanilla state. This fix installs the .NET Desktop Runtime 9 into the prefix and configures the launch sequence to use the Nitrox launcher.",
       "game": {
         "id": "18121",
         "title": "Subnautica",

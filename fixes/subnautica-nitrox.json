@@ -30,11 +30,30 @@
     "Unity only packages the facades referenced by the game itself. Nitrox references System.Net.Primitives while Subnautica does not, and the official Nitrox lib/net472 folder doesn't include it either. On Windows, it comes from the system's .NET Framework; since it doesn't exist in a Proton prefix, the fix copies it from the runtime's wine-mono.",
     "The executable is now Nitrox/Nitrox.Launcher.exe. Launching Subnautica.exe directly will always open the game without the mod.",
     "The Nitrox README advises against installing the mod inside the game folder, but this repack comes set up that way. If any strange behavior occurs, that is the first thing to investigate.",
-    "Process injection into Mono applications under Wine isn't guaranteed: this fix allows the mod launcher to start up, which is where the problem lay."
+    "Process injection into Mono applications under Wine isn't guaranteed: this fix allows the mod launcher to start up, which is where the problem lay.",
+    "System.Threading, System.Threading.Thread, System.Collections and System.Text.Encoding.Extensions are missing for the same reason. Player.log names them, one at a time, as 'Nitrox dll missing': each one you supply gets the loader to the next.",
+    "THE ONE THAT ACTUALLY BREAKS MULTIPLAYER, and it is not the assemblies above: this repack drops the launcher's whole .NET 9 dependency set — 55 DLLs, Avalonia and all — loose in the game folder, beside Subnautica.exe. That folder is the AppDomain base, so Unity's Mono finds LiteNetLib, Autofac and BinaryPack there and loads the .NET 9 builds instead of the net472 ones next to the mod. Move every game-root DLL that is byte-identical to its copy in Nitrox/lib into a subfolder; keep 0Harmony, OnlineFix64, SteamOverlay64, UnityPlayer and winmm, which belong to the game.",
+    "Symptom of that shadowing, if you ever meet it again: the mod loads, the menus work, and clicking a server in the in-game multiplayer list shows 'loading' forever — on a LAN address, over a VPN, even on 127.0.0.1 with the server running on the same machine. It is silent by design. The click runs '_ = OnJoinButtonClicked()', a discarded Task, and the only catch on the path takes ClientConnectionFailedException, so the real exception is never observed: no socket is ever opened, no packet leaves, and the Nitrox log stays clean. Confirm it from outside by checking that the game process has no LiteNetLib 'LogicThread'/'ReceiveThread', and check which path each assembly was loaded from in /proc/<pid>/maps."
   ],
   "runtimeAssemblies": [
     {
       "name": "System.Net.Primitives.dll",
+      "into": "Nitrox/lib/net472"
+    },
+    {
+      "name": "System.Threading.dll",
+      "into": "Nitrox/lib/net472"
+    },
+    {
+      "name": "System.Threading.Thread.dll",
+      "into": "Nitrox/lib/net472"
+    },
+    {
+      "name": "System.Collections.dll",
+      "into": "Nitrox/lib/net472"
+    },
+    {
+      "name": "System.Text.Encoding.Extensions.dll",
       "into": "Nitrox/lib/net472"
     }
   ]
