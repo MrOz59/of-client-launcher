@@ -1,5 +1,9 @@
 // Types for Library components and hooks
 
+import type { FixInput } from '../../../shared/fixInputs'
+import type { FixDownload } from '../../../shared/fixDownloads'
+import type { FixOs } from '../../../shared/fixOs'
+
 export interface Game {
   id: number
   title: string
@@ -79,6 +83,12 @@ export interface CommunityGameFix {
   launchExecutable?: string | null
   /** Assemblies to take from the Proton runtime and place inside the game folder. */
   runtimeAssemblies?: Array<{ name: string; into: string }>
+  /** Values the launcher asks for when the fix is applied, written as {{id}} in the options. */
+  inputs?: FixInput[]
+  /** Files hosted elsewhere that the fix needs, fetched only after the person agrees. */
+  downloads?: FixDownload[]
+  /** Systems this fix is for; empty means every one the launcher runs on. */
+  os?: FixOs[]
   notes?: string[]
 }
 

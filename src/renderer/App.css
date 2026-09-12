@@ -4123,6 +4123,51 @@ textarea.config-input { font-family: inherit; line-height: 1.5; resize: vertical
 
 .fix-editor-row .config-form-group { margin-bottom: 0; }
 
+/* An input declaration is four short fields, not two: id, label, type, default. */
+.fix-editor-row--input {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 0.9fr) auto;
+}
+
+.fix-editor-row--input .config-select { padding: 10px 8px; }
+
+/* A download is a block, not a row: an address and a checksum are long, and
+   its destinations are a list of their own. */
+.fix-editor-download {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.fix-editor-row--download { grid-template-columns: minmax(0, 1fr) auto; }
+
+.fix-editor-os { display: flex; gap: 18px; flex-wrap: wrap; }
+
+.fix-editor-os label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #e5e7eb;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.fix-editor-os input { accent-color: #8b5cf6; }
+.fix-editor-os input:disabled + span { color: #9ca3af; }
+
+.fix-editor-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .fix-editor-json-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .fix-editor-footer {
@@ -4171,6 +4216,150 @@ textarea.config-input { font-family: inherit; line-height: 1.5; resize: vertical
   font-size: 10px;
   font-weight: 700;
 }
+
+/* The values a fix asks for before it is applied. Narrower than the editor:
+   it is a short form, and the launch arguments under it are the only wide
+   thing in the dialog. */
+.fix-inputs { max-width: 520px; }
+
+.fix-inputs-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 52vh;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.fix-inputs-problem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: #fbbf24;
+  font-size: 12px;
+}
+
+.fix-inputs-preview {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #d1d5db;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* The one screen in the launcher where a fix reaches outside the machine. It
+   is deliberately the loudest dialog here: amber chrome, the facts about the
+   file laid out as facts, and a primary button that stays dead until the
+   checkbox is ticked. */
+.fix-downloads { max-width: 620px; }
+
+.config-modal-icon--warn {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(234, 88, 12, 0.16));
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.fix-downloads-warning {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.08);
+  color: #fcd34d;
+}
+
+.fix-downloads-warning strong { display: block; margin-bottom: 6px; font-size: 13px; }
+.fix-downloads-warning p { margin: 0 0 6px; color: #e5d5b0; font-size: 12px; line-height: 1.5; }
+.fix-downloads-warning p:last-child { margin-bottom: 0; }
+
+.fix-downloads-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 34vh;
+  margin-top: 12px;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.fix-downloads-item {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.fix-downloads-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.fix-downloads-size { margin-left: auto; color: #9ca3af; font-size: 12px; }
+
+.fix-downloads-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.fix-downloads-facts dt { color: #9ca3af; }
+.fix-downloads-facts dd { margin: 0; color: #d1d5db; min-width: 0; }
+.fix-downloads-facts code { color: #d1d5db; font-size: 11px; word-break: break-all; }
+
+.fix-downloads-destination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  word-break: break-all;
+}
+
+.fix-downloads-progress { margin-top: 12px; }
+
+.fix-downloads-progress-bar {
+  height: 6px;
+  margin-bottom: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.fix-downloads-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+  transition: width 0.2s;
+}
+
+.fix-downloads-progress > span { color: #9ca3af; font-size: 12px; }
+
+.fix-downloads-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.fix-downloads-consent input { margin-top: 2px; accent-color: #8b5cf6; }
 
 /* JSON the fix editor is about to write, shown before it writes it. */
 .config-code-block {

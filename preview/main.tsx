@@ -20,12 +20,28 @@ const draft = {
   createdAt: new Date().toISOString(),
   launcherVersion: '0.4.0',
   game: { id: '18121', title: 'Subnautica', url: 'https://online-fix.me/games/survival/18121-subnautica-po-seti.html', installedVersion: 'Build 03102025' },
-  proton: { runtimeName: 'Proton-GE Latest', options: {}, steamAppId: '264710' },
+  proton: {
+    runtimeName: 'Proton-GE Latest',
+    options: { launchArgs: broken ? '-username {{username}} -userId {{userId}}' : '-username {{username}}' },
+    steamAppId: '264710'
+  },
   components: { winetricks: broken ? ['dotnet desktop/9'] : ['dotnetdesktop9'] },
   launchExecutable: 'Nitrox.Launcher.exe',
   runtimeAssemblies: broken
     ? [{ name: 'System.Net.Primitives.dll', into: '../../etc' }, { name: 'nope.txt', into: 'lib' }]
     : [{ name: 'System.Net.Primitives.dll', into: 'Nitrox/lib/net472' }],
+  downloads: broken
+    ? [{ id: 'd1', label: '', url: 'http://example.com/patch.exe', sha256: 'nope', install: [{ from: '../etc', into: 'root:' }] }]
+    : [{
+        id: 'nitrox-1-8',
+        label: 'Nitrox 1.8.0.0 (equipe do Nitrox)',
+        url: 'https://github.com/SubnauticaNitrox/Nitrox/releases/download/v1.8.0.0/Nitrox.zip',
+        sha256: '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0',
+        install: [{ from: 'Nitrox', into: 'game:Nitrox' }]
+      }],
+  inputs: broken
+    ? [{ id: '2player', label: '', type: 'text', required: true }]
+    : [{ id: 'username', label: 'Seu nome de jogador', description: 'Precisa ser diferente do dos outros. Sem espaços.', type: 'text', default: 'Player', required: true }],
   notes: ['Instale os componentes ANTES de usar.', 'O executável agora é Nitrox/Nitrox.Launcher.exe.']
 }
 

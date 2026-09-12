@@ -324,7 +324,9 @@ declare global {
       listGameFixes: (gameUrl: string) => Promise<{ success: boolean; fixes?: Array<{ fix: any; path?: string; updatedAt?: string }>; directory?: string; error?: string }>
       saveGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; path?: string; error?: string }>
       deleteGameFix: (gameUrl: string, fixId: string) => Promise<{ success: boolean; error?: string }>
-      applyGameFix: (gameUrl: string, fix: any) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; copiedAssemblies?: string[]; pendingComponents?: { winetricks?: string[] }; error?: string }>
+      applyGameFix: (gameUrl: string, fix: any, inputValues?: Record<string, string>) => Promise<{ success: boolean; fix?: any; patch?: any; warnings?: string[]; copiedAssemblies?: string[]; pendingComponents?: { winetricks?: string[] }; missingInputs?: string[]; invalidInputs?: string[]; error?: string; errorCode?: string }>
+      installGameFixDownloads: (gameUrl: string, fix: any) => Promise<{ success: boolean; installed?: string[]; warnings?: string[]; backupDir?: string; error?: string; errorCode?: string }>
+      onGameFixDownloadProgress: (cb: (data: { gameUrl: string; downloadId: string; label: string; phase: 'download' | 'extract' | 'install'; percent: number }) => void) => () => void
       installGameFixComponents: (gameUrl: string, fix: any) => Promise<{ success: boolean; prefix?: string; installed?: string[]; warnings?: string[]; error?: string }>
       getProtonLogSnapshot: (payload: { gameUrl?: string; logPath?: string | null; maxChars?: number }) => Promise<{ success: boolean; text?: string; live?: boolean; logPath?: string | null; pid?: number; updatedAt?: number; hasProcessOutput?: boolean; hasProtonLog?: boolean; error?: string }>
       setGameLanSettings: (gameUrl: string, payload: { mode?: string | null; networkId?: string | null; autoconnect?: boolean }) => Promise<{ success: boolean; error?: string }>

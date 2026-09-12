@@ -34,6 +34,16 @@ import {
 } from '../utils'
 import { detectSteamAppIdFromInstall } from './achievementsHandlers'
 import { resolveLegendaryBinary } from '../legendary'
+import {
+  pendingFixPlaceholders,
+  resolveFixInputValues,
+  sanitizeFixInputs,
+  substituteFixInputsInOptions,
+  type FixInput
+} from '../../shared/fixInputs'
+import { sanitizeFixDownloads, type FixDownload } from '../../shared/fixDownloads'
+import { PROTON_ONLY_OPTION_KEYS, currentFixOs, fixAppliesToOs, sanitizeFixOsList, type FixOs } from '../../shared/fixOs'
+import { installFixDownloads } from '../fixPayloads'
 import type { IpcContext, IpcHandlerRegistrar } from './types'
 
 // Helper to slugify strings
@@ -90,6 +100,20 @@ type CommunityGameFix = {
    */
   launchExecutable?: string | null
   runtimeAssemblies?: Array<{ name: string; into: string }>
+  /** Systems this fix is for. Empty means every one the launcher runs on. */
+  os?: FixOs[]
+  /**
+   * Values only the person applying the fix knows — a player name, this
+   * machine's address. The fix writes `{{id}}` where each one goes and the
+   * launcher asks for them instead of leaving the file half-edited by hand.
+   */
+  inputs?: FixInput[]
+  /**
+   * Files the fix points at, hosted elsewhere. The only thing in a fix that
+   * reaches outside the machine, and the only one that needs the person to
+   * agree to it first: see src/shared/fixDownloads.ts.
+   */
+  downloads?: FixDownload[]
   notes?: string[]
 }
 
@@ -184,8 +208,37 @@ function normalizeGameFix(raw: any): CommunityGameFix {
     // found inside the game's own folder.
     launchExecutable: bareExecutableName(raw.launchExecutable),
     runtimeAssemblies: sanitizeRuntimeAssemblies(raw.runtimeAssemblies),
+    os: sanitizeFixOsList(raw.os),
+    inputs: sanitizeFixInputs(raw.inputs),
+    downloads: sanitizeFixDownloads(raw.downloads),
     notes: Array.isArray(raw.notes) ? raw.notes.map((n: unknown) => safeText(n, 300)).filter(Boolean).slice(0, 12) : []
   }
+}
+
+/**
+ * Turns the fix's template into the settings this machine gets.
+ *
+ * The fix that is saved and shared keeps its `{{placeholders}}`; only the copy
+ * on its way into the database has the answers in it. Nothing is trusted on the
+ * way through: the renderer's dialog already checked the values, and they are
+ * checked again here, because a value from the renderer is a value from
+ * outside. A placeholder still standing after substitution — one the fix never
+ * declared — stops the apply rather than reaching the game as literal text.
+ */
+function resolveFixForApply(fix: CommunityGameFix, rawValues: unknown): {
+  options?: Record<string, any>
+  missing: string[]
+  invalid: string[]
+} {
+  const inputs = fix.inputs || []
+  const { values, missing, invalid } = resolveFixInputValues(inputs, rawValues)
+  if (missing.length || invalid.length) return { missing, invalid }
+
+  const options = substituteFixInputsInOptions(fix.proton?.options || {}, values)
+  const pending = pendingFixPlaceholders(options)
+  if (pending.length) return { missing: pending, invalid: [] }
+
+  return { options, missing: [], invalid: [] }
 }
 
 function buildGameFix(game: any): CommunityGameFix {
@@ -220,6 +273,9 @@ function buildGameFix(game: any): CommunityGameFix {
     },
     launchExecutable: bareExecutableName(game?.launch_executable),
     runtimeAssemblies: [],
+    os: [],
+    inputs: [],
+    downloads: [],
     notes: [
       'Este fix compartilha apenas configuracoes. Prefixo Wine, paths locais e saves nao sao incluidos.'
     ]
@@ -1237,20 +1293,61 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
     }
   })
 
-  ipcMain.handle('apply-game-fix', async (_event, gameUrl: string, rawFix: any) => {
+  ipcMain.handle('apply-game-fix', async (_event, gameUrl: string, rawFix: any, rawInputValues?: any) => {
     try {
       const game = getGame(gameUrl) as any
       if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 
       const fix = normalizeGameFix(rawFix)
-      const runtime = resolveRuntimePathFromFix(fix)
+      const os = currentFixOs()
+      if (!fixAppliesToOs(fix.os, os)) {
+        return {
+          success: false,
+          error: 'Este fix não se aplica a este sistema',
+          errorCode: 'fix-os-mismatch',
+          fixOs: fix.os || []
+        }
+      }
+
+      const resolvedInputs = resolveFixForApply(fix, rawInputValues)
+      if (resolvedInputs.missing.length || resolvedInputs.invalid.length) {
+        return {
+          success: false,
+          error: 'Este fix precisa de valores que ainda não foram informados',
+          errorCode: 'fix-inputs-required',
+          missingInputs: resolvedInputs.missing,
+          invalidInputs: resolvedInputs.invalid
+        }
+      }
+
       const patch: any = {}
       const warnings: string[] = []
 
-      if (runtime.warning) warnings.push(runtime.warning)
-      if (runtime.runtimePath !== undefined) patch.proton_runtime = runtime.runtimePath || null
+      // Half of what a fix carries is Proton's doing and means nothing outside
+      // it. On Windows those parts are skipped and said out loud, rather than
+      // written into the database where they would look applied.
+      const onProton = os === 'linux'
+      let runtime: { runtimePath?: string | null; warning?: string } = {}
 
-      if (fix.proton?.options) patch.proton_options = JSON.stringify(safeProtonOptions(fix.proton.options))
+      if (onProton) {
+        runtime = resolveRuntimePathFromFix(fix)
+        if (runtime.warning) warnings.push(runtime.warning)
+        if (runtime.runtimePath !== undefined) patch.proton_runtime = runtime.runtimePath || null
+        if (fix.proton?.options) patch.proton_options = JSON.stringify(safeProtonOptions(resolvedInputs.options))
+      } else if (fix.proton?.options) {
+        // The launch arguments are the one setting a game needs wherever it
+        // runs, so they are kept and merged into what this game already has.
+        const current = parseFixProtonOptions(game.proton_options)
+        patch.proton_options = JSON.stringify(safeProtonOptions({
+          ...current,
+          launchArgs: resolvedInputs.options?.launchArgs ?? current.launchArgs
+        }))
+        if (PROTON_ONLY_OPTION_KEYS.some((key) => (fix.proton?.options as any)?.[key] !== undefined)) {
+          warnings.push('Configurações de Proton do fix foram ignoradas: elas só valem no Linux.')
+        }
+        if (fix.proton?.runtimeName) warnings.push('O runtime Proton indicado pelo fix foi ignorado: ele só vale no Linux.')
+      }
+
       if (fix.proton?.steamAppId !== undefined) patch.steam_app_id = fix.proton.steamAppId || null
 
       if (fix.launchExecutable) {
@@ -1272,7 +1369,11 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
 
       if (Object.keys(patch).length) updateGameInfo(gameUrl, patch)
 
-      const assemblies = deliverRuntimeAssemblies(game, fix, runtime.runtimePath)
+      // These come out of the Proton runtime's wine-mono; on Windows the system
+      // itself is where the game finds them.
+      const assemblies = onProton
+        ? deliverRuntimeAssemblies(game, fix, runtime.runtimePath)
+        : { copied: [], warnings: fix.runtimeAssemblies?.length ? ['Assemblies do runtime foram ignorados: eles vêm do Proton, que só existe no Linux.'] : [] }
       warnings.push(...assemblies.warnings)
 
       return {
@@ -1288,9 +1389,59 @@ export const registerGameHandlers: IpcHandlerRegistrar = (ctx: IpcContext) => {
     }
   })
 
+  /**
+   * Fetches the files a fix points at.
+   *
+   * Its own step, never part of applying the settings: this is the one thing a
+   * fix does that reaches outside the machine, and the renderer only calls it
+   * after the person has been shown the host, the size, the hash and the
+   * destination, and agreed to that screen. Everything it was shown is checked
+   * again here.
+   */
+  ipcMain.handle('install-game-fix-downloads', async (_event, gameUrl: string, rawFix: any) => {
+    try {
+      const game = getGame(gameUrl) as any
+      if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
+
+      const fix = normalizeGameFix(rawFix)
+      const os = currentFixOs()
+      if (!fixAppliesToOs(fix.os, os)) {
+        return { success: false, error: 'Este fix não se aplica a este sistema', errorCode: 'fix-os-mismatch' }
+      }
+
+      const downloads = (fix.downloads || []).filter((entry) => fixAppliesToOs(entry.os, os))
+      if (!downloads.length) return { success: true, installed: [], warnings: [] }
+
+      const window = ctx.getMainWindow()
+      const result = await installFixDownloads({
+        game,
+        fixId: fix.id,
+        downloads,
+        onProgress: (progress) => {
+          try {
+            window?.webContents.send('game-fix-download-progress', { gameUrl, ...progress })
+          } catch {
+            // The dialog falls back to its own spinner if nothing arrives.
+          }
+        }
+      })
+
+      return {
+        success: true,
+        installed: result.installed,
+        warnings: result.warnings,
+        backupDir: result.backupDir
+      }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao baixar os arquivos do fix', errorCode: 'fix-download-failed' }
+    }
+  })
+
   ipcMain.handle('install-game-fix-components', async (_event, gameUrl: string, rawFix: any) => {
     try {
-      if (process.platform !== 'linux') return { success: false, error: 'Apenas disponível no Linux', errorCode: 'linux-only' }
+      // winetricks installs into a Wine prefix; there is nothing to install into
+      // on Windows, and a fix that names components is not broken there.
+      if (process.platform !== 'linux') return { success: true, installed: [], warnings: ['Componentes winetricks foram ignorados: eles só valem no Linux.'] }
       const game = getGame(gameUrl) as any
       if (!game) return { success: false, error: 'Jogo nao encontrado', errorCode: 'game-not-found' }
 

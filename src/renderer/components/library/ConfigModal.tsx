@@ -5,10 +5,17 @@ import { useI18n } from '../../i18n'
 import { ipcErrorText } from '../../../shared/ipcErrors'
 import { useModalA11y } from '../../hooks/useModalA11y'
 import { FixEditorModal } from './FixEditorModal'
+import { FixInputsModal } from './FixInputsModal'
+import { FixDownloadsModal } from './FixDownloadsModal'
+import { extractFixInputValues } from '../../../shared/fixInputs'
+import { fixDownloadHost } from '../../../shared/fixDownloads'
+import { currentFixOs, fixAppliesToOs } from '../../../shared/fixOs'
 
 export interface ConfigModalProps {
   game: Game
   isLinux: boolean
+  /** process.platform, for the fixes tab: a fix declares which systems it is for. */
+  platform?: string
 
   // Tab state
   configTab: GameConfigTab
@@ -963,7 +970,7 @@ function ProtonTab(props: ConfigModalProps) {
 }
 
 function FixesTab(props: ConfigModalProps) {
-  const { game, protonVersion, protonRuntimes, protonOptions, steamAppId, onGameFixApplied } = props
+  const { game, platform, protonVersion, protonRuntimes, protonOptions, steamAppId, onGameFixApplied } = props
   const { t } = useI18n()
   const [fix, setFix] = useState<CommunityGameFix | null>(null)
   const [localFixes, setLocalFixes] = useState<Array<{ fix: CommunityGameFix; path?: string; updatedAt?: string }>>([])
@@ -976,6 +983,27 @@ function FixesTab(props: ConfigModalProps) {
   const [step, setStep] = useState<string | null>(null)
   // { fix: null } opens the editor on a draft of how this game is set up now.
   const [editor, setEditor] = useState<{ fix: CommunityGameFix | null } | null>(null)
+  // Set while a fix that declares inputs waits for the person to fill them in.
+  const [inputsFor, setInputsFor] = useState<CommunityGameFix | null>(null)
+  // Set while a fix that points at files waits for the person to agree to them.
+  const [downloadsFor, setDownloadsFor] = useState<CommunityGameFix | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<{ label: string; phase: 'download' | 'extract' | 'install'; percent: number } | null>(null)
+  // Answers from the first dialog, held while the second one is up.
+  const [pendingValues, setPendingValues] = useState<Record<string, string> | undefined>(undefined)
+
+  // What this launcher is running on, and what the selected fix has to say
+  // about it: the Proton half of a fix means nothing on Windows, and a fix can
+  // be written for one system only.
+  const os = currentFixOs(platform || (props.isLinux ? 'linux' : ''))
+  const fixRunsHere = fixAppliesToOs(fix?.os, os)
+  const skipped: string[] = []
+  if (fix && fixRunsHere && os && os !== 'linux') {
+    if (fix.components?.winetricks?.length) skipped.push(t('library.configModal.fixes.skipComponents'))
+    if (fix.runtimeAssemblies?.length) skipped.push(t('library.configModal.fixes.skipAssemblies'))
+    if (fix.proton?.runtimeName || Object.keys(fix.proton?.options || {}).some((key) => key !== 'launchArgs')) {
+      skipped.push(t('library.configModal.fixes.skipProton'))
+    }
+  }
 
   const currentRuntime = protonRuntimes.find(rt => rt.path === protonVersion)
   const currentRuntimeName = currentRuntime?.name || (protonVersion ? protonVersion.split(/[\\/]/).filter(Boolean).pop() : t('library.configModal.proton.autoExperimental'))
@@ -996,6 +1024,10 @@ function FixesTab(props: ConfigModalProps) {
     [t('library.configModal.proton.launchArgs'), protonOptions.launchArgs, targetOptions.launchArgs],
     ['WINEDLLOVERRIDES', protonOptions.wineDllOverrides, targetOptions.wineDllOverrides]
   ] as Array<[string, any, any]>).filter(([, , next]) => next !== undefined)
+
+  /** A mod is hundreds of files; a message listing them all says nothing. */
+  const summarizeFiles = (files: string[]) =>
+    files.length <= 4 ? files.join(', ') : `${files.slice(0, 3).join(', ')} +${files.length - 3}`
 
   const renderValue = (value: any) => {
     if (value === null || value === undefined || value === '') return '—'
@@ -1020,6 +1052,16 @@ function FixesTab(props: ConfigModalProps) {
   React.useEffect(() => {
     void loadLocalFixes()
   }, [loadLocalFixes])
+
+  // Progress for the one step that can take a while. The dialog stays up for
+  // it, so the bar has somewhere to live.
+  React.useEffect(() => {
+    const off = window.electronAPI.onGameFixDownloadProgress?.((data) => {
+      if (data.gameUrl && data.gameUrl !== game.url) return
+      setDownloadProgress({ label: data.label, phase: data.phase, percent: data.percent })
+    })
+    return () => { off?.() }
+  }, [game.url])
 
   /**
    * Fixes published with the launcher. The index is small and cached, so this
@@ -1154,15 +1196,41 @@ function FixesTab(props: ConfigModalProps) {
    * two buttons whose difference was not visible anywhere, so applying a fix
    * that needed components quietly did half the job.
    */
+  /**
+   * Applying a fix is up to three steps, and the two that need an answer come
+   * first: the values only this person knows, then — for a fix that points at
+   * files hosted elsewhere — agreeing to fetch them. Cancelling either one
+   * leaves the game exactly as it was.
+   */
   const applyFix = async () => {
     if (!fix) return
+    setError(null)
+    setMessage(null)
+    setWarnings([])
+
+    if (fix.inputs?.length) {
+      setInputsFor(fix)
+      return
+    }
+    if (fix.downloads?.some((entry) => fixAppliesToOs(entry.os, os))) {
+      setDownloadsFor(fix)
+      return
+    }
+    await runApplyFix(fix, undefined)
+  }
+
+  const runApplyFix = async (
+    fix: CommunityGameFix,
+    inputValues?: Record<string, string>,
+    options?: { withDownloads?: boolean }
+  ) => {
     setBusy('apply')
     setError(null)
     setMessage(null)
     setWarnings([])
     setStep(t('library.configModal.fixes.applying'))
     try {
-      const applyRes = await window.electronAPI.applyGameFix(game.url, fix)
+      const applyRes = await window.electronAPI.applyGameFix(game.url, fix, inputValues)
       if (!applyRes.success) {
         setError(ipcErrorText(t, applyRes, t('library.configModal.fixes.applyFailed')))
         return
@@ -1170,12 +1238,26 @@ function FixesTab(props: ConfigModalProps) {
       onGameFixApplied(applyRes.patch || {})
 
       const collected = [...(applyRes.warnings || [])]
-      const placed = applyRes.copiedAssemblies || []
+      const placed = [...(applyRes.copiedAssemblies || [])]
+      const components = Array.from(new Set(fix.components?.winetricks || []))
 
-      if (fixComponents.length === 0) {
+      if (options?.withDownloads && fix.downloads?.some((entry) => fixAppliesToOs(entry.os, os))) {
+        setStep(t('library.configModal.fixes.downloadingFiles'))
+        const filesRes = await window.electronAPI.installGameFixDownloads(game.url, fix)
+        collected.push(...(filesRes.warnings || []))
+        if (!filesRes.success) {
+          setWarnings(collected)
+          setError(ipcErrorText(t, filesRes, t('library.configModal.fixes.downloadFilesFailed')))
+          return
+        }
+        placed.push(...(filesRes.installed || []))
+        if (filesRes.backupDir) collected.push(t('library.configModal.fixes.backupAt', { path: filesRes.backupDir }))
+      }
+
+      if (components.length === 0) {
         setWarnings(collected)
         setMessage(placed.length
-          ? t('library.configModal.fixes.appliedWithFiles', { files: placed.join(', ') })
+          ? t('library.configModal.fixes.appliedWithFiles', { files: summarizeFiles(placed) })
           : t('library.configModal.fixes.applied'))
         return
       }
@@ -1354,6 +1436,36 @@ function FixesTab(props: ConfigModalProps) {
 
               {fix.description ? <p className="config-hint" style={{ marginTop: 12 }}>{fix.description}</p> : null}
 
+              {fix.inputs?.length ? (
+                <div className="config-tips" style={{ marginTop: 12 }}>
+                  <p><strong>{t('library.configModal.fixes.asksFor')}</strong></p>
+                  <p>{fix.inputs.map((input) => input.label).join(' • ')}</p>
+                </div>
+              ) : null}
+
+              {!fixRunsHere ? (
+                <div className="config-warning" style={{ marginTop: 12 }}>
+                  <AlertCircle size={14} />
+                  <span>{t('library.configModal.fixes.osMismatch', { systems: (fix.os || []).join(', ') })}</span>
+                </div>
+              ) : null}
+
+              {skipped.length ? (
+                <div className="config-tips" style={{ marginTop: 12 }}>
+                  <p><strong>{t('library.configModal.fixes.skippedHere')}</strong></p>
+                  {skipped.map((entry, idx) => <p key={idx}>{entry}</p>)}
+                </div>
+              ) : null}
+
+              {fix.downloads?.length ? (
+                <div className="config-warning" style={{ marginTop: 12 }}>
+                  <AlertCircle size={14} />
+                  <span>{t('library.configModal.fixes.downloadsNotice', {
+                    hosts: Array.from(new Set(fix.downloads.map((entry) => fixDownloadHost(entry.url)))).join(', ')
+                  })}</span>
+                </div>
+              ) : null}
+
               {fix.notes?.length ? (
                 <div className="config-tips" style={{ marginTop: 12 }}>
                   {fix.notes.map((note, idx) => <p key={idx}>{note}</p>)}
@@ -1412,7 +1524,7 @@ function FixesTab(props: ConfigModalProps) {
                   {busy === 'save' ? <RefreshCw size={14} className="of-spin" /> : <Plus size={14} />}
                   {t('library.configModal.fixes.saveToLibrary')}
                 </button>
-                <button className="config-btn primary" onClick={applyFix} disabled={!!busy || !fix}>
+                <button className="config-btn primary" onClick={applyFix} disabled={!!busy || !fix || !fixRunsHere}>
                   {busy === 'apply' ? <RefreshCw size={14} className="of-spin" /> : <Check size={14} />}
                   {t('library.configModal.fixes.apply')}
                 </button>
@@ -1429,6 +1541,51 @@ function FixesTab(props: ConfigModalProps) {
           <p>{t('library.configModal.fixes.emptyDesc')}</p>
         </div>
       )}
+
+      {inputsFor ? (
+        <FixInputsModal
+          fix={inputsFor}
+          busy={busy === 'apply'}
+          // The answers already in effect, read back out of the launch
+          // arguments this game runs with, so re-applying a fix opens on what
+          // was typed last time instead of on the author's placeholders.
+          initialValues={extractFixInputValues(
+            String(inputsFor.proton?.options?.launchArgs || ''),
+            String(protonOptions.launchArgs || '')
+          )}
+          onCancel={() => setInputsFor(null)}
+          onSubmit={async (values) => {
+            const target = inputsFor
+            setInputsFor(null)
+            if (target.downloads?.some((entry) => fixAppliesToOs(entry.os, os))) {
+              // Still one question to go before anything is applied.
+              setPendingValues(values)
+              setDownloadsFor(target)
+              return
+            }
+            await runApplyFix(target, values)
+          }}
+        />
+      ) : null}
+
+      {downloadsFor ? (
+        <FixDownloadsModal
+          fix={downloadsFor}
+          os={os}
+          busy={busy === 'apply'}
+          progress={downloadProgress}
+          onCancel={() => { setDownloadsFor(null); setPendingValues(undefined); setDownloadProgress(null) }}
+          // Applied with the dialog still up, so the button it was answered
+          // from is the one that shows the work and a second click cannot
+          // start it twice. Anything to report is waiting underneath.
+          onConfirm={async (withDownloads) => {
+            await runApplyFix(downloadsFor, pendingValues, { withDownloads })
+            setDownloadsFor(null)
+            setPendingValues(undefined)
+            setDownloadProgress(null)
+          }}
+        />
+      ) : null}
 
       {editor ? (
         <FixEditorModal

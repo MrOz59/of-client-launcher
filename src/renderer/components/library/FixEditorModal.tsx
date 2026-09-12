@@ -4,6 +4,16 @@ import type { CommunityGameFix } from './types'
 import { useI18n } from '../../i18n'
 import { ipcErrorText } from '../../../shared/ipcErrors'
 import { useModalA11y } from '../../hooks/useModalA11y'
+import { FIX_INPUT_TYPES, MAX_FIX_INPUTS, isFixInputId, pendingFixPlaceholders, type FixInput } from '../../../shared/fixInputs'
+import { FIX_OS_VALUES, sanitizeFixOsList } from '../../../shared/fixOs'
+import {
+  MAX_FIX_DOWNLOADS,
+  isAllowedFixDownloadUrl,
+  isSafeRelativePath,
+  parseInstallTarget,
+  type FixDownload,
+  type FixInstallRule
+} from '../../../shared/fixDownloads'
 
 export interface FixEditorModalProps {
   gameUrl: string
@@ -124,6 +134,12 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
   const winetricks = parseComponents(winetricksText)
   const notes = notesText.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 12)
   const assemblies = draft?.runtimeAssemblies || []
+  const inputs = draft?.inputs || []
+  const downloads = draft?.downloads || []
+  // What the options actually reference, so the two halves can be checked
+  // against each other: an input nobody uses asks the person for nothing, and
+  // a placeholder nobody declared reaches the game as literal text.
+  const placeholders = pendingFixPlaceholders(draft?.proton?.options || {})
 
   /** The same checks the repo's validator runs, so nothing leaves here broken. */
   const problems: Problem[] = []
@@ -136,6 +152,45 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
     for (const verb of winetricks) {
       if (!COMPONENT_PATTERN.test(verb)) problems.push({ tab: 'extras', message: t('library.fixEditor.problem.component', { name: verb }) })
     }
+    const ids = new Set<string>()
+    for (const entry of inputs) {
+      if (!isFixInputId(entry.id)) {
+        problems.push({ tab: 'extras', message: t('library.fixEditor.problem.inputId', { id: entry.id || '—' }) })
+      } else if (ids.has(entry.id)) {
+        problems.push({ tab: 'extras', message: t('library.fixEditor.problem.inputDuplicate', { id: entry.id }) })
+      } else {
+        ids.add(entry.id)
+        if (!placeholders.includes(entry.id)) {
+          problems.push({ tab: 'extras', message: t('library.fixEditor.problem.inputUnused', { id: entry.id, token: `{{${entry.id}}}` }) })
+        }
+      }
+      if (!String(entry.label || '').trim()) {
+        problems.push({ tab: 'extras', message: t('library.fixEditor.problem.inputLabel', { id: entry.id || '—' }) })
+      }
+    }
+    for (const id of placeholders) {
+      if (!ids.has(id)) problems.push({ tab: 'proton', message: t('library.fixEditor.problem.inputUndeclared', { token: `{{${id}}}` }) })
+    }
+
+    for (const entry of downloads) {
+      if (!String(entry.label || '').trim()) problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadLabel') })
+      if (!isAllowedFixDownloadUrl(entry.url)) {
+        problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadUrl', { url: entry.url || '—' }) })
+      }
+      if (!/^[a-f0-9]{64}$/i.test(String(entry.sha256 || ''))) {
+        problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadSha', { label: entry.label || entry.id || '—' }) })
+      }
+      if (!entry.install?.length) problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadInstall') })
+      for (const rule of entry.install || []) {
+        if (!isSafeRelativePath(String(rule.from || ''))) {
+          problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadFrom', { path: rule.from || '—' }) })
+        }
+        if (!parseInstallTarget(rule.into)) {
+          problems.push({ tab: 'extras', message: t('library.fixEditor.problem.downloadInto', { path: rule.into || '—' }) })
+        }
+      }
+    }
+
     for (const entry of assemblies) {
       if (!ASSEMBLY_PATTERN.test(entry.name || '')) problems.push({ tab: 'extras', message: t('library.fixEditor.problem.assemblyName', { name: entry.name || '—' }) })
       const into = String(entry.into || '')
@@ -162,6 +217,8 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
       components: { winetricks },
       launchExecutable: draft.launchExecutable || null,
       runtimeAssemblies: assemblies.filter((entry) => entry.name || entry.into),
+      inputs: inputs.filter((entry) => entry.id || entry.label),
+      downloads: downloads.filter((entry) => entry.url || entry.label),
       notes
     }
   }
@@ -220,6 +277,22 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
 
   const updateAssembly = (index: number, values: Partial<{ name: string; into: string }>) => {
     patch({ runtimeAssemblies: assemblies.map((entry, i) => (i === index ? { ...entry, ...values } : entry)) })
+  }
+
+  const updateInput = (index: number, values: Partial<FixInput>) => {
+    patch({ inputs: inputs.map((entry, i) => (i === index ? { ...entry, ...values } : entry)) })
+  }
+
+  const updateDownload = (index: number, values: Partial<FixDownload>) => {
+    patch({ downloads: downloads.map((entry, i) => (i === index ? { ...entry, ...values } : entry)) })
+  }
+
+  const updateInstallRule = (downloadIndex: number, ruleIndex: number, values: Partial<FixInstallRule>) => {
+    const target = downloads[downloadIndex]
+    if (!target) return
+    updateDownload(downloadIndex, {
+      install: (target.install || []).map((rule, i) => (i === ruleIndex ? { ...rule, ...values } : rule))
+    })
   }
 
   const executableOptions = draft?.launchExecutable && !executables.some((exe) => exe.name === draft.launchExecutable)
@@ -332,6 +405,37 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
                         <input id="fix-game" className="config-input" value={draft.game?.title || draft.game?.id || ''} readOnly />
                         <p className="config-hint">{t('library.fixEditor.fieldGameHint')}</p>
                       </div>
+                    </div>
+
+                    <div className="fix-editor-group">
+                      <h5>{t('library.fixEditor.fieldOs')}</h5>
+                      <div className="fix-editor-os">
+                        {FIX_OS_VALUES.map((value) => {
+                          // An empty list in the file means every system, so the
+                          // form shows that as everything ticked. The last tick
+                          // cannot come off: a fix for no system is not a fix.
+                          const selected = draft.os?.length ? draft.os : FIX_OS_VALUES
+                          const checked = selected.includes(value)
+                          return (
+                            <label key={value}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={checked && selected.length === 1}
+                                onChange={(e) => {
+                                  const next = e.target.checked
+                                    ? [...selected, value]
+                                    : selected.filter((item) => item !== value)
+                                  if (!next.length) return
+                                  patch({ os: sanitizeFixOsList(next) })
+                                }}
+                              />
+                              <span>{t(`library.fixEditor.os.${value}`)}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                      <p className="config-hint">{t('library.fixEditor.fieldOsHint')}</p>
                     </div>
                   </>
                 )}
@@ -461,6 +565,200 @@ export function FixEditorModal({ gameUrl, initialFix, onClose, onSaved }: FixEdi
                         {t('library.fixEditor.addAssembly')}
                       </button>
                       <p className="config-hint">{t('library.fixEditor.assembliesHint')}</p>
+                    </div>
+
+                    <div className="fix-editor-group">
+                      <h5>{t('library.fixEditor.sectionDownloads')}</h5>
+                      <p className="fix-editor-caution">
+                        <AlertCircle size={13} />
+                        <span>{t('library.fixEditor.downloadsCaution')}</span>
+                      </p>
+                      {downloads.length === 0 ? (
+                        <p className="config-hint">{t('library.fixEditor.noDownloads')}</p>
+                      ) : (
+                        <div className="fix-editor-rows">
+                          {downloads.map((entry, index) => (
+                            <div className="fix-editor-download" key={index}>
+                              <div className="fix-editor-row fix-editor-row--download">
+                                <div className="config-form-group">
+                                  <label htmlFor={`fix-dl-label-${index}`}>{t('library.fixEditor.downloadLabel')}</label>
+                                  <input
+                                    id={`fix-dl-label-${index}`}
+                                    className="config-input"
+                                    value={entry.label || ''}
+                                    onChange={(e) => updateDownload(index, { label: e.target.value })}
+                                    placeholder={t('library.fixEditor.downloadLabelPlaceholder')}
+                                  />
+                                </div>
+                                <button
+                                  className="config-btn ghost"
+                                  onClick={() => patch({ downloads: downloads.filter((_, i) => i !== index) })}
+                                  title={t('library.fixEditor.removeDownload')}
+                                  aria-label={t('library.fixEditor.removeDownload')}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+
+                              <div className="config-form-group">
+                                <label htmlFor={`fix-dl-url-${index}`}>{t('library.fixEditor.downloadUrl')}</label>
+                                <input
+                                  id={`fix-dl-url-${index}`}
+                                  className="config-input"
+                                  value={entry.url || ''}
+                                  onChange={(e) => updateDownload(index, { url: e.target.value.trim() })}
+                                  placeholder="https://github.com/…/patch.zip"
+                                  spellCheck={false}
+                                />
+                              </div>
+
+                              <div className="fix-editor-row fix-editor-row--download">
+                                <div className="config-form-group">
+                                  <label htmlFor={`fix-dl-sha-${index}`}>{t('library.fixEditor.downloadSha')}</label>
+                                  <input
+                                    id={`fix-dl-sha-${index}`}
+                                    className="config-input"
+                                    value={entry.sha256 || ''}
+                                    onChange={(e) => updateDownload(index, { sha256: e.target.value.trim().toLowerCase() })}
+                                    placeholder="sha256sum patch.zip"
+                                    spellCheck={false}
+                                  />
+                                </div>
+                              </div>
+
+                              {(entry.install || []).map((rule, ruleIndex) => (
+                                <div className="fix-editor-row" key={ruleIndex}>
+                                  <div className="config-form-group">
+                                    {ruleIndex === 0 && <label>{t('library.fixEditor.downloadFrom')}</label>}
+                                    <input
+                                      className="config-input"
+                                      value={rule.from || ''}
+                                      onChange={(e) => updateInstallRule(index, ruleIndex, { from: e.target.value })}
+                                      placeholder="Game Folder"
+                                      aria-label={t('library.fixEditor.downloadFrom')}
+                                    />
+                                  </div>
+                                  <div className="config-form-group">
+                                    {ruleIndex === 0 && <label>{t('library.fixEditor.downloadInto')}</label>}
+                                    <input
+                                      className="config-input"
+                                      value={rule.into || ''}
+                                      onChange={(e) => updateInstallRule(index, ruleIndex, { into: e.target.value.trim() })}
+                                      placeholder="game: / prefix:AppData/Roaming/…"
+                                      aria-label={t('library.fixEditor.downloadInto')}
+                                    />
+                                  </div>
+                                  <button
+                                    className="config-btn ghost"
+                                    onClick={() => updateDownload(index, { install: (entry.install || []).filter((_, i) => i !== ruleIndex) })}
+                                    title={t('library.fixEditor.removeInstallRule')}
+                                    aria-label={t('library.fixEditor.removeInstallRule')}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              ))}
+
+                              <button
+                                className="config-btn secondary"
+                                onClick={() => updateDownload(index, { install: [...(entry.install || []), { from: '', into: 'game:' }] })}
+                              >
+                                <Plus size={14} />
+                                {t('library.fixEditor.addInstallRule')}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        className="config-btn secondary"
+                        style={{ marginTop: 10 }}
+                        disabled={downloads.length >= MAX_FIX_DOWNLOADS}
+                        onClick={() => patch({ downloads: [...downloads, { id: `download-${downloads.length + 1}`, label: '', url: '', sha256: '', install: [{ from: '', into: 'game:' }] }] })}
+                      >
+                        <Plus size={14} />
+                        {t('library.fixEditor.addDownload')}
+                      </button>
+                      <p className="config-hint">{t('library.fixEditor.downloadsHint')}</p>
+                    </div>
+
+                    <div className="fix-editor-group">
+                      <h5>{t('library.fixEditor.sectionInputs')}</h5>
+                      {inputs.length === 0 ? (
+                        <p className="config-hint">{t('library.fixEditor.noInputs')}</p>
+                      ) : (
+                        <div className="fix-editor-rows">
+                          {inputs.map((entry, index) => (
+                            <div className="fix-editor-row fix-editor-row--input" key={index}>
+                              <div className="config-form-group">
+                                {index === 0 && <label htmlFor={`fix-input-id-${index}`}>{t('library.fixEditor.inputId')}</label>}
+                                <input
+                                  id={`fix-input-id-${index}`}
+                                  className="config-input"
+                                  value={entry.id}
+                                  onChange={(e) => updateInput(index, { id: e.target.value.trim() })}
+                                  placeholder="username"
+                                  aria-label={t('library.fixEditor.inputId')}
+                                />
+                              </div>
+                              <div className="config-form-group">
+                                {index === 0 && <label htmlFor={`fix-input-label-${index}`}>{t('library.fixEditor.inputLabel')}</label>}
+                                <input
+                                  id={`fix-input-label-${index}`}
+                                  className="config-input"
+                                  value={entry.label}
+                                  onChange={(e) => updateInput(index, { label: e.target.value })}
+                                  placeholder={t('library.fixEditor.inputLabelPlaceholder')}
+                                  aria-label={t('library.fixEditor.inputLabel')}
+                                />
+                              </div>
+                              <div className="config-form-group">
+                                {index === 0 && <label htmlFor={`fix-input-type-${index}`}>{t('library.fixEditor.inputType')}</label>}
+                                <select
+                                  id={`fix-input-type-${index}`}
+                                  className="config-select"
+                                  value={entry.type}
+                                  onChange={(e) => updateInput(index, { type: e.target.value as FixInput['type'] })}
+                                  aria-label={t('library.fixEditor.inputType')}
+                                >
+                                  {FIX_INPUT_TYPES.map((type) => (
+                                    <option key={type} value={type}>{t(`library.fixEditor.inputType.${type}`)}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="config-form-group">
+                                {index === 0 && <label htmlFor={`fix-input-default-${index}`}>{t('library.fixEditor.inputDefault')}</label>}
+                                <input
+                                  id={`fix-input-default-${index}`}
+                                  className="config-input"
+                                  value={entry.default || ''}
+                                  onChange={(e) => updateInput(index, { default: e.target.value.trim() })}
+                                  placeholder="Player"
+                                  aria-label={t('library.fixEditor.inputDefault')}
+                                />
+                              </div>
+                              <button
+                                className="config-btn ghost"
+                                onClick={() => patch({ inputs: inputs.filter((_, i) => i !== index) })}
+                                title={t('library.fixEditor.removeInput')}
+                                aria-label={t('library.fixEditor.removeInput')}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        className="config-btn secondary"
+                        style={{ marginTop: 10 }}
+                        disabled={inputs.length >= MAX_FIX_INPUTS}
+                        onClick={() => patch({ inputs: [...inputs, { id: '', label: '', type: 'text', required: true }] })}
+                      >
+                        <Plus size={14} />
+                        {t('library.fixEditor.addInput')}
+                      </button>
+                      <p className="config-hint">{t('library.fixEditor.inputsHint')}</p>
                     </div>
 
                     <div className="fix-editor-group">

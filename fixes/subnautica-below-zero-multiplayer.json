@@ -12,24 +12,71 @@
     "url": "https://online-fix.me/games/survival/18049-subnautica-below-zero-po-seti.html",
     "installedVersion": "Build 03102025"
   },
+  "os": [
+    "linux",
+    "windows"
+  ],
   "proton": {
     "runtimeName": "Proton-GE Latest",
     "options": {
-      "launchArgs": "-peerIp 127.0.0.1 -peerId player:connectIP:127.0.0.1 -userId 1 -username Player"
+      "launchArgs": "-peerIp {{peerIp}} -peerId {{username}}:connectIP:127.0.0.1 -userId {{userId}} -username {{username}}"
     },
     "steamAppId": "848450"
   },
   "launchExecutable": "SubnauticaZero.exe",
+  "downloads": [
+    {
+      "id": "bzmp-linux-1-0-3",
+      "label": "Subnautica BZ Multiplayer — Linux patch 1.0.3 (Troplo)",
+      "url": "https://github.com/Troplo/Subnautica-BZ-Multiplayer-Linux/releases/download/1.0.3/Subnautica.BZMP.Linux.1.0.3.zip",
+      "sha256": "d883891f0a0e4c18eb8773a4e1029bc1a2448f2fdf1188cd4bf75611c97e5a96",
+      "size": 32461030,
+      "install": [
+        {
+          "from": "Game Folder",
+          "into": "game:"
+        },
+        {
+          "from": ".botbenson",
+          "into": "prefix:AppData/Roaming/.botbenson"
+        }
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "username",
+      "label": "Your player name",
+      "description": "Shown in game, and it has to differ from the other players'. No spaces.",
+      "type": "text",
+      "default": "Player"
+    },
+    {
+      "id": "userId",
+      "label": "Your player number",
+      "description": "Any number, as long as no one else in the session picked the same one.",
+      "type": "number",
+      "default": "1"
+    },
+    {
+      "id": "peerIp",
+      "label": "This machine's IPv4 address",
+      "description": "The LAN address of this PC for players on the same network or VPN; your public IPv4 over the internet.",
+      "type": "ipv4",
+      "default": "192.168.0.10"
+    }
+  ],
   "notes": [
-    "Install the mod files BEFORE applying the fix: this fix only changes which executable runs and the arguments it gets. It cannot deliver the mod itself.",
-    "The mod files come from the Linux patch of the BOT Benson mod (Troplo, Subnautica-BZ-Multiplayer-Linux, release 1.0.3). From that ZIP: 'Game Folder' goes into the game directory — it replaces SubnauticaZero_Data/Managed/Assembly-CSharp.dll and adds DiscordRPCNativeNamedPipe.dll — and the '.botbenson' folder goes into the prefix, at drive_c/users/steamuser/AppData/Roaming. That folder is the mod: loader, plugins, dependencies and the 30 MB SpawnPoints.bin.",
-    "Back up the original Assembly-CSharp.dll first. It is the game's own code plus the mod's bootstrap, and any repack update overwrites it — after an update you reinstall the patched one, or the game silently starts vanilla.",
+    "The files come from the Linux patch of the BOT Benson mod (Troplo, Subnautica-BZ-Multiplayer-Linux 1.0.3), from GitHub, and the launcher fetches them only after you agree to the screen that names the host and the checksum. They are third-party files: the launcher verifies that what arrives is byte for byte what this fix pinned, and nothing about what it does.",
+    "Where they land: the archive's 'Game Folder' goes into the game directory — it replaces SubnauticaZero_Data/Managed/Assembly-CSharp.dll and adds DiscordRPCNativeNamedPipe.dll — and '.botbenson' goes into the Windows user profile the game sees: the Proton prefix's AppData/Roaming on Linux, your own %AppData% on Windows. That folder is the mod itself: loader, plugins, dependencies and the 30 MB SpawnPoints.bin. On Linux, prepare the Proton prefix before applying, or there is nowhere to put it.",
+    "Assembly-CSharp.dll is the game's own code plus the mod's bootstrap, so installing this replaces a game file; the launcher moves the original into _voidlauncher-backup/ first. Any repack update overwrites it again — after an update, apply the fix once more, or the game silently starts vanilla.",
     "THE ONE THAT ACTUALLY STOPS YOU, if you try the intended route: Subnautica.Multiplayer.exe loads the game folder's winmm.dll, which loads OnlineFix64.dll into the launcher process, and OnlineFix's self-protection aborts there with 'Self-protection failed. Error code: 4' before the launcher draws a window. The same OnlineFix64.dll is fine inside SubnauticaZero.exe — the game boots, and the mod log shows a real Steam id — so this is about which process it was loaded into, not about Wine. Confirm it with WINEDEBUG=+msgbox: the text is printed by the same thread that just loaded winmm, SteamOverlay64 and OnlineFix64.",
     "And the launcher is a dead end even without OnlineFix: run it with winmm=b so the proxy stays out, and it gets further only to say 'A new update has been detected. Please re-download the mod from our website.' It wants to update itself against BOT Benson's service. There is nothing to fix in that process — skip it.",
-    "The four arguments are per player and MUST be changed. -peerIp is YOUR address: the LAN IP of this machine for players on the same network, your public IPv4 over the internet. -userId must be a different number for every player, -username a different name (no spaces); duplicates break the session. -peerId is any unique string; the 'connectIP:' part tells the mod which address to bind when hosting, so 'name:connectIP:127.0.0.1' keeps a host from trying to reach itself through its public IP.",
-    "Without these arguments the mod still loads, but it has no identity: the username shows as UNSET and hosting fails. They replace the launcher's login and NetBird VPN, which the Linux patch removes — NetBird has no Linux client, which is why the intended setup cannot work here at all.",
+    "The launcher asks for the player name, the player number and this machine's address when the fix is applied, and writes them into the launch arguments. Every player answers with their own: a repeated name or number breaks the session. The fourth argument, -peerId, is built from the name and carries 'connectIP:127.0.0.1', which keeps a host from trying to reach itself through its own public address.",
+    "Those values replace the launcher's login and the NetBird VPN, which the Linux patch removes — NetBird has no Linux client, which is why the intended setup cannot work here at all. Left unanswered the mod still loads, but with no identity: the username shows as UNSET and hosting fails.",
     "The host forwards UDP 24032. That port is the patch's doing: the mod hardcodes 666, and the patch rewrites it. Radmin/Hamachi/ZeroTier work instead of port forwarding, as long as -peerIp is the address on that network.",
     "Black screen at startup, or objects you cannot interact with: put 'taskset -c 0,1' in front of the command. It is a known race in the mod itself, not in the patch, and the cost is FPS — widen to 0,1,2 if it still behaves.",
-    "The mod reaches an API for invite codes and translations; the patch points it at the author of the patch's own reimplementation. It is not needed to host or join over LAN, only for invite codes, and the game starts normally when it is unreachable."
+    "The mod reaches an API for invite codes and translations; the patch points it at the author of the patch's own reimplementation. It is not needed to host or join over LAN, only for invite codes, and the game starts normally when it is unreachable.",
+    "This fix applies on Windows too, and it has to: every player needs the same patched mod, or the session does not form — the patch moves the port off 666 and takes the identity off the command line instead of the VPN. On Windows the launcher skips the Proton half (there is none) and keeps what matters: the executable, the four arguments, and these files."
   ]
 }
